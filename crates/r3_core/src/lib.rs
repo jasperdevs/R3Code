@@ -41,6 +41,14 @@ pub struct AppSnapshot {
 }
 
 impl AppSnapshot {
+    pub fn empty_reference_state() -> Self {
+        Self {
+            projects: Vec::new(),
+            threads: Vec::new(),
+            messages: Vec::new(),
+        }
+    }
+
     pub fn mock_reference_state() -> Self {
         Self {
             projects: vec![ProjectSummary {

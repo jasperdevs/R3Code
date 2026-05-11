@@ -1,6 +1,6 @@
 use gpui::{
     App, AppContext, Context, FontWeight, IntoElement, ParentElement, Render, SharedString, Styled,
-    Window, div, px, rgb,
+    Window, div, px,
 };
 use r3_core::{APP_NAME, AppSnapshot, MessageAuthor, ThreadStatus};
 
@@ -15,7 +15,7 @@ impl R3Shell {
     pub fn new(snapshot: AppSnapshot) -> Self {
         Self {
             snapshot,
-            theme: Theme::dark(),
+            theme: Theme::light(),
         }
     }
 }
@@ -36,38 +36,107 @@ impl Render for R3Shell {
 
 impl R3Shell {
     fn sidebar(&self) -> impl IntoElement {
-        let mut projects = div()
+        let mut sidebar = div()
             .flex()
             .flex_col()
-            .gap_2()
-            .p_3()
+            .h_full()
             .border_r_1()
             .border_color(self.theme.border)
             .bg(self.theme.card)
             .w(px(SIDEBAR_MIN_WIDTH));
 
-        projects = projects.child(
+        sidebar = sidebar.child(
             div()
                 .flex()
                 .items_center()
                 .justify_between()
-                .mb_2()
+                .px_4()
+                .pt_4()
+                .pb_5()
                 .child(
                     div()
                         .text_size(px(14.0))
-                        .font_weight(FontWeight(600.0))
+                        .font_weight(FontWeight(700.0))
                         .child(APP_NAME),
                 )
                 .child(
                     div()
-                        .text_size(px(12.0))
+                        .rounded(px(5.0))
+                        .bg(self.theme.accent)
+                        .px_1()
+                        .py_0p5()
+                        .text_size(px(9.0))
                         .text_color(self.theme.muted_foreground)
-                        .child("Alpha"),
+                        .child("DEV"),
                 ),
         );
 
+        sidebar = sidebar.child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .px_4()
+                .pb_6()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .text_size(px(12.0))
+                        .text_color(self.theme.muted_foreground)
+                        .child("⌕")
+                        .child("Search"),
+                )
+                .child(
+                    div()
+                        .rounded(px(5.0))
+                        .bg(self.theme.accent)
+                        .px_1p5()
+                        .py_0p5()
+                        .text_size(px(10.0))
+                        .text_color(self.theme.muted_foreground)
+                        .child("Ctrl+K"),
+                ),
+        );
+
+        sidebar = sidebar.child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .px_4()
+                .pb_6()
+                .child(
+                    div()
+                        .text_size(px(10.0))
+                        .text_color(self.theme.muted_foreground)
+                        .child("PROJECTS"),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .gap_3()
+                        .text_size(px(12.0))
+                        .text_color(self.theme.muted_foreground)
+                        .child("↕")
+                        .child("+"),
+                ),
+        );
+
+        if self.snapshot.projects.is_empty() {
+            sidebar = sidebar.child(
+                div()
+                    .flex()
+                    .justify_center()
+                    .text_size(px(12.0))
+                    .text_color(self.theme.muted_foreground)
+                    .child("No projects yet"),
+            );
+        }
+
         for project in &self.snapshot.projects {
-            projects = projects.child(
+            sidebar = sidebar.child(
                 div()
                     .rounded(px(8.0))
                     .bg(self.theme.accent)
@@ -94,7 +163,7 @@ impl R3Shell {
                 ThreadStatus::NeedsInput => "Needs input",
                 ThreadStatus::Failed => "Failed",
             };
-            projects = projects.child(
+            sidebar = sidebar.child(
                 div()
                     .rounded(px(8.0))
                     .p_2()
@@ -108,7 +177,17 @@ impl R3Shell {
             );
         }
 
-        projects
+        sidebar.child(
+            div().flex_1().child("").child(
+                div()
+                    .absolute()
+                    .bottom_4()
+                    .left_4()
+                    .text_size(px(12.0))
+                    .text_color(self.theme.muted_foreground)
+                    .child("⚙  Settings"),
+            ),
+        )
     }
 
     fn main_panel(&self) -> impl IntoElement {
@@ -126,22 +205,59 @@ impl R3Shell {
         div()
             .flex()
             .items_center()
-            .justify_between()
-            .h(px(48.0))
-            .px_4()
+            .h(px(41.0))
+            .px_5()
             .border_b_1()
             .border_color(self.theme.border)
-            .child(div().text_size(px(13.0)).child("main"))
             .child(
                 div()
-                    .text_size(px(12.0))
+                    .text_size(px(14.0))
                     .text_color(self.theme.muted_foreground)
-                    .child("Rust / GPUI parity shell"),
+                    .child("No active thread"),
             )
     }
 
     fn timeline(&self) -> impl IntoElement {
-        let mut timeline = div().flex().flex_col().gap_3().flex_1().p_4();
+        let mut timeline = div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .justify_center()
+            .flex_1()
+            .p_4();
+
+        if self.snapshot.messages.is_empty() {
+            return timeline
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(18.0))
+                        .border_1()
+                        .border_color(self.theme.border)
+                        .bg(self.theme.background)
+                        .w(px(512.0))
+                        .h(px(151.0))
+                        .child(
+                            div()
+                                .text_size(px(20.0))
+                                .font_weight(FontWeight(700.0))
+                                .child("Pick a thread to continue"),
+                        )
+                        .child(
+                            div()
+                                .mt_3()
+                                .text_size(px(14.0))
+                                .text_color(self.theme.muted_foreground)
+                                .child(
+                                    "Select an existing thread or create a new one to get started.",
+                                ),
+                        ),
+                )
+                .into_any_element();
+        }
 
         for message in &self.snapshot.messages {
             let author = match message.author {
@@ -164,25 +280,11 @@ impl R3Shell {
             );
         }
 
-        timeline
+        timeline.into_any_element()
     }
 
     fn composer(&self) -> impl IntoElement {
-        div()
-            .p_4()
-            .border_t_1()
-            .border_color(self.theme.border)
-            .child(
-                div()
-                    .rounded(px(10.0))
-                    .border_1()
-                    .border_color(self.theme.border)
-                    .bg(rgb(0x151515))
-                    .p_3()
-                    .text_size(px(14.0))
-                    .text_color(self.theme.muted_foreground)
-                    .child("Ask R3Code to work on this repo..."),
-            )
+        div().h(px(0.0))
     }
 }
 
@@ -191,13 +293,10 @@ pub fn open_main_window(cx: &mut App) {
     cx.open_window(
         gpui::WindowOptions {
             window_bounds: Some(gpui::WindowBounds::Windowed(bounds)),
-            titlebar: Some(gpui::TitlebarOptions {
-                title: Some(SharedString::from(APP_NAME)),
-                ..Default::default()
-            }),
+            titlebar: None,
             ..Default::default()
         },
-        |_, cx| cx.new(|_| R3Shell::new(AppSnapshot::mock_reference_state())),
+        |_, cx| cx.new(|_| R3Shell::new(AppSnapshot::empty_reference_state())),
     )
     .expect("failed to open R3Code window");
 }

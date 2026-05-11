@@ -1,5 +1,6 @@
 param(
   [string]$T3CodeRepo = "$env:TEMP\t3code-inspect",
+  [string]$T3CodeHome = "$env:TEMP\t3code-reference-home",
   [string]$OutputDir = "reference\screenshots"
 )
 
@@ -13,10 +14,12 @@ $commit = git -C $T3CodeRepo rev-parse HEAD
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $resolvedOutput = Join-Path $repoRoot $OutputDir
 New-Item -ItemType Directory -Force -Path $resolvedOutput | Out-Null
+New-Item -ItemType Directory -Force -Path $T3CodeHome | Out-Null
 
 @"
 T3Code reference repository: $T3CodeRepo
 Reference commit: $commit
+Isolated T3CODE_HOME: $T3CodeHome
 Output directory: $resolvedOutput
 
 Next manual capture states:
