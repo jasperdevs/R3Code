@@ -25,6 +25,7 @@ pub struct R3Shell {
     settings_defaults_restored: bool,
     settings_update_checked: bool,
     settings_diagnostics_opened: bool,
+    settings_toggle_values: [bool; 6],
     source_control_scan_requested: bool,
     providers_refresh_requested: bool,
     providers_add_dialog_open: bool,
@@ -68,6 +69,7 @@ impl R3Shell {
             settings_defaults_restored: false,
             settings_update_checked: false,
             settings_diagnostics_opened: false,
+            settings_toggle_values: [false, true, false, true, false, true],
             source_control_scan_requested: false,
             providers_refresh_requested: false,
             providers_add_dialog_open: false,
@@ -241,7 +243,7 @@ const COMMAND_PALETTE_COMMANDS: &[CommandPaletteCommand] = &[
 enum SettingsControl {
     Theme,
     Select(&'static str),
-    Toggle(bool),
+    Toggle(usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2831,22 +2833,22 @@ impl R3Shell {
             SettingsRow {
                 label: "Diff line wrapping",
                 description: "Set the default wrap state when the diff panel opens.",
-                control: SettingsControl::Toggle(false),
+                control: SettingsControl::Toggle(0),
             },
             SettingsRow {
                 label: "Hide whitespace changes",
                 description: "Set whether the diff panel ignores whitespace-only edits by default.",
-                control: SettingsControl::Toggle(true),
+                control: SettingsControl::Toggle(1),
             },
             SettingsRow {
                 label: "Assistant output",
                 description: "Show token-by-token output while a response is in progress.",
-                control: SettingsControl::Toggle(false),
+                control: SettingsControl::Toggle(2),
             },
             SettingsRow {
                 label: "Auto-open task panel",
                 description: "Open the right-side plan and task panel automatically when steps appear.",
-                control: SettingsControl::Toggle(true),
+                control: SettingsControl::Toggle(3),
             },
             SettingsRow {
                 label: "New threads",
@@ -2861,12 +2863,17 @@ impl R3Shell {
             SettingsRow {
                 label: "Archive confirmation",
                 description: "Require a second click on the inline archive action before a thread is archived.",
-                control: SettingsControl::Toggle(false),
+                control: SettingsControl::Toggle(4),
             },
             SettingsRow {
                 label: "Delete confirmation",
                 description: "Ask before deleting a thread and its chat history.",
-                control: SettingsControl::Toggle(true),
+                control: SettingsControl::Toggle(5),
+            },
+            SettingsRow {
+                label: "Text generation model",
+                description: "Configure the model used for generated commit messages and PR text.",
+                control: SettingsControl::Select("Codex / gpt-5"),
             },
         ];
 
@@ -2922,26 +2929,7 @@ impl R3Shell {
     fn settings_value(&self, control: SettingsControl, cx: &mut Context<Self>) -> impl IntoElement {
         match control {
             SettingsControl::Theme => self.theme_select(cx).into_any_element(),
-            SettingsControl::Toggle(is_on) => div()
-                .w(px(30.0))
-                .h(px(18.0))
-                .rounded(px(9.0))
-                .bg(if is_on {
-                    self.theme.primary
-                } else {
-                    self.theme.accent
-                })
-                .child(
-                    div()
-                        .absolute()
-                        .top(px(1.0))
-                        .left(if is_on { px(13.0) } else { px(1.0) })
-                        .w(px(16.0))
-                        .h(px(16.0))
-                        .rounded(px(8.0))
-                        .bg(self.theme.background),
-                )
-                .into_any_element(),
+            SettingsControl::Toggle(index) => self.settings_toggle(index, cx).into_any_element(),
             SettingsControl::Select(value) => div()
                 .min_w(px(160.0))
                 .rounded(px(8.0))
@@ -2953,6 +2941,45 @@ impl R3Shell {
                 .child(value)
                 .into_any_element(),
         }
+    }
+
+    fn settings_toggle(&self, index: usize, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_on = self.settings_toggle_values[index];
+        div()
+            .id(match index {
+                0 => "settings-toggle-diff-wrap",
+                1 => "settings-toggle-hide-whitespace",
+                2 => "settings-toggle-assistant-output",
+                3 => "settings-toggle-auto-open-task-panel",
+                4 => "settings-toggle-archive-confirmation",
+                _ => "settings-toggle-delete-confirmation",
+            })
+            .relative()
+            .w(px(30.0))
+            .h(px(18.0))
+            .rounded(px(9.0))
+            .cursor_pointer()
+            .bg(if is_on {
+                self.theme.primary
+            } else {
+                self.theme.accent
+            })
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if let Some(value) = this.settings_toggle_values.get_mut(index) {
+                    *value = !*value;
+                    cx.notify();
+                }
+            }))
+            .child(
+                div()
+                    .absolute()
+                    .top(px(1.0))
+                    .left(if is_on { px(13.0) } else { px(1.0) })
+                    .w(px(16.0))
+                    .h(px(16.0))
+                    .rounded(px(8.0))
+                    .bg(self.theme.background),
+            )
     }
 
     fn theme_select(&self, cx: &mut Context<Self>) -> impl IntoElement {
