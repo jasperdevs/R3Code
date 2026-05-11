@@ -26,6 +26,7 @@ pub struct R3Shell {
     settings_update_checked: bool,
     settings_diagnostics_opened: bool,
     settings_toggle_values: [bool; 6],
+    settings_select_values: [usize; 4],
     source_control_scan_requested: bool,
     providers_refresh_requested: bool,
     providers_add_dialog_open: bool,
@@ -70,6 +71,7 @@ impl R3Shell {
             settings_update_checked: false,
             settings_diagnostics_opened: false,
             settings_toggle_values: [false, true, false, true, false, true],
+            settings_select_values: [0, 0, 0, 0],
             source_control_scan_requested: false,
             providers_refresh_requested: false,
             providers_add_dialog_open: false,
@@ -242,8 +244,47 @@ const COMMAND_PALETTE_COMMANDS: &[CommandPaletteCommand] = &[
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SettingsControl {
     Theme,
-    Select(&'static str),
+    Select(SettingsSelectKind),
     Toggle(usize),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SettingsSelectKind {
+    TimeFormat,
+    NewThreads,
+    ProjectBase,
+    TextGenerationModel,
+}
+
+impl SettingsSelectKind {
+    fn index(self) -> usize {
+        match self {
+            Self::TimeFormat => 0,
+            Self::NewThreads => 1,
+            Self::ProjectBase => 2,
+            Self::TextGenerationModel => 3,
+        }
+    }
+
+    fn id(self) -> &'static str {
+        match self {
+            Self::TimeFormat => "settings-select-time-format",
+            Self::NewThreads => "settings-select-new-threads",
+            Self::ProjectBase => "settings-select-project-base",
+            Self::TextGenerationModel => "settings-select-text-generation-model",
+        }
+    }
+
+    fn options(self) -> &'static [&'static str] {
+        match self {
+            Self::TimeFormat => &["System default", "12-hour", "24-hour"],
+            Self::NewThreads => &["Local", "New worktree"],
+            Self::ProjectBase => &["~/", "C:\\Users\\bunny\\Downloads", "Custom"],
+            Self::TextGenerationModel => {
+                &["Codex / gpt-5", "Claude / Sonnet", "OpenCode / default"]
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2828,7 +2869,7 @@ impl R3Shell {
             SettingsRow {
                 label: "Time format",
                 description: "System default follows your browser or OS clock preference.",
-                control: SettingsControl::Select("System default"),
+                control: SettingsControl::Select(SettingsSelectKind::TimeFormat),
             },
             SettingsRow {
                 label: "Diff line wrapping",
@@ -2853,12 +2894,12 @@ impl R3Shell {
             SettingsRow {
                 label: "New threads",
                 description: "Pick the default workspace mode for newly created draft threads.",
-                control: SettingsControl::Select("Local"),
+                control: SettingsControl::Select(SettingsSelectKind::NewThreads),
             },
             SettingsRow {
                 label: "Add project starts in",
                 description: "Leave empty to use \"~/\" when the Add Project browser opens.",
-                control: SettingsControl::Select("~/"),
+                control: SettingsControl::Select(SettingsSelectKind::ProjectBase),
             },
             SettingsRow {
                 label: "Archive confirmation",
@@ -2873,7 +2914,7 @@ impl R3Shell {
             SettingsRow {
                 label: "Text generation model",
                 description: "Configure the model used for generated commit messages and PR text.",
-                control: SettingsControl::Select("Codex / gpt-5"),
+                control: SettingsControl::Select(SettingsSelectKind::TextGenerationModel),
             },
         ];
 
@@ -2930,17 +2971,48 @@ impl R3Shell {
         match control {
             SettingsControl::Theme => self.theme_select(cx).into_any_element(),
             SettingsControl::Toggle(index) => self.settings_toggle(index, cx).into_any_element(),
-            SettingsControl::Select(value) => div()
-                .min_w(px(160.0))
-                .rounded(px(8.0))
-                .border_1()
-                .border_color(self.theme.border)
-                .px_3()
-                .py_2()
-                .text_size(px(14.0))
-                .child(value)
-                .into_any_element(),
+            SettingsControl::Select(kind) => {
+                self.settings_cycling_select(kind, cx).into_any_element()
+            }
         }
+    }
+
+    fn settings_cycling_select(
+        &self,
+        kind: SettingsSelectKind,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let values = kind.options();
+        let value_index = self.settings_select_values[kind.index()] % values.len();
+        div()
+            .id(kind.id())
+            .flex()
+            .items_center()
+            .justify_between()
+            .min_w(px(160.0))
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.background)
+            .px_3()
+            .py_2()
+            .text_size(px(14.0))
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                let index = kind.index();
+                let option_count = kind.options().len();
+                if let Some(value) = this.settings_select_values.get_mut(index) {
+                    *value = (*value + 1) % option_count;
+                    cx.notify();
+                }
+            }))
+            .child(values[value_index])
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(self.theme.muted_foreground)
+                    .child("v"),
+            )
     }
 
     fn settings_toggle(&self, index: usize, cx: &mut Context<Self>) -> impl IntoElement {
