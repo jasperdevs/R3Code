@@ -119,6 +119,7 @@ impl R3Shell {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum R3Screen {
     Empty,
+    Draft,
     Settings,
 }
 
@@ -397,7 +398,9 @@ impl Render for R3Shell {
             .font_family(SharedString::from(FONT_FAMILY));
 
         root = match self.screen {
-            R3Screen::Empty => root.child(self.sidebar(cx)).child(self.main_panel(cx)),
+            R3Screen::Empty | R3Screen::Draft => {
+                root.child(self.sidebar(cx)).child(self.main_panel(cx))
+            }
             R3Screen::Settings => root
                 .child(self.settings_sidebar(cx))
                 .child(self.settings_panel(cx)),
@@ -597,14 +600,19 @@ impl R3Shell {
     }
 
     fn main_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
+        let mut panel = div()
             .flex()
             .flex_col()
             .flex_1()
             .min_w_0()
             .child(self.toolbar())
-            .child(self.timeline())
-            .child(self.composer(cx))
+            .child(self.timeline());
+
+        if self.screen == R3Screen::Draft || !self.snapshot.messages.is_empty() {
+            panel = panel.child(self.composer(cx));
+        }
+
+        panel
     }
 
     fn toolbar(&self) -> impl IntoElement {
@@ -3503,7 +3511,7 @@ impl R3Shell {
                             .child(
                                 div()
                                     .text_size(px(14.0))
-                                    .font_weight(FontWeight(650.0))
+                                    .font_weight(FontWeight(600.0))
                                     .child(row.label),
                             )
                             .child(
@@ -4538,6 +4546,7 @@ impl Focusable for R3Shell {
 pub fn open_main_window(cx: &mut App) {
     let (screen, command_palette_open) = match std::env::var("R3CODE_SCREEN").as_deref() {
         Ok("command-palette") => (R3Screen::Empty, true),
+        Ok("draft") | Ok("chat-composer") => (R3Screen::Draft, false),
         Ok("settings") => (R3Screen::Settings, false),
         _ => (R3Screen::Empty, false),
     };

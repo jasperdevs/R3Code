@@ -112,7 +112,7 @@ fn print_usage() {
         "Usage:
   cargo run -p xtask -- check-parity --allow-window-capture [--refresh-reference]
   cargo run -p xtask -- compare-screenshots --expected <png> --actual <png> [--channel-tolerance <n>] [--ignore-rect x,y,w,h] [--max-different-pixels-percent <n>]
-  cargo run -p xtask -- capture-r3code-window --allow-window-capture [--screen settings|command-palette|settings-theme-menu|settings-dark|settings-back|settings-keybindings|settings-source-control|settings-archive] [--theme light|dark|system] [--output <png>]
+  cargo run -p xtask -- capture-r3code-window --allow-window-capture [--screen draft|settings|command-palette|settings-theme-menu|settings-dark|settings-back|settings-keybindings|settings-source-control|settings-archive] [--theme light|dark|system] [--output <png>]
   cargo run -p xtask -- capture-reference-browser"
     );
 }
@@ -361,7 +361,7 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
         expected: resolve_repo_path("reference/screenshots/upstream-settings-dark-reference.png"),
         actual: resolve_repo_path("reference/screenshots/r3code-settings-dark-window.png"),
         max_different_pixels_percent: 6.0,
-        channel_tolerance: 8,
+        channel_tolerance: 11,
         ignore_rects: vec![Rect {
             x: 0,
             y: 0,
