@@ -491,11 +491,20 @@ impl R3Shell {
         sidebar.child(
             div().flex_1().child("").child(
                 div()
+                    .id("sidebar-settings")
                     .absolute()
                     .bottom_4()
                     .left_4()
                     .text_size(px(12.0))
                     .text_color(self.theme.muted_foreground)
+                    .cursor_pointer()
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.screen = R3Screen::Settings;
+                        this.settings_section = SettingsSection::General;
+                        this.command_palette_open = false;
+                        window.focus(&this.shell_focus_handle);
+                        cx.notify();
+                    }))
                     .child("Settings"),
             ),
         )
