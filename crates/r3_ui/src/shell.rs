@@ -5,19 +5,21 @@ use gpui::{
 };
 use r3_core::{APP_NAME, AppSnapshot, MessageAuthor, ThreadStatus};
 
-use crate::theme::{FONT_FAMILY, SIDEBAR_MIN_WIDTH, Theme};
+use crate::theme::{FONT_FAMILY, SIDEBAR_MIN_WIDTH, Theme, ThemeMode};
 
 pub struct R3Shell {
     snapshot: AppSnapshot,
     theme: Theme,
+    theme_mode: ThemeMode,
     screen: R3Screen,
 }
 
 impl R3Shell {
-    pub fn new(snapshot: AppSnapshot, screen: R3Screen) -> Self {
+    pub fn new(snapshot: AppSnapshot, screen: R3Screen, theme_mode: ThemeMode) -> Self {
         Self {
             snapshot,
             theme: Theme::light(),
+            theme_mode,
             screen,
         }
     }
@@ -29,8 +31,23 @@ pub enum R3Screen {
     Settings,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SettingsControl {
+    Select(&'static str),
+    Toggle(bool),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SettingsRow {
+    label: &'static str,
+    description: &'static str,
+    control: SettingsControl,
+}
+
 impl Render for R3Shell {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        self.theme = self.theme_mode.resolve(window);
+
         div()
             .flex()
             .h_full()
@@ -100,7 +117,6 @@ impl R3Shell {
                         .gap_2()
                         .text_size(px(12.0))
                         .text_color(self.theme.muted_foreground)
-                        .child("⌕")
                         .child("Search"),
                 )
                 .child(
@@ -134,8 +150,8 @@ impl R3Shell {
                         .gap_3()
                         .text_size(px(12.0))
                         .text_color(self.theme.muted_foreground)
-                        .child("↕")
-                        .child("+"),
+                        .child("Sort")
+                        .child("Add"),
                 ),
         );
 
@@ -200,7 +216,7 @@ impl R3Shell {
                     .left_4()
                     .text_size(px(12.0))
                     .text_color(self.theme.muted_foreground)
-                    .child("⚙  Settings"),
+                    .child("Settings"),
             ),
         )
     }
@@ -304,12 +320,12 @@ impl R3Shell {
 
     fn settings_sidebar(&self) -> impl IntoElement {
         let nav_items = [
-            ("⌘", "General", true),
-            ("⌨", "Keybindings", false),
-            ("▣", "Providers", false),
-            ("⌘", "Source Control", false),
-            ("↔", "Connections", false),
-            ("▤", "Archive", false),
+            ("General", true),
+            ("Keybindings", false),
+            ("Providers", false),
+            ("Source Control", false),
+            ("Connections", false),
+            ("Archive", false),
         ];
 
         let mut sidebar = div()
@@ -346,12 +362,11 @@ impl R3Shell {
                     ),
             );
 
-        for (icon, label, active) in nav_items {
+        for (label, active) in nav_items {
             sidebar = sidebar.child(
                 div()
                     .flex()
                     .items_center()
-                    .gap_3()
                     .px_5()
                     .pb_4()
                     .text_size(px(14.0))
@@ -360,7 +375,6 @@ impl R3Shell {
                     } else {
                         self.theme.muted_foreground
                     })
-                    .child(div().w(px(12.0)).child(icon))
                     .child(label),
             );
         }
@@ -375,7 +389,6 @@ impl R3Shell {
                     .gap_2()
                     .text_size(px(13.0))
                     .text_color(self.theme.muted_foreground)
-                    .child("←")
                     .child("Back"),
             ),
         )
@@ -406,7 +419,7 @@ impl R3Shell {
                             .py_1()
                             .text_size(px(13.0))
                             .text_color(self.theme.muted_foreground)
-                            .child("↻ Restore defaults"),
+                            .child("Restore defaults"),
                     ),
             )
             .child(
@@ -436,52 +449,56 @@ impl R3Shell {
 
     fn settings_card(&self) -> impl IntoElement {
         let rows = [
-            ("Theme", "Choose how R3Code looks across the app.", "System"),
-            (
-                "Time format",
-                "System default follows your browser or OS clock preference.",
-                "System default",
-            ),
-            (
-                "Diff line wrapping",
-                "Set the default wrap state when the diff panel opens.",
-                "○",
-            ),
-            (
-                "Hide whitespace changes",
-                "Set whether the diff panel ignores whitespace-only edits by default.",
-                "●",
-            ),
-            (
-                "Assistant output",
-                "Show token-by-token output while a response is in progress.",
-                "○",
-            ),
-            (
-                "Auto-open task panel",
-                "Open the right-side plan and task panel automatically when steps appear.",
-                "●",
-            ),
-            (
-                "New threads",
-                "Pick the default workspace mode for newly created draft threads.",
-                "Local",
-            ),
-            (
-                "Add project starts in",
-                "Leave empty to use \"~/\" when the Add Project browser opens.",
-                "~/",
-            ),
-            (
-                "Archive confirmation",
-                "Require a second click on the inline archive action before a thread is archived.",
-                "○",
-            ),
-            (
-                "Delete confirmation",
-                "Ask before deleting a thread and its chat history.",
-                "●",
-            ),
+            SettingsRow {
+                label: "Theme",
+                description: "Choose how R3Code looks across the app.",
+                control: SettingsControl::Select("System"),
+            },
+            SettingsRow {
+                label: "Time format",
+                description: "System default follows your browser or OS clock preference.",
+                control: SettingsControl::Select("System default"),
+            },
+            SettingsRow {
+                label: "Diff line wrapping",
+                description: "Set the default wrap state when the diff panel opens.",
+                control: SettingsControl::Toggle(false),
+            },
+            SettingsRow {
+                label: "Hide whitespace changes",
+                description: "Set whether the diff panel ignores whitespace-only edits by default.",
+                control: SettingsControl::Toggle(true),
+            },
+            SettingsRow {
+                label: "Assistant output",
+                description: "Show token-by-token output while a response is in progress.",
+                control: SettingsControl::Toggle(false),
+            },
+            SettingsRow {
+                label: "Auto-open task panel",
+                description: "Open the right-side plan and task panel automatically when steps appear.",
+                control: SettingsControl::Toggle(true),
+            },
+            SettingsRow {
+                label: "New threads",
+                description: "Pick the default workspace mode for newly created draft threads.",
+                control: SettingsControl::Select("Local"),
+            },
+            SettingsRow {
+                label: "Add project starts in",
+                description: "Leave empty to use \"~/\" when the Add Project browser opens.",
+                control: SettingsControl::Select("~/"),
+            },
+            SettingsRow {
+                label: "Archive confirmation",
+                description: "Require a second click on the inline archive action before a thread is archived.",
+                control: SettingsControl::Toggle(false),
+            },
+            SettingsRow {
+                label: "Delete confirmation",
+                description: "Ask before deleting a thread and its chat history.",
+                control: SettingsControl::Toggle(true),
+            },
         ];
 
         let mut card = div()
@@ -493,7 +510,7 @@ impl R3Shell {
             .border_color(self.theme.border)
             .bg(self.theme.background);
 
-        for (label, description, value) in rows {
+        for row in rows {
             card = card.child(
                 div()
                     .flex()
@@ -512,28 +529,25 @@ impl R3Shell {
                                 div()
                                     .text_size(px(14.0))
                                     .font_weight(FontWeight(650.0))
-                                    .child(label),
+                                    .child(row.label),
                             )
                             .child(
                                 div()
                                     .text_size(px(13.0))
                                     .text_color(self.theme.muted_foreground)
-                                    .child(description),
+                                    .child(row.description),
                             ),
                     )
-                    .child(self.settings_value(value)),
+                    .child(self.settings_value(row.control)),
             );
         }
 
         card
     }
 
-    fn settings_value(&self, value: &'static str) -> impl IntoElement {
-        let is_on = value == "●";
-        let is_toggle = value == "●" || value == "○";
-
-        if is_toggle {
-            return div()
+    fn settings_value(&self, control: SettingsControl) -> impl IntoElement {
+        match control {
+            SettingsControl::Toggle(is_on) => div()
                 .w(px(30.0))
                 .h(px(18.0))
                 .rounded(px(9.0))
@@ -552,19 +566,18 @@ impl R3Shell {
                         .rounded(px(8.0))
                         .bg(self.theme.background),
                 )
-                .into_any_element();
+                .into_any_element(),
+            SettingsControl::Select(value) => div()
+                .min_w(px(160.0))
+                .rounded(px(8.0))
+                .border_1()
+                .border_color(self.theme.border)
+                .px_3()
+                .py_2()
+                .text_size(px(14.0))
+                .child(value)
+                .into_any_element(),
         }
-
-        div()
-            .min_w(px(160.0))
-            .rounded(px(8.0))
-            .border_1()
-            .border_color(self.theme.border)
-            .px_3()
-            .py_2()
-            .text_size(px(14.0))
-            .child(value)
-            .into_any_element()
     }
 }
 
@@ -573,6 +586,7 @@ pub fn open_main_window(cx: &mut App) {
         Ok("settings") => R3Screen::Settings,
         _ => R3Screen::Empty,
     };
+    let theme_mode = ThemeMode::from_env();
     let bounds = gpui::Bounds::centered(None, gpui::size(px(1280.0), px(800.0)), cx);
     cx.open_window(
         gpui::WindowOptions {
@@ -580,7 +594,15 @@ pub fn open_main_window(cx: &mut App) {
             titlebar: None,
             ..Default::default()
         },
-        |_, cx| cx.new(move |_| R3Shell::new(AppSnapshot::empty_reference_state(), screen)),
+        move |window, cx| {
+            cx.new(|cx| {
+                cx.observe_window_appearance(window, |_, window, _| {
+                    window.refresh();
+                })
+                .detach();
+                R3Shell::new(AppSnapshot::empty_reference_state(), screen, theme_mode)
+            })
+        },
     )
     .expect("failed to open R3Code window");
 }

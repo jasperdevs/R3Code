@@ -51,6 +51,8 @@ Run the current implemented-screen gate:
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check-parity.ps1
 ```
 
+The app defaults to `R3CODE_THEME=system`, which resolves from GPUI's OS window appearance. The parity gate forces `light` for screenshots that compare against the current light T3Code references and also captures a dark R3Code smoke screenshot.
+
 Run it with a fresh upstream T3Code capture:
 
 ```powershell
@@ -68,6 +70,7 @@ Allowed brand-copy difference: `-IgnoreRect 0,0,120,45`
 Current measured diff:
 
 ```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-r3code-window.ps1 -Theme light -OutputPath reference\screenshots\r3code-window.png
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\compare-screenshots.ps1 -Expected reference\screenshots\t3code-empty-reference.png -Actual reference\screenshots\r3code-window.png -ChannelTolerance 8 -IgnoreRect 0,0,120,45 -MaxDifferentPixelsPercent 2
 ```
 
@@ -84,7 +87,7 @@ Allowed brand-copy difference: `-IgnoreRect 0,0,120,45`
 Current measured diff:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-r3code-window.ps1 -Screen settings -OutputPath reference\screenshots\r3code-settings-window.png
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-r3code-window.ps1 -Theme light -Screen settings -OutputPath reference\screenshots\r3code-settings-window.png
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\compare-screenshots.ps1 -Expected reference\screenshots\t3code-settings-reference.png -Actual reference\screenshots\r3code-settings-window.png -ChannelTolerance 8 -IgnoreRect 0,0,120,45 -MaxDifferentPixelsPercent 6
 ```
 

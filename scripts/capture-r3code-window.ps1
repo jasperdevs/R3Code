@@ -2,6 +2,7 @@ param(
   [string]$ExePath = "target\debug\r3code.exe",
   [string]$OutputPath = "reference\screenshots\r3code-window.png",
   [string]$Screen = "",
+  [string]$Theme = "",
   [int]$StartupDelaySeconds = 6
 )
 
@@ -16,6 +17,10 @@ New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
 if ($Screen.Trim()) {
   $oldScreen = $env:R3CODE_SCREEN
   $env:R3CODE_SCREEN = $Screen.Trim()
+}
+if ($Theme.Trim()) {
+  $oldTheme = $env:R3CODE_THEME
+  $env:R3CODE_THEME = $Theme.Trim()
 }
 
 $process = Start-Process -FilePath $resolvedExe -PassThru
@@ -71,6 +76,13 @@ public class Win32Capture {
       $env:R3CODE_SCREEN = $oldScreen
     } else {
       Remove-Item Env:R3CODE_SCREEN -ErrorAction SilentlyContinue
+    }
+  }
+  if (Get-Variable -Name oldTheme -ErrorAction SilentlyContinue) {
+    if ($oldTheme) {
+      $env:R3CODE_THEME = $oldTheme
+    } else {
+      Remove-Item Env:R3CODE_THEME -ErrorAction SilentlyContinue
     }
   }
 }

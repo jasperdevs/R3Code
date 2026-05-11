@@ -11,6 +11,8 @@ cargo check --workspace
 cargo run -p r3_app
 ```
 
+Theme follows the OS by default. For screenshots or manual checks, set `R3CODE_THEME` to `light`, `dark`, or `system`.
+
 ## Parity
 
 The UI is built against a frozen T3Code reference. See [docs/reference/T3CODE_VERSION.md](docs/reference/T3CODE_VERSION.md) and [docs/reference/PARITY_PLAN.md](docs/reference/PARITY_PLAN.md).
