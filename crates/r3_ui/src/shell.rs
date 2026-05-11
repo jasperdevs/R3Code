@@ -28,6 +28,11 @@ pub struct R3Shell {
     settings_toggle_values: [bool; 6],
     settings_select_values: [usize; 4],
     source_control_scan_requested: bool,
+    source_control_git_enabled: bool,
+    source_control_git_details_open: bool,
+    source_control_fetch_interval_seconds: u32,
+    source_control_account_revealed: bool,
+    source_control_provider_enabled: [bool; 3],
     providers_refresh_requested: bool,
     providers_add_dialog_open: bool,
     expanded_provider_index: Option<usize>,
@@ -80,6 +85,11 @@ impl R3Shell {
             settings_toggle_values: [false, true, false, true, false, true],
             settings_select_values: [0, 0, 0, 0],
             source_control_scan_requested: false,
+            source_control_git_enabled: true,
+            source_control_git_details_open: false,
+            source_control_fetch_interval_seconds: SOURCE_CONTROL_DEFAULT_FETCH_INTERVAL_SECONDS,
+            source_control_account_revealed: false,
+            source_control_provider_enabled: [true, false, false],
             providers_refresh_requested: false,
             providers_add_dialog_open: false,
             expanded_provider_index: Some(0),
@@ -219,6 +229,19 @@ enum ConnectionMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SourceControlSwitch {
+    Git,
+    Provider(usize),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SourceControlFetchAction {
+    Decrease,
+    Increase,
+    Reset,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum KeybindingsHeaderAction {
     ToggleSearch,
     ToggleAdd,
@@ -353,6 +376,9 @@ const COMPOSER_RUNTIME_MODES: &[ComposerRuntimeMode] = &[
         icon: "icons/terminal.svg",
     },
 ];
+
+const SOURCE_CONTROL_DEFAULT_FETCH_INTERVAL_SECONDS: u32 = 30;
+const SOURCE_CONTROL_FETCH_INTERVAL_STEP_SECONDS: u32 = 5;
 
 impl Render for R3Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2010,10 +2036,6 @@ impl R3Shell {
     }
 
     fn settings_source_control_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.source_control_scan_requested {
-            return self.source_control_empty_panel(cx).into_any_element();
-        }
-
         div()
             .id("settings-source-control-scroll")
             .flex()
@@ -2029,90 +2051,21 @@ impl R3Shell {
                     .flex_col()
                     .w(px(768.0))
                     .gap_8()
-                    .child(self.source_control_skeleton_section("VERSION CONTROL", true, cx))
-                    .child(self.source_control_skeleton_section(
-                        "SOURCE CONTROL PROVIDERS",
-                        false,
-                        cx,
-                    )),
+                    .child(self.source_control_version_control_section(cx))
+                    .child(self.source_control_provider_section(cx)),
             )
             .into_any_element()
     }
 
-    fn source_control_empty_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let description = if self.source_control_scan_requested {
-            "No Git or hosting integrations were detected. Install Git or configure credentials, then scan again."
-        } else {
-            "Install Git on the server, add optional hosting integrations or credentials your workspace needs, then rescan."
-        };
+    fn source_control_version_control_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut card = self
+            .source_control_card()
+            .child(self.source_control_git_row(cx));
 
-        div()
-            .id("settings-source-control-scroll")
-            .flex()
-            .flex_col()
-            .flex_1()
-            .min_h_0()
-            .items_center()
-            .overflow_y_scroll()
-            .p_8()
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .w(px(768.0))
-                    .gap_2p5()
-                    .child(self.settings_section_header("SERVER ENVIRONMENT"))
-                    .child(
-                        div()
-                            .relative()
-                            .overflow_hidden()
-                            .rounded(px(16.0))
-                            .border_1()
-                            .border_color(self.theme.border)
-                            .bg(self.theme.card)
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_col()
-                                    .items_center()
-                                    .justify_center()
-                                    .min_h(px(352.0))
-                                    .gap_6()
-                                    .p_12()
-                                    .text_align(TextAlign::Center)
-                                    .child(self.empty_source_control_media())
-                                    .child(
-                                        div()
-                                            .flex()
-                                            .flex_col()
-                                            .items_center()
-                                            .w(px(384.0))
-                                            .child(
-                                                div()
-                                                    .font_weight(FontWeight(650.0))
-                                                    .text_size(px(20.0))
-                                                    .child("Nothing detected yet"),
-                                            )
-                                            .child(
-                                                div()
-                                                    .mt_1()
-                                                    .text_size(px(14.0))
-                                                    .text_color(self.theme.muted_foreground)
-                                                    .child(description),
-                                            ),
-                                    )
-                                    .child(self.source_control_scan_button(cx)),
-                            ),
-                    ),
-            )
-    }
+        if self.source_control_git_details_open {
+            card = card.child(self.source_control_git_fetch_settings(cx));
+        }
 
-    fn source_control_skeleton_section(
-        &self,
-        title: &'static str,
-        header_action: bool,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
@@ -2123,159 +2076,463 @@ impl R3Shell {
                     .items_center()
                     .justify_between()
                     .px_1()
-                    .child(self.settings_section_header(title))
-                    .child(if header_action {
-                        self.source_control_scan_icon_button(cx).into_any_element()
-                    } else {
-                        div().w(px(20.0)).h(px(20.0)).into_any_element()
-                    }),
+                    .child(self.settings_section_header("VERSION CONTROL"))
+                    .child(self.source_control_scan_icon_button(cx)),
             )
+            .child(card)
+    }
+
+    fn source_control_provider_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap_2p5()
+            .child(self.settings_section_header("SOURCE CONTROL PROVIDERS"))
             .child(
-                div()
-                    .relative()
-                    .overflow_hidden()
-                    .rounded(px(16.0))
-                    .border_1()
-                    .border_color(self.theme.border)
-                    .bg(self.theme.card)
-                    .child(self.source_control_skeleton_row(true))
-                    .child(self.source_control_skeleton_row(false)),
+                self.source_control_card()
+                    .child(self.source_control_provider_row(
+                        0,
+                        "GitHub",
+                        "Authenticated",
+                        "jasperdevs",
+                        "icons/git-pull-request.svg",
+                        true,
+                        cx,
+                    ))
+                    .child(self.source_control_provider_row(
+                        1,
+                        "GitLab",
+                        "Not authenticated",
+                        "glab auth login",
+                        "icons/git-branch.svg",
+                        false,
+                        cx,
+                    ))
+                    .child(self.source_control_provider_row(
+                        2,
+                        "Bitbucket",
+                        "Not available on this server",
+                        "Install the Bitbucket CLI on the server host.",
+                        "icons/link-2.svg",
+                        false,
+                        cx,
+                    )),
             )
     }
 
-    fn source_control_skeleton_row(&self, first: bool) -> impl IntoElement {
+    fn source_control_card(&self) -> gpui::Div {
+        div()
+            .relative()
+            .overflow_hidden()
+            .rounded(px(16.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.card)
+    }
+
+    fn source_control_git_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let summary = if self.source_control_scan_requested {
+            "Available. Server environment checked just now."
+        } else {
+            "Available. Refresh remote branch status in the background."
+        };
+
         div()
             .flex()
             .items_center()
             .justify_between()
-            .min_h(px(68.0))
-            .border_t_1()
-            .border_color(if first {
-                self.theme.card
-            } else {
-                self.theme.border
-            })
+            .min_h(px(76.0))
             .px_5()
             .py_3p5()
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .gap_2()
+                    .gap_1()
+                    .min_w_0()
                     .child(
                         div()
                             .flex()
                             .items_center()
                             .gap_2()
-                            .child(self.skeleton_block(px(18.0), px(18.0), px(9.0)))
-                            .child(self.skeleton_block(px(112.0), px(16.0), px(8.0)))
-                            .child(self.skeleton_block(px(56.0), px(18.0), px(9.0))),
+                            .child(self.source_control_item_mark(
+                                "icons/git-branch.svg",
+                                self.theme.primary,
+                            ))
+                            .child(
+                                div()
+                                    .text_size(px(13.0))
+                                    .font_weight(FontWeight(650.0))
+                                    .child("Git"),
+                            )
+                            .child(self.source_control_code_badge("2.x")),
                     )
-                    .child(self.skeleton_block(px(320.0), px(10.0), px(5.0))),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(self.skeleton_block(px(28.0), px(28.0), px(7.0)))
-                    .child(self.skeleton_block(px(36.0), px(18.0), px(9.0))),
-            )
-    }
-
-    fn skeleton_block(
-        &self,
-        width: gpui::Pixels,
-        height: gpui::Pixels,
-        radius: gpui::Pixels,
-    ) -> impl IntoElement {
-        div()
-            .w(width)
-            .h(height)
-            .rounded(radius)
-            .bg(self.theme.accent)
-    }
-
-    fn empty_source_control_media(&self) -> impl IntoElement {
-        div()
-            .relative()
-            .mb_6()
-            .w(px(42.0))
-            .h(px(38.0))
-            .child(
-                div()
-                    .absolute()
-                    .left(px(0.0))
-                    .bottom(px(1.0))
-                    .w(px(36.0))
-                    .h(px(36.0))
-                    .rounded(px(8.0))
-                    .border_1()
-                    .border_color(self.theme.border)
-                    .bg(self.theme.card)
-                    .opacity(0.78),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .right(px(0.0))
-                    .bottom(px(1.0))
-                    .w(px(36.0))
-                    .h(px(36.0))
-                    .rounded(px(8.0))
-                    .border_1()
-                    .border_color(self.theme.border)
-                    .bg(self.theme.card)
-                    .opacity(0.78),
-            )
-            .child(
-                div()
-                    .absolute()
-                    .left(px(3.0))
-                    .top(px(0.0))
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .w(px(36.0))
-                    .h(px(36.0))
-                    .rounded(px(8.0))
-                    .border_1()
-                    .border_color(self.theme.border)
-                    .bg(self.theme.card)
                     .child(
-                        svg()
-                            .path("icons/git-pull-request.svg")
-                            .size_4()
-                            .text_color(self.theme.foreground),
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(self.theme.muted_foreground)
+                            .child(summary),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(self.source_control_details_button(cx))
+                    .child(self.source_control_switch(
+                        "source-control-git-switch",
+                        SourceControlSwitch::Git,
+                        self.source_control_git_enabled,
+                        cx,
+                    )),
+            )
+    }
+
+    fn source_control_provider_row(
+        &self,
+        index: usize,
+        label: &'static str,
+        status: &'static str,
+        detail: &'static str,
+        icon: &'static str,
+        authenticated: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let enabled = self.source_control_provider_enabled[index];
+        let indicator = if authenticated {
+            self.theme.primary
+        } else {
+            hsla(36.0 / 360.0, 1.0, 0.48, 1.0)
+        };
+        let summary = if authenticated {
+            if self.source_control_account_revealed {
+                format!("{status} as {detail}")
+            } else {
+                format!("{status} as hidden account")
+            }
+        } else {
+            detail.to_string()
+        };
+
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .min_h(px(76.0))
+            .border_t_1()
+            .border_color(self.theme.border)
+            .px_5()
+            .py_3p5()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(self.source_control_item_mark(icon, indicator))
+                            .child(
+                                div()
+                                    .text_size(px(13.0))
+                                    .font_weight(FontWeight(650.0))
+                                    .child(label),
+                            )
+                            .child(if authenticated {
+                                div().into_any_element()
+                            } else {
+                                self.source_control_warning_badge(status).into_any_element()
+                            }),
+                    )
+                    .child(
+                        div()
+                            .id(match index {
+                                0 => "source-control-github-account",
+                                1 => "source-control-gitlab-summary",
+                                _ => "source-control-bitbucket-summary",
+                            })
+                            .text_size(px(12.0))
+                            .text_color(self.theme.muted_foreground)
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if index == 0 {
+                                    this.source_control_account_revealed =
+                                        !this.source_control_account_revealed;
+                                    cx.notify();
+                                }
+                            }))
+                            .child(summary),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(self.source_control_switch(
+                        match index {
+                            0 => "source-control-github-switch",
+                            1 => "source-control-gitlab-switch",
+                            _ => "source-control-bitbucket-switch",
+                        },
+                        SourceControlSwitch::Provider(index),
+                        enabled,
+                        cx,
+                    )),
+            )
+    }
+
+    fn source_control_git_fetch_settings(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .border_t_1()
+            .border_color(self.theme.border)
+            .px_5()
+            .py_3p5()
+            .child(
+                div()
+                    .flex()
+                    .items_start()
+                    .justify_between()
+                    .gap_4()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_1()
+                                    .text_size(px(12.0))
+                                    .font_weight(FontWeight(600.0))
+                                    .child("Fetch interval")
+                                    .child(self.source_control_fetch_button(
+                                        "source-control-fetch-reset",
+                                        "icons/refresh-cw.svg",
+                                        SourceControlFetchAction::Reset,
+                                        cx,
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(self.theme.muted_foreground)
+                                    .child(
+                                        "Set this to 0 seconds if credentials should only be prompted by explicit Git actions.",
+                                    ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(self.source_control_fetch_button(
+                                "source-control-fetch-decrease",
+                                "icons/minus.svg",
+                                SourceControlFetchAction::Decrease,
+                                cx,
+                            ))
+                            .child(
+                                div()
+                                    .min_w(px(44.0))
+                                    .rounded(px(7.0))
+                                    .border_1()
+                                    .border_color(self.theme.border)
+                                    .bg(self.theme.background)
+                                    .px_2()
+                                    .py_1p5()
+                                    .text_align(TextAlign::Center)
+                                    .text_size(px(12.0))
+                                    .font_weight(FontWeight(600.0))
+                                    .child(self.source_control_fetch_interval_seconds.to_string()),
+                            )
+                            .child(self.source_control_fetch_button(
+                                "source-control-fetch-increase",
+                                "icons/plus.svg",
+                                SourceControlFetchAction::Increase,
+                                cx,
+                            ))
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(self.theme.muted_foreground)
+                                    .child("seconds"),
+                            ),
                     ),
             )
     }
 
-    fn source_control_scan_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn source_control_item_mark(
+        &self,
+        icon: &'static str,
+        indicator: gpui::Hsla,
+    ) -> impl IntoElement {
         div()
-            .id("source-control-scan")
+            .relative()
             .flex()
             .items_center()
-            .gap_1p5()
-            .h(px(32.0))
-            .rounded(px(7.0))
+            .justify_center()
+            .w(px(20.0))
+            .h(px(20.0))
+            .child(svg().path(icon).size_4().text_color(self.theme.foreground))
+            .child(
+                div()
+                    .absolute()
+                    .left(px(-2.0))
+                    .top(px(-2.0))
+                    .w(px(8.0))
+                    .h(px(8.0))
+                    .rounded(px(4.0))
+                    .bg(indicator)
+                    .border_1()
+                    .border_color(self.theme.background),
+            )
+    }
+
+    fn source_control_code_badge(&self, label: &'static str) -> impl IntoElement {
+        div()
+            .rounded(px(5.0))
+            .bg(self.theme.accent)
+            .px_1p5()
+            .py_0p5()
+            .text_size(px(11.0))
+            .text_color(self.theme.muted_foreground)
+            .child(label)
+    }
+
+    fn source_control_warning_badge(&self, label: &'static str) -> impl IntoElement {
+        div()
+            .rounded(px(5.0))
             .border_1()
-            .border_color(self.theme.border)
-            .bg(self.theme.background)
-            .px_3()
-            .text_size(px(12.0))
+            .border_color(hsla(36.0 / 360.0, 1.0, 0.48, 0.28))
+            .bg(hsla(36.0 / 360.0, 1.0, 0.48, 0.08))
+            .px_1p5()
+            .py_0p5()
+            .text_size(px(11.0))
+            .text_color(hsla(36.0 / 360.0, 1.0, 0.42, 1.0))
+            .child(label)
+    }
+
+    fn source_control_details_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("source-control-git-details")
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(28.0))
+            .h(px(28.0))
+            .rounded(px(7.0))
             .cursor_pointer()
             .on_click(cx.listener(|this, _, _, cx| {
-                this.source_control_scan_requested = true;
+                this.source_control_git_details_open = !this.source_control_git_details_open;
                 cx.notify();
             }))
             .child(
                 svg()
-                    .path("icons/refresh-cw.svg")
+                    .path(if self.source_control_git_details_open {
+                        "icons/chevron-down.svg"
+                    } else {
+                        "icons/chevron-right.svg"
+                    })
                     .size_4()
-                    .text_color(self.theme.foreground),
+                    .text_color(self.theme.muted_foreground),
             )
-            .child("Scan")
+    }
+
+    fn source_control_switch(
+        &self,
+        id: &'static str,
+        target: SourceControlSwitch,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id(id)
+            .relative()
+            .w(px(34.0))
+            .h(px(20.0))
+            .rounded(px(10.0))
+            .cursor_pointer()
+            .bg(if enabled {
+                self.theme.primary
+            } else {
+                self.theme.accent
+            })
+            .on_click(cx.listener(move |this, _, _, cx| {
+                match target {
+                    SourceControlSwitch::Git => {
+                        this.source_control_git_enabled = !this.source_control_git_enabled;
+                    }
+                    SourceControlSwitch::Provider(index) => {
+                        if let Some(value) = this.source_control_provider_enabled.get_mut(index) {
+                            *value = !*value;
+                        }
+                    }
+                }
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .absolute()
+                    .top(px(2.0))
+                    .left(if enabled { px(16.0) } else { px(2.0) })
+                    .w(px(16.0))
+                    .h(px(16.0))
+                    .rounded(px(8.0))
+                    .bg(self.theme.background),
+            )
+    }
+
+    fn source_control_fetch_button(
+        &self,
+        id: &'static str,
+        icon: &'static str,
+        action: SourceControlFetchAction,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id(id)
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(24.0))
+            .h(px(24.0))
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.background)
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                match action {
+                    SourceControlFetchAction::Decrease => {
+                        this.source_control_fetch_interval_seconds = this
+                            .source_control_fetch_interval_seconds
+                            .saturating_sub(SOURCE_CONTROL_FETCH_INTERVAL_STEP_SECONDS);
+                    }
+                    SourceControlFetchAction::Increase => {
+                        this.source_control_fetch_interval_seconds = this
+                            .source_control_fetch_interval_seconds
+                            .saturating_add(SOURCE_CONTROL_FETCH_INTERVAL_STEP_SECONDS);
+                    }
+                    SourceControlFetchAction::Reset => {
+                        this.source_control_fetch_interval_seconds =
+                            SOURCE_CONTROL_DEFAULT_FETCH_INTERVAL_SECONDS;
+                    }
+                }
+                cx.notify();
+            }))
+            .child(
+                svg()
+                    .path(icon)
+                    .size_3()
+                    .text_color(self.theme.muted_foreground),
+            )
     }
 
     fn source_control_scan_icon_button(&self, cx: &mut Context<Self>) -> impl IntoElement {

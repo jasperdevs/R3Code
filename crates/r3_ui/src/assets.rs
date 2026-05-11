@@ -29,6 +29,7 @@ impl AssetSource for R3Assets {
             }
             "icons/keyboard.svg" => include_bytes!("../assets/icons/keyboard.svg").as_slice(),
             "icons/link-2.svg" => include_bytes!("../assets/icons/link-2.svg").as_slice(),
+            "icons/minus.svg" => include_bytes!("../assets/icons/minus.svg").as_slice(),
             "icons/plus.svg" => include_bytes!("../assets/icons/plus.svg").as_slice(),
             "icons/plus-square.svg" => include_bytes!("../assets/icons/plus-square.svg").as_slice(),
             "icons/refresh-cw.svg" => include_bytes!("../assets/icons/refresh-cw.svg").as_slice(),
@@ -60,6 +61,7 @@ impl AssetSource for R3Assets {
             "git-pull-request.svg",
             "keyboard.svg",
             "link-2.svg",
+            "minus.svg",
             "plus.svg",
             "plus-square.svg",
             "refresh-cw.svg",
