@@ -17,6 +17,9 @@ pub struct R3Shell {
     command_palette_open: bool,
     command_palette_query: String,
     command_palette_highlighted_index: usize,
+    keybindings_search_open: bool,
+    keybindings_add_dialog_open: bool,
+    keybindings_file_opened: bool,
     settings_select_open: Option<SettingsSelect>,
     settings_section: SettingsSection,
     source_control_scan_requested: bool,
@@ -54,6 +57,9 @@ impl R3Shell {
             command_palette_open,
             command_palette_query: String::new(),
             command_palette_highlighted_index: 0,
+            keybindings_search_open: false,
+            keybindings_add_dialog_open: false,
+            keybindings_file_opened: false,
             settings_select_open: None,
             settings_section: SettingsSection::General,
             source_control_scan_requested: false,
@@ -186,6 +192,13 @@ enum ProviderStatus {
 enum ConnectionMode {
     Remote,
     Ssh,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeybindingsHeaderAction {
+    ToggleSearch,
+    ToggleAdd,
+    MarkFileOpened,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -711,7 +724,7 @@ impl R3Shell {
             .child(match self.settings_section {
                 SettingsSection::General => self.settings_general_panel(cx).into_any_element(),
                 SettingsSection::Keybindings => {
-                    self.settings_keybindings_panel().into_any_element()
+                    self.settings_keybindings_panel(cx).into_any_element()
                 }
                 SettingsSection::Providers => self.settings_providers_panel(cx).into_any_element(),
                 SettingsSection::SourceControl => {
@@ -748,7 +761,7 @@ impl R3Shell {
             .child(self.settings_card(cx))
     }
 
-    fn settings_keybindings_panel(&self) -> impl IntoElement {
+    fn settings_keybindings_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let rows = keybinding_rows();
         let mut table = div()
             .flex()
@@ -794,17 +807,7 @@ impl R3Shell {
                                     .child(div().h(px(1.0)).w(px(12.0)).bg(self.theme.border))
                                     .child("KEYBINDINGS"),
                             )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap_2()
-                                    .text_size(px(11.0))
-                                    .text_color(self.theme.muted_foreground)
-                                    .child(format!("{} bindings", rows.len()))
-                                    .child(self.header_icon_button("+"))
-                                    .child(self.header_icon_button("{}")),
-                            ),
+                            .child(self.keybindings_header_actions(rows.len(), cx)),
                     )
                     .child(
                         div()
@@ -816,7 +819,12 @@ impl R3Shell {
                             .bg(self.theme.card)
                             .child(self.keybindings_warning_banner())
                             .child(table),
-                    ),
+                    )
+                    .child(if self.keybindings_add_dialog_open {
+                        self.keybinding_add_panel(cx).into_any_element()
+                    } else {
+                        div().into_any_element()
+                    }),
             )
     }
 
@@ -1385,17 +1393,188 @@ impl R3Shell {
             .child("!")
     }
 
-    fn header_icon_button(&self, label: &'static str) -> impl IntoElement {
+    fn keybindings_header_actions(&self, count: usize, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut actions = div()
+            .flex()
+            .items_center()
+            .gap_1p5()
+            .text_size(px(11.0))
+            .text_color(self.theme.muted_foreground);
+
+        if self.keybindings_search_open {
+            actions = actions.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
+                    .h(px(24.0))
+                    .w(px(176.0))
+                    .rounded(px(6.0))
+                    .border_1()
+                    .border_color(self.theme.border)
+                    .bg(self.theme.background)
+                    .px_2()
+                    .child(
+                        svg()
+                            .path("icons/search.svg")
+                            .size_3()
+                            .text_color(self.theme.muted_foreground),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(self.theme.muted_foreground.opacity(0.72))
+                            .child("Search keybindings"),
+                    ),
+            );
+        } else {
+            actions = actions.child(format!("{count} bindings"));
+        }
+
+        if self.keybindings_file_opened {
+            actions = actions.child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(self.theme.muted_foreground.opacity(0.72))
+                    .child("keybindings.json"),
+            );
+        }
+
+        actions
+            .child(self.keybindings_header_icon_button(
+                "keybindings-search",
+                "icons/search.svg",
+                KeybindingsHeaderAction::ToggleSearch,
+                cx,
+            ))
+            .child(self.keybindings_header_icon_button(
+                "keybindings-add",
+                "icons/plus.svg",
+                KeybindingsHeaderAction::ToggleAdd,
+                cx,
+            ))
+            .child(self.keybindings_header_icon_button(
+                "keybindings-open-json",
+                "icons/file-json.svg",
+                KeybindingsHeaderAction::MarkFileOpened,
+                cx,
+            ))
+    }
+
+    fn keybindings_header_icon_button(
+        &self,
+        id: &'static str,
+        icon: &'static str,
+        action: KeybindingsHeaderAction,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         div()
+            .id(id)
             .flex()
             .items_center()
             .justify_center()
             .w(px(20.0))
             .h(px(20.0))
             .rounded(px(4.0))
-            .text_size(px(11.0))
-            .text_color(self.theme.muted_foreground)
-            .child(label)
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                match action {
+                    KeybindingsHeaderAction::ToggleSearch => {
+                        this.keybindings_search_open = !this.keybindings_search_open;
+                    }
+                    KeybindingsHeaderAction::ToggleAdd => {
+                        this.keybindings_add_dialog_open = !this.keybindings_add_dialog_open;
+                    }
+                    KeybindingsHeaderAction::MarkFileOpened => {
+                        this.keybindings_file_opened = true;
+                    }
+                }
+                cx.notify();
+            }))
+            .child(
+                svg()
+                    .path(icon)
+                    .size_3()
+                    .text_color(self.theme.muted_foreground),
+            )
+    }
+
+    fn keybinding_add_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .rounded(px(12.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.card)
+            .p_4()
+            .child(
+                div()
+                    .mb_3()
+                    .text_size(px(13.0))
+                    .font_weight(FontWeight(650.0))
+                    .child("Keybinding draft"),
+            )
+            .child(
+                div()
+                    .grid()
+                    .grid_cols(3)
+                    .gap_3()
+                    .child(self.keybinding_draft_cell("Command", "Command Palette: Toggle"))
+                    .child(self.keybinding_draft_cell("Shortcut", "mod+k"))
+                    .child(self.keybinding_draft_cell("When", "!terminalFocus")),
+            )
+            .child(
+                div()
+                    .id("keybindings-save-draft")
+                    .mt_3()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .gap_2()
+                    .h(px(32.0))
+                    .rounded(px(7.0))
+                    .border_1()
+                    .border_color(self.theme.border)
+                    .bg(self.theme.background)
+                    .text_size(px(12.0))
+                    .cursor_pointer()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.keybindings_add_dialog_open = false;
+                        cx.notify();
+                    }))
+                    .child(
+                        svg()
+                            .path("icons/plus.svg")
+                            .size_4()
+                            .text_color(self.theme.foreground),
+                    )
+                    .child("Save draft"),
+            )
+    }
+
+    fn keybinding_draft_cell(&self, label: &'static str, value: &'static str) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .font_weight(FontWeight(600.0))
+                    .text_color(self.theme.muted_foreground)
+                    .child(label),
+            )
+            .child(
+                div()
+                    .h(px(32.0))
+                    .rounded(px(7.0))
+                    .border_1()
+                    .border_color(self.theme.border)
+                    .bg(self.theme.background)
+                    .px_3()
+                    .py_2()
+                    .text_size(px(12.0))
+                    .child(value),
+            )
     }
 
     fn settings_archive_panel(&self) -> impl IntoElement {
