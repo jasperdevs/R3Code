@@ -3,6 +3,7 @@
 /.vscode/
 *.pdb
 *.log
+.omx/
 
 # Reference artifacts are generated locally from the frozen upstream version.
 /reference/screenshots/

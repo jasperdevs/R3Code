@@ -1,7 +1,8 @@
-use gpui::prelude::FluentBuilder;
+use gpui::prelude::{InteractiveElement, StatefulInteractiveElement};
 use gpui::{
-    App, AppContext, Context, FontWeight, IntoElement, ParentElement, Render, SharedString, Styled,
-    Window, div, px,
+    App, AppContext, BoxShadow, Context, CursorStyle, FocusHandle, Focusable, FontWeight,
+    IntoElement, KeyDownEvent, ParentElement, Render, SharedString, Styled, TextAlign, Window, div,
+    hsla, point, px,
 };
 use r3_core::{APP_NAME, AppSnapshot, MessageAuthor, ThreadStatus};
 
@@ -12,15 +13,31 @@ pub struct R3Shell {
     theme: Theme,
     theme_mode: ThemeMode,
     screen: R3Screen,
+    command_palette_open: bool,
+    command_palette_query: String,
+    command_palette_highlighted_index: usize,
+    shell_focus_handle: FocusHandle,
+    command_palette_focus_handle: FocusHandle,
 }
 
 impl R3Shell {
-    pub fn new(snapshot: AppSnapshot, screen: R3Screen, theme_mode: ThemeMode) -> Self {
+    pub fn new(
+        snapshot: AppSnapshot,
+        screen: R3Screen,
+        theme_mode: ThemeMode,
+        command_palette_open: bool,
+        cx: &mut Context<Self>,
+    ) -> Self {
         Self {
             snapshot,
             theme: Theme::light(),
             theme_mode,
             screen,
+            command_palette_open,
+            command_palette_query: String::new(),
+            command_palette_highlighted_index: 0,
+            shell_focus_handle: cx.focus_handle(),
+            command_palette_focus_handle: cx.focus_handle(),
         }
     }
 }
@@ -30,6 +47,42 @@ pub enum R3Screen {
     Empty,
     Settings,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommandPaletteAction {
+    AddProject,
+    OpenSettings,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CommandPaletteCommand {
+    title: &'static str,
+    search_terms: &'static [&'static str],
+    action: CommandPaletteAction,
+}
+
+const COMMAND_PALETTE_COMMANDS: &[CommandPaletteCommand] = &[
+    CommandPaletteCommand {
+        title: "Add project",
+        search_terms: &[
+            "add project",
+            "folder",
+            "directory",
+            "browse",
+            "clone",
+            "repository",
+            "repo",
+            "git",
+            "github",
+        ],
+        action: CommandPaletteAction::AddProject,
+    },
+    CommandPaletteCommand {
+        title: "Open settings",
+        search_terms: &["settings", "preferences", "configuration", "keybindings"],
+        action: CommandPaletteAction::OpenSettings,
+    },
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SettingsControl {
@@ -45,29 +98,38 @@ struct SettingsRow {
 }
 
 impl Render for R3Shell {
-    fn render(&mut self, window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.theme = self.theme_mode.resolve(window);
 
-        div()
+        let mut root = div()
             .flex()
+            .relative()
+            .key_context("R3Shell")
+            .track_focus(&self.shell_focus_handle)
+            .on_key_down(cx.listener(Self::on_shell_key_down))
             .h_full()
             .w_full()
             .bg(self.theme.background)
             .text_color(self.theme.foreground)
-            .font_family(SharedString::from(FONT_FAMILY))
-            .when(self.screen == R3Screen::Empty, |element| {
-                element.child(self.sidebar()).child(self.main_panel())
-            })
-            .when(self.screen == R3Screen::Settings, |element| {
-                element
-                    .child(self.settings_sidebar())
-                    .child(self.settings_panel())
-            })
+            .font_family(SharedString::from(FONT_FAMILY));
+
+        root = match self.screen {
+            R3Screen::Empty => root.child(self.sidebar(cx)).child(self.main_panel()),
+            R3Screen::Settings => root
+                .child(self.settings_sidebar())
+                .child(self.settings_panel()),
+        };
+
+        if self.command_palette_open {
+            root = root.child(self.command_palette_overlay(cx));
+        }
+
+        root
     }
 }
 
 impl R3Shell {
-    fn sidebar(&self) -> impl IntoElement {
+    fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let mut sidebar = div()
             .flex()
             .flex_col()
@@ -105,11 +167,16 @@ impl R3Shell {
 
         sidebar = sidebar.child(
             div()
+                .id("command-palette-trigger")
                 .flex()
                 .items_center()
                 .justify_between()
                 .px_4()
                 .pb_6()
+                .cursor_pointer()
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.open_command_palette(window, cx);
+                }))
                 .child(
                     div()
                         .flex()
@@ -579,12 +646,405 @@ impl R3Shell {
                 .into_any_element(),
         }
     }
+
+    fn command_palette_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .absolute()
+            .top(px(0.0))
+            .right(px(0.0))
+            .bottom(px(0.0))
+            .left(px(0.0))
+            .flex()
+            .flex_col()
+            .items_center()
+            .px_4()
+            .pt(px(80.0))
+            .bg(self.theme.background.alpha(0.60))
+            .child(self.command_palette_popup(cx))
+    }
+
+    fn command_palette_popup(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .overflow_hidden()
+            .w(px(576.0))
+            .rounded(px(16.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.background)
+            .shadow(vec![BoxShadow {
+                color: hsla(0.0, 0.0, 0.0, 0.05),
+                offset: point(px(0.0), px(10.0)),
+                blur_radius: px(15.0),
+                spread_radius: px(-3.0),
+            }])
+            .child(self.command_palette_input(cx))
+            .child(self.command_palette_results(cx))
+            .child(self.command_palette_footer())
+    }
+
+    fn command_palette_input(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let input_text = if self.command_palette_query.is_empty() {
+            "Search commands, projects, and threads...".to_string()
+        } else {
+            self.command_palette_query.clone()
+        };
+
+        div()
+            .id("command-palette-input")
+            .relative()
+            .flex()
+            .items_center()
+            .key_context("CommandPalette")
+            .track_focus(&self.command_palette_focus_handle)
+            .on_key_down(cx.listener(Self::on_palette_key_down))
+            .cursor(CursorStyle::IBeam)
+            .h(px(52.0))
+            .px_3()
+            .on_click(cx.listener(|this, _, window, _| {
+                window.focus(&this.command_palette_focus_handle);
+            }))
+            .child(
+                div()
+                    .absolute()
+                    .left(px(18.0))
+                    .top(px(18.0))
+                    .child(self.search_icon()),
+            )
+            .child(
+                div()
+                    .pl(px(34.0))
+                    .text_size(px(15.0))
+                    .text_color(if self.command_palette_query.is_empty() {
+                        self.theme.muted_foreground
+                    } else {
+                        self.theme.foreground
+                    })
+                    .child(input_text),
+            )
+    }
+
+    fn command_palette_results(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let commands = self.filtered_command_items();
+        let mut panel = div()
+            .flex()
+            .flex_col()
+            .mx(px(-1.0))
+            .border_1()
+            .border_b_0()
+            .border_color(self.theme.border)
+            .bg(self.theme.background)
+            .p_2()
+            .child(self.command_group_label("Actions"));
+
+        if commands.is_empty() {
+            return panel
+                .child(
+                    div()
+                        .py_10()
+                        .text_align(TextAlign::Center)
+                        .text_size(px(14.0))
+                        .text_color(self.theme.muted_foreground)
+                        .child("No matching commands, projects, or threads."),
+                )
+                .into_any_element();
+        }
+
+        for (index, command) in commands.into_iter().enumerate() {
+            panel = panel.child(self.command_palette_row(
+                command,
+                index == self.command_palette_highlighted_index,
+                cx,
+            ));
+        }
+
+        panel.into_any_element()
+    }
+
+    fn command_group_label(&self, label: &'static str) -> impl IntoElement {
+        div()
+            .px_2()
+            .py_1p5()
+            .text_size(px(12.0))
+            .font_weight(FontWeight(600.0))
+            .text_color(self.theme.muted_foreground)
+            .child(label)
+    }
+
+    fn command_palette_row(
+        &self,
+        command: &'static CommandPaletteCommand,
+        active: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let row_id = match command.action {
+            CommandPaletteAction::AddProject => "command-palette-row-add-project",
+            CommandPaletteAction::OpenSettings => "command-palette-row-open-settings",
+        };
+
+        div()
+            .id(row_id)
+            .flex()
+            .items_center()
+            .gap_2()
+            .min_h(px(30.0))
+            .rounded(px(3.0))
+            .px_2()
+            .py_1p5()
+            .cursor_pointer()
+            .bg(if active {
+                self.theme.accent
+            } else {
+                self.theme.background.alpha(0.0)
+            })
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.execute_palette_action(command.action, window, cx);
+            }))
+            .child(self.palette_item_icon(active))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_size(px(14.0))
+                    .text_color(self.theme.foreground)
+                    .child(command.title),
+            )
+    }
+
+    fn command_palette_footer(&self) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .gap_3()
+            .border_t_1()
+            .border_color(self.theme.border)
+            .px_5()
+            .py_3()
+            .text_size(px(12.0))
+            .text_color(self.theme.muted_foreground)
+            .child(self.footer_shortcut(&["Up", "Down"], "Navigate"))
+            .child(self.footer_shortcut(&["Enter"], "Select"))
+            .child(self.footer_shortcut(&["Esc"], "Close"))
+    }
+
+    fn footer_shortcut(&self, keys: &[&'static str], label: &'static str) -> impl IntoElement {
+        let mut group = div().flex().items_center().gap_1p5();
+        for key in keys {
+            group = group.child(self.kbd(key));
+        }
+        group.child(div().text_color(self.theme.muted_foreground).child(label))
+    }
+
+    fn kbd(&self, label: &'static str) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .min_w(px(24.0))
+            .h(px(20.0))
+            .rounded(px(4.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.accent)
+            .px_1p5()
+            .text_size(px(11.0))
+            .font_weight(FontWeight(600.0))
+            .child(label)
+    }
+
+    fn search_icon(&self) -> impl IntoElement {
+        div()
+            .relative()
+            .w(px(16.0))
+            .h(px(16.0))
+            .child(
+                div()
+                    .absolute()
+                    .left(px(2.0))
+                    .top(px(2.0))
+                    .w(px(9.0))
+                    .h(px(9.0))
+                    .rounded(px(5.0))
+                    .border_1()
+                    .border_color(self.theme.muted_foreground.opacity(0.55)),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px(10.0))
+                    .top(px(11.0))
+                    .w(px(5.0))
+                    .h(px(1.0))
+                    .bg(self.theme.muted_foreground.opacity(0.55)),
+            )
+    }
+
+    fn palette_item_icon(&self, active: bool) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(16.0))
+            .h(px(16.0))
+            .rounded(px(4.0))
+            .border_1()
+            .border_color(self.theme.muted_foreground.opacity(0.32))
+            .bg(if active {
+                self.theme.background.alpha(0.40)
+            } else {
+                self.theme.accent
+            })
+    }
+
+    fn on_shell_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.is_command_palette_shortcut(event) {
+            self.open_command_palette(window, cx);
+            cx.stop_propagation();
+        }
+    }
+
+    fn on_palette_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.is_command_palette_shortcut(event) {
+            self.close_command_palette(window, cx);
+            cx.stop_propagation();
+            return;
+        }
+
+        match event.keystroke.key.as_str() {
+            "escape" => self.close_command_palette(window, cx),
+            "up" => self.move_palette_highlight(-1, cx),
+            "down" => self.move_palette_highlight(1, cx),
+            "enter" => self.execute_highlighted_palette_action(window, cx),
+            "backspace" => {
+                self.command_palette_query.pop();
+                self.command_palette_highlighted_index = 0;
+                cx.notify();
+            }
+            _ => {
+                let modifiers = event.keystroke.modifiers;
+                if modifiers.control || modifiers.alt || modifiers.platform || modifiers.function {
+                    return;
+                }
+                if let Some(text) = event.keystroke.key_char.as_deref()
+                    && text != "\n"
+                    && text != "\t"
+                {
+                    self.command_palette_query.push_str(text);
+                    self.command_palette_highlighted_index = 0;
+                    cx.notify();
+                }
+            }
+        }
+
+        cx.stop_propagation();
+    }
+
+    fn open_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.command_palette_open = true;
+        self.command_palette_highlighted_index = 0;
+        window.focus(&self.command_palette_focus_handle);
+        cx.notify();
+    }
+
+    fn close_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.command_palette_open = false;
+        self.command_palette_query.clear();
+        self.command_palette_highlighted_index = 0;
+        window.focus(&self.shell_focus_handle);
+        cx.notify();
+    }
+
+    fn is_command_palette_shortcut(&self, event: &KeyDownEvent) -> bool {
+        event.keystroke.modifiers.secondary() && event.keystroke.key.eq_ignore_ascii_case("k")
+    }
+
+    fn filtered_command_items(&self) -> Vec<&'static CommandPaletteCommand> {
+        let query = self.command_palette_query.trim().to_ascii_lowercase();
+        if query.is_empty() {
+            return COMMAND_PALETTE_COMMANDS.iter().collect();
+        }
+
+        COMMAND_PALETTE_COMMANDS
+            .iter()
+            .filter(|command| {
+                command.title.to_ascii_lowercase().contains(&query)
+                    || command
+                        .search_terms
+                        .iter()
+                        .any(|term| term.contains(query.as_str()))
+            })
+            .collect()
+    }
+
+    fn move_palette_highlight(&mut self, direction: isize, cx: &mut Context<Self>) {
+        let item_count = self.filtered_command_items().len();
+        if item_count == 0 {
+            self.command_palette_highlighted_index = 0;
+            cx.notify();
+            return;
+        }
+
+        self.command_palette_highlighted_index = if direction < 0 {
+            self.command_palette_highlighted_index
+                .checked_sub(1)
+                .unwrap_or(item_count - 1)
+        } else {
+            (self.command_palette_highlighted_index + 1) % item_count
+        };
+        cx.notify();
+    }
+
+    fn execute_highlighted_palette_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let commands = self.filtered_command_items();
+        let Some(command) = commands.get(self.command_palette_highlighted_index) else {
+            return;
+        };
+        self.execute_palette_action(command.action, window, cx);
+    }
+
+    fn execute_palette_action(
+        &mut self,
+        action: CommandPaletteAction,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match action {
+            CommandPaletteAction::AddProject => {
+                self.command_palette_query = "~/".to_string();
+                self.command_palette_highlighted_index = 0;
+                window.focus(&self.command_palette_focus_handle);
+                cx.notify();
+            }
+            CommandPaletteAction::OpenSettings => {
+                self.screen = R3Screen::Settings;
+                self.close_command_palette(window, cx);
+            }
+        }
+    }
+}
+
+impl Focusable for R3Shell {
+    fn focus_handle(&self, _: &App) -> FocusHandle {
+        self.shell_focus_handle.clone()
+    }
 }
 
 pub fn open_main_window(cx: &mut App) {
-    let screen = match std::env::var("R3CODE_SCREEN").as_deref() {
-        Ok("settings") => R3Screen::Settings,
-        _ => R3Screen::Empty,
+    let (screen, command_palette_open) = match std::env::var("R3CODE_SCREEN").as_deref() {
+        Ok("command-palette") => (R3Screen::Empty, true),
+        Ok("settings") => (R3Screen::Settings, false),
+        _ => (R3Screen::Empty, false),
     };
     let theme_mode = ThemeMode::from_env();
     let bounds = gpui::Bounds::centered(None, gpui::size(px(1280.0), px(800.0)), cx);
@@ -595,13 +1055,27 @@ pub fn open_main_window(cx: &mut App) {
             ..Default::default()
         },
         move |window, cx| {
-            cx.new(|cx| {
+            let shell = cx.new(|cx| {
                 cx.observe_window_appearance(window, |_, window, _| {
                     window.refresh();
                 })
                 .detach();
-                R3Shell::new(AppSnapshot::empty_reference_state(), screen, theme_mode)
-            })
+                R3Shell::new(
+                    AppSnapshot::empty_reference_state(),
+                    screen,
+                    theme_mode,
+                    command_palette_open,
+                    cx,
+                )
+            });
+            if command_palette_open {
+                let focus_handle = shell.read(cx).command_palette_focus_handle.clone();
+                window.focus(&focus_handle);
+            } else {
+                let focus_handle = shell.read(cx).focus_handle(cx);
+                window.focus(&focus_handle);
+            }
+            shell
         },
     )
     .expect("failed to open R3Code window");

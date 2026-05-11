@@ -16,6 +16,10 @@ use windows::Win32::{
         CreateCompatibleDC, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, GetDIBits, HGDIOBJ,
         ReleaseDC, SRCCOPY, SelectObject,
     },
+    UI::Input::KeyboardAndMouse::{
+        INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput,
+        VIRTUAL_KEY, VK_CONTROL, VK_K,
+    },
     UI::WindowsAndMessaging::{
         BringWindowToTop, EnumWindows, GetClientRect, GetWindowThreadProcessId, HWND_TOP,
         IsWindowVisible, SW_RESTORE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SetForegroundWindow,
@@ -86,7 +90,7 @@ fn print_usage() {
         "Usage:
   cargo run -p xtask -- check-parity [--refresh-t3code-reference]
   cargo run -p xtask -- compare-screenshots --expected <png> --actual <png> [--channel-tolerance <n>] [--ignore-rect x,y,w,h] [--max-different-pixels-percent <n>]
-  cargo run -p xtask -- capture-r3code-window [--screen settings] [--theme light|dark|system] [--output <png>]
+  cargo run -p xtask -- capture-r3code-window [--screen settings|command-palette] [--theme light|dark|system] [--output <png>]
   cargo run -p xtask -- capture-t3code-browser"
     );
 }
@@ -143,6 +147,25 @@ fn check_parity(refresh_t3code_reference: bool) -> Result<()> {
         expected: resolve_repo_path("reference/screenshots/t3code-empty-reference.png"),
         actual: resolve_repo_path("reference/screenshots/r3code-window.png"),
         max_different_pixels_percent: 2.0,
+        channel_tolerance: 8,
+        ignore_rects: vec![Rect {
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 45,
+        }],
+    })?;
+
+    capture_r3code_window(CaptureR3CodeOptions {
+        screen: Some("command-palette".to_string()),
+        theme: Some("light".to_string()),
+        output: resolve_repo_path("reference/screenshots/r3code-command-palette-window.png"),
+        ..CaptureR3CodeOptions::default()
+    })?;
+    compare_screenshots(CompareOptions {
+        expected: resolve_repo_path("reference/screenshots/t3code-command-palette-reference.png"),
+        actual: resolve_repo_path("reference/screenshots/r3code-command-palette-window.png"),
+        max_different_pixels_percent: 5.0,
         channel_tolerance: 8,
         ignore_rects: vec![Rect {
             x: 0,
@@ -415,7 +438,9 @@ fn capture_r3code_window(options: CaptureR3CodeOptions) -> Result<()> {
 
     let mut command = Command::new(&options.exe);
     if let Some(screen) = &options.screen {
-        command.env("R3CODE_SCREEN", screen);
+        if screen != "command-palette" {
+            command.env("R3CODE_SCREEN", screen);
+        }
     }
     if let Some(theme) = &options.theme {
         command.env("R3CODE_THEME", theme);
@@ -426,6 +451,10 @@ fn capture_r3code_window(options: CaptureR3CodeOptions) -> Result<()> {
     let result = (|| -> Result<()> {
         let hwnd = find_window_for_pid(child.id())?;
         prepare_window_for_capture(hwnd);
+        if options.screen.as_deref() == Some("command-palette") {
+            send_command_palette_shortcut()?;
+            thread::sleep(Duration::from_millis(350));
+        }
         let image = capture_client_area(hwnd)?;
         image.save(&options.output)?;
         println!("{}", options.output.display());
@@ -458,6 +487,38 @@ fn prepare_window_for_capture(hwnd: HWND) {
         let _ = SetForegroundWindow(hwnd);
     }
     thread::sleep(Duration::from_millis(350));
+}
+
+#[cfg(windows)]
+fn send_command_palette_shortcut() -> Result<()> {
+    let inputs = [
+        keyboard_input(VK_CONTROL, KEYBD_EVENT_FLAGS(0)),
+        keyboard_input(VK_K, KEYBD_EVENT_FLAGS(0)),
+        keyboard_input(VK_K, KEYEVENTF_KEYUP),
+        keyboard_input(VK_CONTROL, KEYEVENTF_KEYUP),
+    ];
+    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) };
+    if sent == inputs.len() as u32 {
+        Ok(())
+    } else {
+        Err(format!("SendInput sent {sent}/{} key events", inputs.len()).into())
+    }
+}
+
+#[cfg(windows)]
+fn keyboard_input(key: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS) -> INPUT {
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: key,
+                wScan: 0,
+                dwFlags: flags,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
 }
 
 #[cfg(windows)]
@@ -655,7 +716,7 @@ fn capture_t3code_browser(options: CaptureT3CodeOptions) -> Result<()> {
         fs::write(
             options.output_dir.join("CAPTURE_MANIFEST.txt"),
             format!(
-                "T3Code reference repository: {}\nReference commit: {}\nIsolated T3CODE_HOME: {}\nOutput directory: {}\nCaptured:\n- t3code-empty-reference.png\n- t3code-settings-reference.png\n",
+                "T3Code reference repository: {}\nReference commit: {}\nIsolated T3CODE_HOME: {}\nOutput directory: {}\nCaptured:\n- t3code-empty-reference.png\n- t3code-command-palette-reference.png\n- t3code-settings-reference.png\n",
                 options.repo.display(),
                 commit.trim(),
                 options.home.display(),
@@ -722,6 +783,9 @@ const path = require("path");
   await page.getByText("Pick a thread to continue").waitFor({ timeout: 15000 });
   await page.waitForLoadState("networkidle", { timeout: 30000 });
   await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "t3code-empty-reference.png"), fullPage: true });
+  await page.getByTestId("command-palette-trigger").click();
+  await page.getByPlaceholder("Search commands, projects, and threads...").waitFor({ timeout: 15000 });
+  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "t3code-command-palette-reference.png"), fullPage: true });
   await page.goto(new URL("/settings", appOrigin).toString(), { waitUntil: "networkidle", timeout: 30000 });
   await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "t3code-settings-reference.png"), fullPage: true });
   await browser.close();
