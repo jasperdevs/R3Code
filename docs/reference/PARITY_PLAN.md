@@ -17,6 +17,21 @@ R3Code should be judged against frozen T3Code reference screenshots, not against
 - Light theme
 - Dark theme
 
+## Refreshing References
+
+Use the browser capture script to launch the frozen upstream T3Code checkout with an isolated `T3CODE_HOME`, capture the currently automated reference screens, and stop the watcher process tree:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-t3code-browser.ps1
+```
+
+The script currently captures:
+
+- `reference/screenshots/t3code-empty-reference.png`
+- `reference/screenshots/t3code-settings-reference.png`
+
+Do not use screenshots from a different upstream commit unless `docs/reference/T3CODE_VERSION.md` is intentionally updated.
+
 ## Parity Gates
 
 Each implemented GPUI screen needs:
@@ -32,7 +47,7 @@ Each implemented GPUI screen needs:
 
 ## Current Empty-State Baseline
 
-Reference: `reference/screenshots/t3code-pair-reference.png`
+Reference: `reference/screenshots/t3code-empty-reference.png`
 
 R3Code capture: `reference/screenshots/r3code-window.png`
 
@@ -41,7 +56,7 @@ Allowed brand-copy difference: `-IgnoreRect 0,0,120,45`
 Current measured diff:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\compare-screenshots.ps1 -Expected reference\screenshots\t3code-pair-reference.png -Actual reference\screenshots\r3code-window.png -ChannelTolerance 8 -IgnoreRect 0,0,120,45 -MaxDifferentPixelsPercent 2
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\compare-screenshots.ps1 -Expected reference\screenshots\t3code-empty-reference.png -Actual reference\screenshots\r3code-window.png -ChannelTolerance 8 -IgnoreRect 0,0,120,45 -MaxDifferentPixelsPercent 2
 ```
 
 Last measured result: `1.557%`.
