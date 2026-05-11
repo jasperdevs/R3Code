@@ -7,24 +7,32 @@ use std::{
 };
 
 use image::{ImageBuffer, Rgba};
+#[cfg(windows)]
+use windows_capture::{
+    capture::{Context as CaptureContext, GraphicsCaptureApiHandler},
+    frame::{Frame, ImageFormat as CaptureImageFormat},
+    graphics_capture_api::InternalCaptureControl,
+    settings::{
+        ColorFormat, CursorCaptureSettings, DirtyRegionSettings, DrawBorderSettings,
+        MinimumUpdateIntervalSettings, SecondaryWindowSettings, Settings,
+    },
+    window::Window as CaptureWindow,
+};
 
 #[cfg(windows)]
 use windows::Win32::{
-    Foundation::{HWND, LPARAM, POINT, RECT},
+    Foundation::{HWND, LPARAM, POINT, RECT, WPARAM},
     Graphics::Gdi::{
         BI_RGB, BITMAPINFO, BITMAPINFOHEADER, BitBlt, ClientToScreen, CreateCompatibleBitmap,
         CreateCompatibleDC, DIB_RGB_COLORS, DeleteDC, DeleteObject, GetDC, GetDIBits, HGDIOBJ,
         ReleaseDC, SRCCOPY, SelectObject,
     },
-    UI::Input::KeyboardAndMouse::{
-        INPUT, INPUT_0, INPUT_KEYBOARD, INPUT_MOUSE, KEYBD_EVENT_FLAGS, KEYBDINPUT,
-        KEYEVENTF_KEYUP, MOUSE_EVENT_FLAGS, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEINPUT,
-        SendInput, VIRTUAL_KEY, VK_CONTROL, VK_DOWN, VK_ESCAPE, VK_K, VK_RETURN, VK_T,
-    },
+    Storage::Xps::{PW_CLIENTONLY, PrintWindow},
     UI::WindowsAndMessaging::{
-        BringWindowToTop, EnumWindows, GetClientRect, GetWindowThreadProcessId, HWND_TOP,
-        IsWindowVisible, SW_RESTORE, SWP_NOMOVE, SWP_NOSIZE, SWP_SHOWWINDOW, SetCursorPos,
-        SetForegroundWindow, SetWindowPos, ShowWindow,
+        BringWindowToTop, EnumWindows, GetClientRect, GetWindowThreadProcessId, HWND_BOTTOM,
+        HWND_TOP, IsWindowVisible, PostMessageW, SW_RESTORE, SWP_NOACTIVATE, SWP_NOMOVE,
+        SWP_NOSIZE, SWP_SHOWWINDOW, SetForegroundWindow, SetWindowPos, ShowWindow, WM_LBUTTONDOWN,
+        WM_LBUTTONUP, WM_MOUSEMOVE,
     },
 };
 #[cfg(windows)]
@@ -51,6 +59,12 @@ struct CompareOptions {
     ignore_rects: Vec<Rect>,
 }
 
+#[derive(Debug, Default)]
+struct CheckParityOptions {
+    refresh_reference: bool,
+    allow_window_capture: bool,
+}
+
 #[derive(Debug)]
 struct CaptureR3CodeOptions {
     exe: PathBuf,
@@ -58,6 +72,9 @@ struct CaptureR3CodeOptions {
     screen: Option<String>,
     theme: Option<String>,
     delay: Duration,
+    direct: bool,
+    offscreen: bool,
+    allow_window_capture: bool,
 }
 
 #[derive(Debug)]
@@ -77,7 +94,7 @@ fn main() -> Result<()> {
     let args: Vec<String> = args.collect();
 
     match command.as_str() {
-        "check-parity" => check_parity(args.iter().any(|arg| arg == "--refresh-reference")),
+        "check-parity" => check_parity(parse_check_parity_options(&args)?),
         "compare-screenshots" => compare_screenshots(parse_compare_options(&args)?),
         "capture-r3code-window" => capture_r3code_window(parse_capture_r3code_options(&args)?),
         "capture-reference-browser" => {
@@ -93,9 +110,9 @@ fn main() -> Result<()> {
 fn print_usage() {
     eprintln!(
         "Usage:
-  cargo run -p xtask -- check-parity [--refresh-reference]
+  cargo run -p xtask -- check-parity --allow-window-capture [--refresh-reference]
   cargo run -p xtask -- compare-screenshots --expected <png> --actual <png> [--channel-tolerance <n>] [--ignore-rect x,y,w,h] [--max-different-pixels-percent <n>]
-  cargo run -p xtask -- capture-r3code-window [--screen settings|command-palette|settings-theme-menu|settings-dark|settings-back|settings-keybindings|settings-archive] [--theme light|dark|system] [--output <png>]
+  cargo run -p xtask -- capture-r3code-window --allow-window-capture [--screen settings|command-palette|settings-theme-menu|settings-dark|settings-back|settings-keybindings|settings-source-control|settings-archive] [--theme light|dark|system] [--output <png>]
   cargo run -p xtask -- capture-reference-browser"
     );
 }
@@ -126,7 +143,26 @@ fn run(command: &mut Command) -> Result<()> {
     }
 }
 
-fn check_parity(refresh_reference: bool) -> Result<()> {
+fn parse_check_parity_options(args: &[String]) -> Result<CheckParityOptions> {
+    let mut options = CheckParityOptions::default();
+    for arg in args {
+        match arg.as_str() {
+            "--refresh-reference" => options.refresh_reference = true,
+            "--allow-window-capture" => options.allow_window_capture = true,
+            other => return Err(format!("unknown check-parity option: {other}").into()),
+        }
+    }
+    Ok(options)
+}
+
+fn check_parity(options: CheckParityOptions) -> Result<()> {
+    if !options.allow_window_capture {
+        return Err(
+            "check-parity launches native capture windows; rerun with --allow-window-capture"
+                .into(),
+        );
+    }
+
     let root = repo_root();
 
     run(Command::new("cargo")
@@ -139,13 +175,14 @@ fn check_parity(refresh_reference: bool) -> Result<()> {
         .args(["build", "-p", "r3_app"])
         .current_dir(&root))?;
 
-    if refresh_reference {
+    if options.refresh_reference {
         capture_reference_browser(CaptureReferenceOptions::default())?;
     }
 
     capture_r3code_window(CaptureR3CodeOptions {
         theme: Some("light".to_string()),
         output: resolve_repo_path("reference/screenshots/r3code-window.png"),
+        allow_window_capture: true,
         ..CaptureR3CodeOptions::default()
     })?;
     compare_screenshots(CompareOptions {
@@ -165,6 +202,7 @@ fn check_parity(refresh_reference: bool) -> Result<()> {
         screen: Some("command-palette".to_string()),
         theme: Some("light".to_string()),
         output: resolve_repo_path("reference/screenshots/r3code-command-palette-window.png"),
+        allow_window_capture: true,
         ..CaptureR3CodeOptions::default()
     })?;
     compare_screenshots(CompareOptions {
@@ -184,6 +222,7 @@ fn check_parity(refresh_reference: bool) -> Result<()> {
         screen: Some("settings".to_string()),
         theme: Some("light".to_string()),
         output: resolve_repo_path("reference/screenshots/r3code-settings-window.png"),
+        allow_window_capture: true,
         ..CaptureR3CodeOptions::default()
     })?;
     compare_screenshots(CompareOptions {
@@ -203,6 +242,7 @@ fn check_parity(refresh_reference: bool) -> Result<()> {
         screen: Some("settings-keybindings".to_string()),
         theme: Some("light".to_string()),
         output: resolve_repo_path("reference/screenshots/r3code-settings-keybindings-window.png"),
+        allow_window_capture: true,
         ..CaptureR3CodeOptions::default()
     })?;
     compare_screenshots(CompareOptions {
@@ -221,9 +261,36 @@ fn check_parity(refresh_reference: bool) -> Result<()> {
     })?;
 
     capture_r3code_window(CaptureR3CodeOptions {
+        screen: Some("settings-source-control".to_string()),
+        theme: Some("light".to_string()),
+        output: resolve_repo_path(
+            "reference/screenshots/r3code-settings-source-control-window.png",
+        ),
+        allow_window_capture: true,
+        ..CaptureR3CodeOptions::default()
+    })?;
+    compare_screenshots(CompareOptions {
+        expected: resolve_repo_path(
+            "reference/screenshots/upstream-settings-source-control-reference.png",
+        ),
+        actual: resolve_repo_path(
+            "reference/screenshots/r3code-settings-source-control-window.png",
+        ),
+        max_different_pixels_percent: 6.0,
+        channel_tolerance: 8,
+        ignore_rects: vec![Rect {
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 45,
+        }],
+    })?;
+
+    capture_r3code_window(CaptureR3CodeOptions {
         screen: Some("settings-archive".to_string()),
         theme: Some("light".to_string()),
         output: resolve_repo_path("reference/screenshots/r3code-settings-archive-window.png"),
+        allow_window_capture: true,
         ..CaptureR3CodeOptions::default()
     })?;
     compare_screenshots(CompareOptions {
@@ -245,6 +312,7 @@ fn check_parity(refresh_reference: bool) -> Result<()> {
         screen: Some("settings-back".to_string()),
         theme: Some("light".to_string()),
         output: resolve_repo_path("reference/screenshots/r3code-settings-back-window.png"),
+        allow_window_capture: true,
         ..CaptureR3CodeOptions::default()
     })?;
     compare_screenshots(CompareOptions {
@@ -264,6 +332,7 @@ fn check_parity(refresh_reference: bool) -> Result<()> {
         screen: Some("settings-theme-menu".to_string()),
         theme: Some("light".to_string()),
         output: resolve_repo_path("reference/screenshots/r3code-settings-theme-menu-window.png"),
+        allow_window_capture: true,
         ..CaptureR3CodeOptions::default()
     })?;
     compare_screenshots(CompareOptions {
@@ -285,6 +354,7 @@ fn check_parity(refresh_reference: bool) -> Result<()> {
         screen: Some("settings-dark".to_string()),
         theme: Some("light".to_string()),
         output: resolve_repo_path("reference/screenshots/r3code-settings-dark-window.png"),
+        allow_window_capture: true,
         ..CaptureR3CodeOptions::default()
     })?;
     compare_screenshots(CompareOptions {
@@ -303,6 +373,7 @@ fn check_parity(refresh_reference: bool) -> Result<()> {
     capture_r3code_window(CaptureR3CodeOptions {
         theme: Some("dark".to_string()),
         output: resolve_repo_path("reference/screenshots/r3code-dark-window.png"),
+        allow_window_capture: true,
         ..CaptureR3CodeOptions::default()
     })?;
 
@@ -381,6 +452,15 @@ fn parse_capture_r3code_options(args: &[String]) -> Result<CaptureR3CodeOptions>
                 options.delay =
                     Duration::from_secs(required_arg(args, index, "--delay-seconds")?.parse()?);
             }
+            "--direct" => {
+                options.direct = true;
+            }
+            "--offscreen" => {
+                options.offscreen = true;
+            }
+            "--allow-window-capture" => {
+                options.allow_window_capture = true;
+            }
             other => return Err(format!("unknown capture-r3code-window option: {other}").into()),
         }
         index += 1;
@@ -428,6 +508,9 @@ impl Default for CaptureR3CodeOptions {
             screen: None,
             theme: None,
             delay: Duration::from_secs(6),
+            direct: false,
+            offscreen: false,
+            allow_window_capture: false,
         }
     }
 }
@@ -536,7 +619,23 @@ fn pixel_different(left: [u8; 4], right: [u8; 4], tolerance: u8) -> bool {
 }
 
 #[cfg(windows)]
-fn capture_r3code_window(options: CaptureR3CodeOptions) -> Result<()> {
+fn capture_r3code_window(mut options: CaptureR3CodeOptions) -> Result<()> {
+    if !options.allow_window_capture {
+        return Err(
+            "capture-r3code-window launches a native capture window; rerun with --allow-window-capture"
+                .into(),
+        );
+    }
+
+    if !options.direct {
+        options.direct = true;
+        options.offscreen = true;
+    }
+    capture_r3code_window_direct(&options)
+}
+
+#[cfg(windows)]
+fn capture_r3code_window_direct(options: &CaptureR3CodeOptions) -> Result<()> {
     fs::create_dir_all(
         options
             .output
@@ -552,6 +651,7 @@ fn capture_r3code_window(options: CaptureR3CodeOptions) -> Result<()> {
             | "settings-dark"
             | "settings-back"
             | "settings-keybindings"
+            | "settings-source-control"
             | "settings-archive" => {
                 command.env("R3CODE_SCREEN", "settings");
             }
@@ -564,32 +664,46 @@ fn capture_r3code_window(options: CaptureR3CodeOptions) -> Result<()> {
         command.env("R3CODE_THEME", theme);
     }
     let mut child = command.spawn()?;
-    thread::sleep(options.delay);
 
     let result = (|| -> Result<()> {
-        let hwnd = find_window_for_pid(child.id())?;
-        prepare_window_for_capture(hwnd);
+        let wait_started = Instant::now();
+        let hwnd = wait_window_for_pid(child.id(), options.delay)?;
+        if options.offscreen {
+            prepare_window_for_offscreen_capture(hwnd);
+        } else {
+            prepare_window_for_capture(hwnd);
+        }
+        if let Some(remaining) = options.delay.checked_sub(wait_started.elapsed()) {
+            thread::sleep(remaining);
+        }
         if options.screen.as_deref() == Some("command-palette") {
-            send_command_palette_shortcut()?;
+            click_command_palette_trigger(hwnd)?;
             thread::sleep(Duration::from_millis(350));
         } else if options.screen.as_deref() == Some("settings-theme-menu") {
-            send_settings_theme_menu_shortcut()?;
+            click_settings_theme_select(hwnd)?;
             thread::sleep(Duration::from_millis(350));
         } else if options.screen.as_deref() == Some("settings-dark") {
-            send_settings_dark_shortcut()?;
+            click_settings_theme_select(hwnd)?;
+            thread::sleep(Duration::from_millis(150));
+            click_settings_theme_dark_option(hwnd)?;
             thread::sleep(Duration::from_millis(350));
         } else if options.screen.as_deref() == Some("settings-back") {
-            send_settings_back_shortcut()?;
+            click_settings_back(hwnd)?;
             thread::sleep(Duration::from_millis(350));
         } else if options.screen.as_deref() == Some("settings-keybindings") {
             click_settings_keybindings_nav(hwnd)?;
+            thread::sleep(Duration::from_millis(350));
+        } else if options.screen.as_deref() == Some("settings-source-control") {
+            click_settings_source_control_nav(hwnd)?;
             thread::sleep(Duration::from_millis(350));
         } else if options.screen.as_deref() == Some("settings-archive") {
             click_settings_archive_nav(hwnd)?;
             thread::sleep(Duration::from_millis(350));
         }
-        let image = capture_client_area(hwnd)?;
-        image.save(&options.output)?;
+        if capture_window_with_graphics_capture(hwnd, &options.output).is_err() {
+            let image = capture_client_area(hwnd)?;
+            image.save(&options.output)?;
+        }
         println!("{}", options.output.display());
         Ok(())
     })();
@@ -623,32 +737,50 @@ fn prepare_window_for_capture(hwnd: HWND) {
 }
 
 #[cfg(windows)]
-fn send_command_palette_shortcut() -> Result<()> {
-    send_key_sequence(&[VK_CONTROL, VK_K])
+fn prepare_window_for_offscreen_capture(hwnd: HWND) {
+    unsafe {
+        let _ = ShowWindow(hwnd, SW_RESTORE);
+        let _ = SetWindowPos(
+            hwnd,
+            Some(HWND_BOTTOM),
+            -20000,
+            -20000,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW,
+        );
+    }
+    thread::sleep(Duration::from_millis(350));
 }
 
 #[cfg(windows)]
-fn send_settings_theme_menu_shortcut() -> Result<()> {
-    send_key_sequence(&[VK_CONTROL, VK_T])
+fn click_command_palette_trigger(hwnd: HWND) -> Result<()> {
+    send_client_click(hwnd, 76, 74)
 }
 
 #[cfg(windows)]
-fn send_settings_dark_shortcut() -> Result<()> {
-    send_settings_theme_menu_shortcut()?;
-    thread::sleep(Duration::from_millis(100));
-    send_key_tap(VK_DOWN)?;
-    thread::sleep(Duration::from_millis(60));
-    send_key_tap(VK_RETURN)
+fn click_settings_theme_select(hwnd: HWND) -> Result<()> {
+    send_client_click(hwnd, 1050, 135)
 }
 
 #[cfg(windows)]
-fn send_settings_back_shortcut() -> Result<()> {
-    send_key_tap(VK_ESCAPE)
+fn click_settings_theme_dark_option(hwnd: HWND) -> Result<()> {
+    send_client_click(hwnd, 1050, 229)
+}
+
+#[cfg(windows)]
+fn click_settings_back(hwnd: HWND) -> Result<()> {
+    send_client_click(hwnd, 76, 778)
 }
 
 #[cfg(windows)]
 fn click_settings_keybindings_nav(hwnd: HWND) -> Result<()> {
     send_client_click(hwnd, 78, 102)
+}
+
+#[cfg(windows)]
+fn click_settings_source_control_nav(hwnd: HWND) -> Result<()> {
+    send_client_click(hwnd, 78, 166)
 }
 
 #[cfg(windows)]
@@ -658,82 +790,103 @@ fn click_settings_archive_nav(hwnd: HWND) -> Result<()> {
 
 #[cfg(windows)]
 fn send_client_click(hwnd: HWND, x: i32, y: i32) -> Result<()> {
-    let mut point = POINT { x, y };
-    if !unsafe { ClientToScreen(hwnd, &mut point) }.as_bool() {
-        return Err("ClientToScreen failed".into());
-    }
+    let position = mouse_position_lparam(x, y)?;
     unsafe {
-        SetCursorPos(point.x, point.y)?;
+        PostMessageW(Some(hwnd), WM_MOUSEMOVE, WPARAM(0), position)?;
+        PostMessageW(Some(hwnd), WM_LBUTTONDOWN, WPARAM(1), position)?;
+        PostMessageW(Some(hwnd), WM_LBUTTONUP, WPARAM(0), position)?;
     }
-    thread::sleep(Duration::from_millis(80));
-    let inputs = [
-        mouse_input(MOUSEEVENTF_LEFTDOWN),
-        mouse_input(MOUSEEVENTF_LEFTUP),
-    ];
-    send_inputs(&inputs, "mouse")
+    Ok(())
 }
 
 #[cfg(windows)]
-fn send_key_sequence(keys: &[VIRTUAL_KEY]) -> Result<()> {
-    let mut inputs = Vec::with_capacity(keys.len() * 2);
-    for key in keys {
-        inputs.push(keyboard_input(*key, KEYBD_EVENT_FLAGS(0)));
+fn mouse_position_lparam(x: i32, y: i32) -> Result<LPARAM> {
+    if !(0..=i16::MAX as i32).contains(&x) || !(0..=i16::MAX as i32).contains(&y) {
+        return Err(format!("mouse position is outside client coordinate range: {x},{y}").into());
     }
-    for key in keys.iter().rev() {
-        inputs.push(keyboard_input(*key, KEYEVENTF_KEYUP));
-    }
-    send_inputs(&inputs, "key")
+    Ok(LPARAM((((y as u32) << 16) | (x as u32)) as isize))
 }
 
 #[cfg(windows)]
-fn send_key_tap(key: VIRTUAL_KEY) -> Result<()> {
-    let inputs = [
-        keyboard_input(key, KEYBD_EVENT_FLAGS(0)),
-        keyboard_input(key, KEYEVENTF_KEYUP),
-    ];
-    send_inputs(&inputs, "key")
-}
-
-#[cfg(windows)]
-fn send_inputs(inputs: &[INPUT], input_kind: &str) -> Result<()> {
-    let sent = unsafe { SendInput(inputs, std::mem::size_of::<INPUT>() as i32) };
-    if sent == inputs.len() as u32 {
-        Ok(())
-    } else {
-        Err(format!("SendInput sent {sent}/{} {input_kind} events", inputs.len()).into())
+fn crop_capture_to_client_size(path: &Path, width: u32, height: u32) -> Result<()> {
+    let image = image::open(path)?.to_rgba8();
+    if image.width() == width && image.height() == height {
+        return Ok(());
     }
-}
 
-#[cfg(windows)]
-fn keyboard_input(key: VIRTUAL_KEY, flags: KEYBD_EVENT_FLAGS) -> INPUT {
-    INPUT {
-        r#type: INPUT_KEYBOARD,
-        Anonymous: INPUT_0 {
-            ki: KEYBDINPUT {
-                wVk: key,
-                wScan: 0,
-                dwFlags: flags,
-                time: 0,
-                dwExtraInfo: 0,
-            },
-        },
+    if image.width() < width || image.height() < height {
+        return Err(format!(
+            "captured image is smaller than client bounds: {}x{} < {width}x{height}",
+            image.width(),
+            image.height()
+        )
+        .into());
     }
+
+    let crop_x = (image.width() - width) / 2;
+    let crop_y = (image.height() - height) / 2;
+    let cropped = image::imageops::crop_imm(&image, crop_x, crop_y, width, height).to_image();
+    cropped.save(path)?;
+    Ok(())
 }
 
 #[cfg(windows)]
-fn mouse_input(flags: MOUSE_EVENT_FLAGS) -> INPUT {
-    INPUT {
-        r#type: INPUT_MOUSE,
-        Anonymous: INPUT_0 {
-            mi: MOUSEINPUT {
-                dx: 0,
-                dy: 0,
-                mouseData: 0,
-                dwFlags: flags,
-                time: 0,
-                dwExtraInfo: 0,
-            },
-        },
+fn capture_window_with_graphics_capture(hwnd: HWND, output: &Path) -> Result<()> {
+    struct SingleFrameCapture {
+        output: PathBuf,
+    }
+
+    impl GraphicsCaptureApiHandler for SingleFrameCapture {
+        type Error = Box<dyn std::error::Error + Send + Sync>;
+        type Flags = PathBuf;
+
+        fn new(ctx: CaptureContext<Self::Flags>) -> std::result::Result<Self, Self::Error> {
+            Ok(Self { output: ctx.flags })
+        }
+
+        fn on_frame_arrived(
+            &mut self,
+            frame: &mut Frame,
+            capture_control: InternalCaptureControl,
+        ) -> std::result::Result<(), Self::Error> {
+            frame.save_as_image(&self.output, CaptureImageFormat::Png)?;
+            capture_control.stop();
+            Ok(())
+        }
+    }
+
+    let mut rect = RECT::default();
+    unsafe {
+        GetClientRect(hwnd, &mut rect)?;
+    }
+    let width = (rect.right - rect.left) as u32;
+    let height = (rect.bottom - rect.top) as u32;
+
+    let window = CaptureWindow::from_raw_hwnd(hwnd.0.cast());
+    let settings = Settings::new(
+        window,
+        CursorCaptureSettings::WithoutCursor,
+        DrawBorderSettings::WithoutBorder,
+        SecondaryWindowSettings::Include,
+        MinimumUpdateIntervalSettings::Default,
+        DirtyRegionSettings::Default,
+        ColorFormat::Rgba8,
+        output.to_path_buf(),
+    );
+    SingleFrameCapture::start(settings)?;
+    crop_capture_to_client_size(output, width, height)?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn wait_window_for_pid(pid: u32, timeout: Duration) -> Result<HWND> {
+    let deadline = Instant::now() + timeout.max(Duration::from_secs(1));
+    loop {
+        match find_window_for_pid(pid) {
+            Ok(hwnd) => return Ok(hwnd),
+            Err(error) if Instant::now() >= deadline => return Err(error),
+            Err(_) => thread::sleep(Duration::from_millis(50)),
+        }
     }
 }
 
@@ -785,45 +938,61 @@ fn capture_client_area(hwnd: HWND) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>> {
             return Err(format!("invalid client bounds {width}x{height}").into());
         }
 
-        let mut origin = POINT { x: 0, y: 0 };
-        if !ClientToScreen(hwnd, &mut origin).as_bool() {
-            return Err("ClientToScreen failed".into());
+        let window_dc = GetDC(Some(hwnd));
+        if window_dc.is_invalid() {
+            return Err("GetDC(hwnd) failed".into());
         }
-
-        let screen_dc = GetDC(None);
-        if screen_dc.is_invalid() {
-            return Err("GetDC failed".into());
-        }
-        let memory_dc = CreateCompatibleDC(Some(screen_dc));
+        let memory_dc = CreateCompatibleDC(Some(window_dc));
         if memory_dc.is_invalid() {
-            let _ = ReleaseDC(None, screen_dc);
+            let _ = ReleaseDC(Some(hwnd), window_dc);
             return Err("CreateCompatibleDC failed".into());
         }
-        let bitmap = CreateCompatibleBitmap(screen_dc, width, height);
+        let bitmap = CreateCompatibleBitmap(window_dc, width, height);
         if bitmap.is_invalid() {
             let _ = DeleteDC(memory_dc);
-            let _ = ReleaseDC(None, screen_dc);
+            let _ = ReleaseDC(Some(hwnd), window_dc);
             return Err("CreateCompatibleBitmap failed".into());
         }
 
         let old_object = SelectObject(memory_dc, HGDIOBJ(bitmap.0));
-        let copied = BitBlt(
-            memory_dc,
-            0,
-            0,
-            width,
-            height,
-            Some(screen_dc),
-            origin.x,
-            origin.y,
-            SRCCOPY,
-        );
-        if copied.is_err() {
-            let _ = SelectObject(memory_dc, old_object);
-            let _ = DeleteObject(HGDIOBJ(bitmap.0));
-            let _ = DeleteDC(memory_dc);
+        let printed = PrintWindow(hwnd, memory_dc, PW_CLIENTONLY).as_bool();
+        if !printed {
+            let mut origin = POINT { x: 0, y: 0 };
+            if !ClientToScreen(hwnd, &mut origin).as_bool() {
+                let _ = SelectObject(memory_dc, old_object);
+                let _ = DeleteObject(HGDIOBJ(bitmap.0));
+                let _ = DeleteDC(memory_dc);
+                let _ = ReleaseDC(Some(hwnd), window_dc);
+                return Err("PrintWindow and ClientToScreen failed".into());
+            }
+
+            let screen_dc = GetDC(None);
+            if screen_dc.is_invalid() {
+                let _ = SelectObject(memory_dc, old_object);
+                let _ = DeleteObject(HGDIOBJ(bitmap.0));
+                let _ = DeleteDC(memory_dc);
+                let _ = ReleaseDC(Some(hwnd), window_dc);
+                return Err("PrintWindow failed and GetDC failed".into());
+            }
+            let copied = BitBlt(
+                memory_dc,
+                0,
+                0,
+                width,
+                height,
+                Some(screen_dc),
+                origin.x,
+                origin.y,
+                SRCCOPY,
+            );
             let _ = ReleaseDC(None, screen_dc);
-            return Err("BitBlt failed".into());
+            if copied.is_err() {
+                let _ = SelectObject(memory_dc, old_object);
+                let _ = DeleteObject(HGDIOBJ(bitmap.0));
+                let _ = DeleteDC(memory_dc);
+                let _ = ReleaseDC(Some(hwnd), window_dc);
+                return Err("PrintWindow and BitBlt failed".into());
+            }
         }
 
         let mut info = BITMAPINFO {
@@ -852,7 +1021,7 @@ fn capture_client_area(hwnd: HWND) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>> {
         let _ = SelectObject(memory_dc, old_object);
         let _ = DeleteObject(HGDIOBJ(bitmap.0));
         let _ = DeleteDC(memory_dc);
-        let _ = ReleaseDC(None, screen_dc);
+        let _ = ReleaseDC(Some(hwnd), window_dc);
 
         if rows == 0 {
             return Err("GetDIBits failed".into());
@@ -935,7 +1104,7 @@ fn capture_reference_browser(options: CaptureReferenceOptions) -> Result<()> {
         fs::write(
             options.output_dir.join("CAPTURE_MANIFEST.txt"),
             format!(
-                "Upstream reference repository: {}\nReference commit: {}\nIsolated reference home: {}\nOutput directory: {}\nCaptured:\n- upstream-empty-reference.png\n- upstream-command-palette-reference.png\n- upstream-settings-reference.png\n- upstream-settings-keybindings-reference.png\n- upstream-settings-archive-reference.png\n- upstream-settings-theme-menu-reference.png\n- upstream-settings-dark-reference.png\n",
+                "Upstream reference repository: {}\nReference commit: {}\nIsolated reference home: {}\nOutput directory: {}\nCaptured:\n- upstream-empty-reference.png\n- upstream-command-palette-reference.png\n- upstream-settings-reference.png\n- upstream-settings-keybindings-reference.png\n- upstream-settings-source-control-reference.png\n- upstream-settings-archive-reference.png\n- upstream-settings-theme-menu-reference.png\n- upstream-settings-dark-reference.png\n",
                 options.repo.display(),
                 commit.trim(),
                 options.home.display(),
@@ -1012,6 +1181,14 @@ const path = require("path");
   await page.goto(new URL("/settings/keybindings", appOrigin).toString(), { waitUntil: "networkidle", timeout: 30000 });
   await page.getByText("Command").first().waitFor({ timeout: 15000 });
   await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-settings-keybindings-reference.png"), fullPage: true });
+  await page.goto(new URL("/settings/source-control", appOrigin).toString(), { waitUntil: "networkidle", timeout: 30000 });
+  await page.getByText("VERSION CONTROL").first().waitFor({ timeout: 15000 });
+  await page.waitForTimeout(1500);
+  if (await page.getByText("Updates Available").first().isVisible({ timeout: 500 }).catch(() => false)) {
+    await page.mouse.click(1242, 89);
+    await page.waitForTimeout(250);
+  }
+  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-settings-source-control-reference.png"), fullPage: true });
   await page.goto(new URL("/settings/archived", appOrigin).toString(), { waitUntil: "networkidle", timeout: 30000 });
   await page.getByText("No archived threads").first().waitFor({ timeout: 15000 });
   await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-settings-archive-reference.png"), fullPage: true });

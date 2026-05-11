@@ -6874,6 +6874,7 @@ version = "0.1.0"
 dependencies = [
  "image",
  "windows 0.62.2",
+ "windows-capture",
 ]
 
 [[package]]

@@ -31,6 +31,7 @@ The task currently captures:
 - `reference/screenshots/upstream-command-palette-reference.png`
 - `reference/screenshots/upstream-settings-reference.png`
 - `reference/screenshots/upstream-settings-keybindings-reference.png`
+- `reference/screenshots/upstream-settings-source-control-reference.png`
 - `reference/screenshots/upstream-settings-archive-reference.png`
 - `reference/screenshots/upstream-settings-theme-menu-reference.png`
 - `reference/screenshots/upstream-settings-dark-reference.png`
@@ -53,15 +54,17 @@ Each implemented GPUI screen needs:
 Run the current implemented-screen gate:
 
 ```text
-cargo run -p xtask -- check-parity
+cargo run -p xtask -- check-parity --allow-window-capture
 ```
 
 The app defaults to `R3CODE_THEME=system`, which resolves from GPUI's OS window appearance. The parity gate forces `light` for screenshots that compare against the current light reference captures and also captures a dark R3Code smoke screenshot.
+Native R3Code captures move the GPUI window off-screen immediately, drive clickable controls with window messages, and capture the GPU surface through Windows Graphics Capture so parity runs do not steal the foreground cursor or cover the active desktop.
+The explicit `--allow-window-capture` flag is required so normal xtask usage cannot launch capture windows accidentally.
 
 Run it with a fresh upstream reference capture:
 
 ```text
-cargo run -p xtask -- check-parity --refresh-reference
+cargo run -p xtask -- check-parity --allow-window-capture --refresh-reference
 ```
 
 ## Current Empty-State Baseline
@@ -75,7 +78,7 @@ Allowed brand-copy difference: `--ignore-rect 0,0,120,45`
 Current measured diff:
 
 ```text
-cargo run -p xtask -- capture-r3code-window --theme light --output reference\screenshots\r3code-window.png
+cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --output reference\screenshots\r3code-window.png
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-empty-reference.png --actual reference\screenshots\r3code-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 2
 ```
 
@@ -92,13 +95,13 @@ Allowed brand-copy difference: `--ignore-rect 0,0,120,45`
 Current measured diff:
 
 ```text
-cargo run -p xtask -- capture-r3code-window --theme light --screen command-palette --output reference\screenshots\r3code-command-palette-window.png
+cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen command-palette --output reference\screenshots\r3code-command-palette-window.png
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-command-palette-reference.png --actual reference\screenshots\r3code-command-palette-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 5
 ```
 
 Last measured result: `3.267%`.
 
-The R3Code command palette capture launches the normal empty shell, focuses the GPUI window, and opens the palette with the native Ctrl+K shortcut path before taking the screenshot.
+The R3Code command palette capture launches the normal empty shell and opens the palette through the native sidebar click target before taking the screenshot.
 
 ## Current Settings Baseline
 
@@ -111,7 +114,7 @@ Allowed brand-copy difference: `--ignore-rect 0,0,120,45`
 Current measured diff:
 
 ```text
-cargo run -p xtask -- capture-r3code-window --theme light --screen settings --output reference\screenshots\r3code-settings-window.png
+cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen settings --output reference\screenshots\r3code-settings-window.png
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-reference.png --actual reference\screenshots\r3code-settings-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
 ```
 
@@ -119,7 +122,7 @@ Last measured result: `5.334%`.
 
 The settings sidebar renders the upstream settings nav icon set through GPUI SVG assets:
 `Settings2`, `Keyboard`, `Bot`, `GitBranch`, `Link2`, `Archive`, and the footer `ArrowLeft`.
-The footer Back affordance is a native GPUI click target, and Escape follows the same settings-to-empty state transition for automated parity verification.
+The footer Back affordance is a native GPUI click target, and the parity gate follows that click path for settings-to-empty verification.
 The settings nav rows are native GPUI click targets; the parity gate opens Keybindings through the native settings nav click path.
 
 ## Current Settings Keybindings Baseline
@@ -133,11 +136,28 @@ Allowed brand-copy difference: `--ignore-rect 0,0,120,45`
 Current measured diff:
 
 ```text
-cargo run -p xtask -- capture-r3code-window --theme light --screen settings-keybindings --output reference\screenshots\r3code-settings-keybindings-window.png
+cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen settings-keybindings --output reference\screenshots\r3code-settings-keybindings-window.png
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-keybindings-reference.png --actual reference\screenshots\r3code-settings-keybindings-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 10
 ```
 
 Last measured result: `8.790%`.
+
+## Current Settings Source Control Baseline
+
+Reference: `reference/screenshots/upstream-settings-source-control-reference.png`
+
+R3Code capture: `reference/screenshots/r3code-settings-source-control-window.png`
+
+Allowed brand-copy difference: `--ignore-rect 0,0,120,45`
+
+Current measured diff:
+
+```text
+cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen settings-source-control --output reference\screenshots\r3code-settings-source-control-window.png
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-source-control-reference.png --actual reference\screenshots\r3code-settings-source-control-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
+```
+
+Last measured result: `2.949%`.
 
 ## Current Settings Archive Baseline
 
@@ -150,7 +170,7 @@ Allowed brand-copy difference: `--ignore-rect 0,0,120,45`
 Current measured diff:
 
 ```text
-cargo run -p xtask -- capture-r3code-window --theme light --screen settings-archive --output reference\screenshots\r3code-settings-archive-window.png
+cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen settings-archive --output reference\screenshots\r3code-settings-archive-window.png
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-archive-reference.png --actual reference\screenshots\r3code-settings-archive-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
 ```
 
@@ -167,7 +187,7 @@ Allowed brand-copy difference: `--ignore-rect 0,0,120,45`
 Current measured diff:
 
 ```text
-cargo run -p xtask -- capture-r3code-window --theme light --screen settings-back --output reference\screenshots\r3code-settings-back-window.png
+cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen settings-back --output reference\screenshots\r3code-settings-back-window.png
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-empty-reference.png --actual reference\screenshots\r3code-settings-back-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 2
 ```
 
@@ -184,7 +204,7 @@ Allowed brand-copy difference: `--ignore-rect 0,0,120,45`
 Current measured diff:
 
 ```text
-cargo run -p xtask -- capture-r3code-window --theme light --screen settings-theme-menu --output reference\screenshots\r3code-settings-theme-menu-window.png
+cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen settings-theme-menu --output reference\screenshots\r3code-settings-theme-menu-window.png
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-theme-menu-reference.png --actual reference\screenshots\r3code-settings-theme-menu-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
 ```
 
@@ -203,7 +223,7 @@ Allowed brand-copy difference: `--ignore-rect 0,0,120,45`
 Current measured diff:
 
 ```text
-cargo run -p xtask -- capture-r3code-window --theme light --screen settings-dark --output reference\screenshots\r3code-settings-dark-window.png
+cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen settings-dark --output reference\screenshots\r3code-settings-dark-window.png
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-dark-reference.png --actual reference\screenshots\r3code-settings-dark-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
 ```
 

@@ -8,3 +8,4 @@ repository.workspace = true
 [dependencies]
 image.workspace = true
 windows.workspace = true
+windows-capture = "1.5.0"

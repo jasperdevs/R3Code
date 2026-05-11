@@ -15,9 +15,13 @@ impl AssetSource for R3Assets {
             }
             "icons/bot.svg" => include_bytes!("../assets/icons/bot.svg").as_slice(),
             "icons/git-branch.svg" => include_bytes!("../assets/icons/git-branch.svg").as_slice(),
+            "icons/git-pull-request.svg" => {
+                include_bytes!("../assets/icons/git-pull-request.svg").as_slice()
+            }
             "icons/keyboard.svg" => include_bytes!("../assets/icons/keyboard.svg").as_slice(),
             "icons/link-2.svg" => include_bytes!("../assets/icons/link-2.svg").as_slice(),
             "icons/plus-square.svg" => include_bytes!("../assets/icons/plus-square.svg").as_slice(),
+            "icons/refresh-cw.svg" => include_bytes!("../assets/icons/refresh-cw.svg").as_slice(),
             "icons/settings-2.svg" => include_bytes!("../assets/icons/settings-2.svg").as_slice(),
             _ => return Ok(None),
         };
@@ -36,9 +40,11 @@ impl AssetSource for R3Assets {
             "arrow-up-down.svg",
             "bot.svg",
             "git-branch.svg",
+            "git-pull-request.svg",
             "keyboard.svg",
             "link-2.svg",
             "plus-square.svg",
+            "refresh-cw.svg",
             "settings-2.svg",
         ]
         .into_iter()

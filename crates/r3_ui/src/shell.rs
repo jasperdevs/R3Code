@@ -19,6 +19,7 @@ pub struct R3Shell {
     command_palette_highlighted_index: usize,
     settings_select_open: Option<SettingsSelect>,
     settings_section: SettingsSection,
+    source_control_scan_requested: bool,
     settings_theme_highlighted_index: usize,
     shell_focus_handle: FocusHandle,
     command_palette_focus_handle: FocusHandle,
@@ -44,6 +45,7 @@ impl R3Shell {
             command_palette_highlighted_index: 0,
             settings_select_open: None,
             settings_section: SettingsSection::General,
+            source_control_scan_requested: false,
             settings_theme_highlighted_index: 0,
             shell_focus_handle: cx.focus_handle(),
             command_palette_focus_handle: cx.focus_handle(),
@@ -666,6 +668,9 @@ impl R3Shell {
                 SettingsSection::Keybindings => {
                     self.settings_keybindings_panel().into_any_element()
                 }
+                SettingsSection::SourceControl => {
+                    self.settings_source_control_panel(cx).into_any_element()
+                }
                 SettingsSection::Archive => self.settings_archive_panel().into_any_element(),
                 section => self.settings_placeholder_panel(section).into_any_element(),
             })
@@ -998,6 +1003,297 @@ impl R3Shell {
                                     ),
                             ),
                     ),
+            )
+    }
+
+    fn settings_source_control_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.source_control_scan_requested {
+            return self.source_control_empty_panel(cx).into_any_element();
+        }
+
+        div()
+            .id("settings-source-control-scroll")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .items_center()
+            .overflow_y_scroll()
+            .p_8()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .w(px(768.0))
+                    .gap_8()
+                    .child(self.source_control_skeleton_section("VERSION CONTROL", true, cx))
+                    .child(self.source_control_skeleton_section(
+                        "SOURCE CONTROL PROVIDERS",
+                        false,
+                        cx,
+                    )),
+            )
+            .into_any_element()
+    }
+
+    fn source_control_empty_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let description = if self.source_control_scan_requested {
+            "No Git or hosting integrations were detected. Install Git or configure credentials, then scan again."
+        } else {
+            "Install Git on the server, add optional hosting integrations or credentials your workspace needs, then rescan."
+        };
+
+        div()
+            .id("settings-source-control-scroll")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .items_center()
+            .overflow_y_scroll()
+            .p_8()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .w(px(768.0))
+                    .gap_2p5()
+                    .child(self.settings_section_header("SERVER ENVIRONMENT"))
+                    .child(
+                        div()
+                            .relative()
+                            .overflow_hidden()
+                            .rounded(px(16.0))
+                            .border_1()
+                            .border_color(self.theme.border)
+                            .bg(self.theme.card)
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .items_center()
+                                    .justify_center()
+                                    .min_h(px(352.0))
+                                    .gap_6()
+                                    .p_12()
+                                    .text_align(TextAlign::Center)
+                                    .child(self.empty_source_control_media())
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .items_center()
+                                            .w(px(384.0))
+                                            .child(
+                                                div()
+                                                    .font_weight(FontWeight(650.0))
+                                                    .text_size(px(20.0))
+                                                    .child("Nothing detected yet"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .mt_1()
+                                                    .text_size(px(14.0))
+                                                    .text_color(self.theme.muted_foreground)
+                                                    .child(description),
+                                            ),
+                                    )
+                                    .child(self.source_control_scan_button(cx)),
+                            ),
+                    ),
+            )
+    }
+
+    fn source_control_skeleton_section(
+        &self,
+        title: &'static str,
+        header_action: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap_2p5()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .px_1()
+                    .child(self.settings_section_header(title))
+                    .child(if header_action {
+                        self.source_control_scan_icon_button(cx).into_any_element()
+                    } else {
+                        div().w(px(20.0)).h(px(20.0)).into_any_element()
+                    }),
+            )
+            .child(
+                div()
+                    .relative()
+                    .overflow_hidden()
+                    .rounded(px(16.0))
+                    .border_1()
+                    .border_color(self.theme.border)
+                    .bg(self.theme.card)
+                    .child(self.source_control_skeleton_row(true))
+                    .child(self.source_control_skeleton_row(false)),
+            )
+    }
+
+    fn source_control_skeleton_row(&self, first: bool) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .min_h(px(68.0))
+            .border_t_1()
+            .border_color(if first {
+                self.theme.card
+            } else {
+                self.theme.border
+            })
+            .px_5()
+            .py_3p5()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .child(self.skeleton_block(px(18.0), px(18.0), px(9.0)))
+                            .child(self.skeleton_block(px(112.0), px(16.0), px(8.0)))
+                            .child(self.skeleton_block(px(56.0), px(18.0), px(9.0))),
+                    )
+                    .child(self.skeleton_block(px(320.0), px(10.0), px(5.0))),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(self.skeleton_block(px(28.0), px(28.0), px(7.0)))
+                    .child(self.skeleton_block(px(36.0), px(18.0), px(9.0))),
+            )
+    }
+
+    fn skeleton_block(
+        &self,
+        width: gpui::Pixels,
+        height: gpui::Pixels,
+        radius: gpui::Pixels,
+    ) -> impl IntoElement {
+        div()
+            .w(width)
+            .h(height)
+            .rounded(radius)
+            .bg(self.theme.accent)
+    }
+
+    fn empty_source_control_media(&self) -> impl IntoElement {
+        div()
+            .relative()
+            .mb_6()
+            .w(px(42.0))
+            .h(px(38.0))
+            .child(
+                div()
+                    .absolute()
+                    .left(px(0.0))
+                    .bottom(px(1.0))
+                    .w(px(36.0))
+                    .h(px(36.0))
+                    .rounded(px(8.0))
+                    .border_1()
+                    .border_color(self.theme.border)
+                    .bg(self.theme.card)
+                    .opacity(0.78),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .right(px(0.0))
+                    .bottom(px(1.0))
+                    .w(px(36.0))
+                    .h(px(36.0))
+                    .rounded(px(8.0))
+                    .border_1()
+                    .border_color(self.theme.border)
+                    .bg(self.theme.card)
+                    .opacity(0.78),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .left(px(3.0))
+                    .top(px(0.0))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .w(px(36.0))
+                    .h(px(36.0))
+                    .rounded(px(8.0))
+                    .border_1()
+                    .border_color(self.theme.border)
+                    .bg(self.theme.card)
+                    .child(
+                        svg()
+                            .path("icons/git-pull-request.svg")
+                            .size_4()
+                            .text_color(self.theme.foreground),
+                    ),
+            )
+    }
+
+    fn source_control_scan_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("source-control-scan")
+            .flex()
+            .items_center()
+            .gap_1p5()
+            .h(px(32.0))
+            .rounded(px(7.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.background)
+            .px_3()
+            .text_size(px(12.0))
+            .cursor_pointer()
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.source_control_scan_requested = true;
+                cx.notify();
+            }))
+            .child(
+                svg()
+                    .path("icons/refresh-cw.svg")
+                    .size_4()
+                    .text_color(self.theme.foreground),
+            )
+            .child("Scan")
+    }
+
+    fn source_control_scan_icon_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("source-control-rescan")
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(20.0))
+            .h(px(20.0))
+            .rounded(px(4.0))
+            .cursor_pointer()
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.source_control_scan_requested = true;
+                cx.notify();
+            }))
+            .child(
+                svg()
+                    .path("icons/refresh-cw.svg")
+                    .size_3()
+                    .text_color(self.theme.muted_foreground),
             )
     }
 
