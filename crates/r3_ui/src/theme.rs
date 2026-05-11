@@ -5,7 +5,7 @@ pub const MAIN_MIN_WIDTH: f32 = 640.0;
 pub const RADIUS: f32 = 10.0;
 pub const SCROLLBAR_WIDTH: f32 = 6.0;
 
-pub const FONT_FAMILY: &str = "DM Sans";
+pub const FONT_FAMILY: &str = "Segoe UI";
 pub const MONO_FONT_FAMILY: &str = "SF Mono";
 
 #[derive(Debug, Clone, Copy)]

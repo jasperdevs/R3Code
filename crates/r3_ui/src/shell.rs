@@ -4,7 +4,7 @@ use gpui::{
 };
 use r3_core::{APP_NAME, AppSnapshot, MessageAuthor, ThreadStatus};
 
-use crate::theme::{SIDEBAR_MIN_WIDTH, Theme};
+use crate::theme::{FONT_FAMILY, SIDEBAR_MIN_WIDTH, Theme};
 
 pub struct R3Shell {
     snapshot: AppSnapshot,
@@ -28,7 +28,7 @@ impl Render for R3Shell {
             .w_full()
             .bg(self.theme.background)
             .text_color(self.theme.foreground)
-            .font_family(SharedString::from("DM Sans"))
+            .font_family(SharedString::from(FONT_FAMILY))
             .child(self.sidebar())
             .child(self.main_panel())
     }

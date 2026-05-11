@@ -14,3 +14,10 @@ cargo run -p r3_app
 ## Parity
 
 The UI is built against a frozen T3Code reference. See [docs/reference/T3CODE_VERSION.md](docs/reference/T3CODE_VERSION.md) and [docs/reference/PARITY_PLAN.md](docs/reference/PARITY_PLAN.md).
+
+Useful local checks:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-r3code-window.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\compare-screenshots.ps1 -Expected reference\screenshots\t3code-pair-reference.png -Actual reference\screenshots\r3code-window.png
+```

@@ -27,22 +27,30 @@ try {
 using System;
 using System.Runtime.InteropServices;
 public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
-public class Win32Capture { [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT rect); }
+public struct POINT { public int X; public int Y; }
+public class Win32Capture {
+  [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr hWnd, out RECT rect);
+  [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr hWnd, ref POINT point);
+}
 '@
   }
 
   $rect = New-Object RECT
-  [Win32Capture]::GetWindowRect($hwnd, [ref]$rect) | Out-Null
+  [Win32Capture]::GetClientRect($hwnd, [ref]$rect) | Out-Null
+  $point = New-Object POINT
+  $point.X = 0
+  $point.Y = 0
+  [Win32Capture]::ClientToScreen($hwnd, [ref]$point) | Out-Null
   $width = $rect.Right - $rect.Left
   $height = $rect.Bottom - $rect.Top
   if ($width -le 0 -or $height -le 0) {
-    throw "Invalid R3Code window bounds ${width}x${height}."
+    throw "Invalid R3Code client bounds ${width}x${height}."
   }
 
   $bitmap = New-Object System.Drawing.Bitmap $width, $height
   $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
   try {
-    $graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, $bitmap.Size)
+    $graphics.CopyFromScreen($point.X, $point.Y, 0, 0, $bitmap.Size)
     $bitmap.Save($resolvedOutput, [System.Drawing.Imaging.ImageFormat]::Png)
   } finally {
     $graphics.Dispose()
