@@ -40,7 +40,14 @@ pub struct R3Shell {
     connections_endpoint_copied: bool,
     connections_refresh_requested: bool,
     settings_theme_highlighted_index: usize,
+    composer_prompt: String,
+    composer_prompt_focused: bool,
+    composer_model_index: usize,
+    composer_runtime_index: usize,
+    composer_plan_mode: bool,
+    composer_submitted_count: usize,
     shell_focus_handle: FocusHandle,
+    composer_focus_handle: FocusHandle,
     command_palette_focus_handle: FocusHandle,
     settings_theme_select_focus_handle: FocusHandle,
 }
@@ -85,7 +92,14 @@ impl R3Shell {
             connections_endpoint_copied: false,
             connections_refresh_requested: false,
             settings_theme_highlighted_index: 0,
+            composer_prompt: String::new(),
+            composer_prompt_focused: false,
+            composer_model_index: 0,
+            composer_runtime_index: 0,
+            composer_plan_mode: false,
+            composer_submitted_count: 0,
             shell_focus_handle: cx.focus_handle(),
+            composer_focus_handle: cx.focus_handle(),
             command_palette_focus_handle: cx.focus_handle(),
             settings_theme_select_focus_handle: cx.focus_handle(),
         }
@@ -294,6 +308,52 @@ struct SettingsRow {
     control: SettingsControl,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ComposerModel {
+    provider: &'static str,
+    model: &'static str,
+    icon: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ComposerRuntimeMode {
+    label: &'static str,
+    icon: &'static str,
+}
+
+const COMPOSER_MODELS: &[ComposerModel] = &[
+    ComposerModel {
+        provider: "Codex",
+        model: "gpt-5",
+        icon: "icons/bot.svg",
+    },
+    ComposerModel {
+        provider: "Claude",
+        model: "Sonnet",
+        icon: "icons/bot.svg",
+    },
+    ComposerModel {
+        provider: "OpenCode",
+        model: "default",
+        icon: "icons/terminal.svg",
+    },
+];
+
+const COMPOSER_RUNTIME_MODES: &[ComposerRuntimeMode] = &[
+    ComposerRuntimeMode {
+        label: "Supervised",
+        icon: "icons/terminal.svg",
+    },
+    ComposerRuntimeMode {
+        label: "Auto-accept edits",
+        icon: "icons/terminal.svg",
+    },
+    ComposerRuntimeMode {
+        label: "Full access",
+        icon: "icons/terminal.svg",
+    },
+];
+
 impl Render for R3Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.theme = self.theme_mode.resolve(window);
@@ -311,7 +371,7 @@ impl Render for R3Shell {
             .font_family(SharedString::from(FONT_FAMILY));
 
         root = match self.screen {
-            R3Screen::Empty => root.child(self.sidebar(cx)).child(self.main_panel()),
+            R3Screen::Empty => root.child(self.sidebar(cx)).child(self.main_panel(cx)),
             R3Screen::Settings => root
                 .child(self.settings_sidebar(cx))
                 .child(self.settings_panel(cx)),
@@ -510,7 +570,7 @@ impl R3Shell {
         )
     }
 
-    fn main_panel(&self) -> impl IntoElement {
+    fn main_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
@@ -518,7 +578,7 @@ impl R3Shell {
             .min_w_0()
             .child(self.toolbar())
             .child(self.timeline())
-            .child(self.composer())
+            .child(self.composer(cx))
     }
 
     fn toolbar(&self) -> impl IntoElement {
@@ -603,8 +663,239 @@ impl R3Shell {
         timeline.into_any_element()
     }
 
-    fn composer(&self) -> impl IntoElement {
-        div().h(px(0.0))
+    fn composer(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div().flex().items_center().px_8().pb_6().child(
+            div()
+                .id("chat-composer-form")
+                .w(px(832.0))
+                .rounded(px(22.0))
+                .bg(self.theme.primary.opacity(0.10))
+                .p(px(1.0))
+                .child(
+                    div()
+                        .rounded(px(20.0))
+                        .border_1()
+                        .border_color(if self.composer_prompt_focused {
+                            self.theme.primary.opacity(0.45)
+                        } else {
+                            self.theme.border
+                        })
+                        .bg(self.theme.card)
+                        .child(self.composer_prompt_editor(cx))
+                        .child(self.composer_footer(cx)),
+                ),
+        )
+    }
+
+    fn composer_prompt_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let text = if self.composer_prompt.is_empty() {
+            if self.composer_submitted_count > 0 {
+                "Message queued. Type another prompt.".to_string()
+            } else {
+                "Ask anything, @tag files/folders, $use skills, or / for commands".to_string()
+            }
+        } else {
+            self.composer_prompt.clone()
+        };
+
+        div()
+            .id("chat-composer-input")
+            .relative()
+            .track_focus(&self.composer_focus_handle)
+            .key_context("ChatComposer")
+            .on_key_down(cx.listener(Self::on_composer_key_down))
+            .tab_index(0)
+            .cursor(CursorStyle::IBeam)
+            .min_h(px(96.0))
+            .px_4()
+            .pt_4()
+            .pb_3()
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.composer_prompt_focused = true;
+                window.focus(&this.composer_focus_handle);
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .text_size(px(14.0))
+                    .text_color(if self.composer_prompt.is_empty() {
+                        self.theme
+                            .muted_foreground
+                            .opacity(if self.composer_prompt_focused {
+                                0.72
+                            } else {
+                                0.50
+                            })
+                    } else {
+                        self.theme.foreground
+                    })
+                    .child(text),
+            )
+    }
+
+    fn composer_footer(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("chat-composer-footer")
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .px_3()
+            .pb_3()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .min_w_0()
+                    .child(self.composer_model_picker(cx))
+                    .child(self.composer_footer_control(
+                        "chat-composer-runtime-mode",
+                        self.runtime_mode().icon,
+                        self.runtime_mode().label,
+                        cx,
+                    ))
+                    .child(self.composer_footer_control(
+                        "chat-composer-plan-toggle",
+                        "icons/bot.svg",
+                        if self.composer_plan_mode {
+                            "Plan"
+                        } else {
+                            "Build"
+                        },
+                        cx,
+                    )),
+            )
+            .child(self.composer_send_button(cx))
+    }
+
+    fn composer_model_picker(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let model = self.composer_model();
+
+        div()
+            .id("chat-composer-model-picker")
+            .flex()
+            .items_center()
+            .gap_2()
+            .h(px(32.0))
+            .rounded(px(8.0))
+            .px_2()
+            .text_size(px(12.0))
+            .text_color(self.theme.muted_foreground)
+            .cursor_pointer()
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.composer_model_index = (this.composer_model_index + 1) % COMPOSER_MODELS.len();
+                cx.notify();
+            }))
+            .child(
+                svg()
+                    .path(model.icon)
+                    .size_4()
+                    .text_color(self.theme.foreground),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .text_color(self.theme.foreground)
+                            .font_weight(FontWeight(550.0))
+                            .child(model.provider),
+                    )
+                    .child(div().text_color(self.theme.muted_foreground).child("/"))
+                    .child(div().child(model.model)),
+            )
+            .child(
+                svg()
+                    .path("icons/chevron-down.svg")
+                    .size_3()
+                    .text_color(self.theme.muted_foreground.opacity(0.72)),
+            )
+    }
+
+    fn composer_footer_control(
+        &self,
+        id: &'static str,
+        icon: &'static str,
+        label: &'static str,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id(id)
+            .flex()
+            .items_center()
+            .gap_1p5()
+            .h(px(32.0))
+            .rounded(px(8.0))
+            .px_2()
+            .text_size(px(12.0))
+            .text_color(self.theme.muted_foreground)
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                match id {
+                    "chat-composer-runtime-mode" => {
+                        this.composer_runtime_index =
+                            (this.composer_runtime_index + 1) % COMPOSER_RUNTIME_MODES.len();
+                    }
+                    "chat-composer-plan-toggle" => {
+                        this.composer_plan_mode = !this.composer_plan_mode;
+                    }
+                    _ => {}
+                }
+                cx.notify();
+            }))
+            .child(
+                svg()
+                    .path(icon)
+                    .size_4()
+                    .text_color(self.theme.muted_foreground),
+            )
+            .child(label)
+    }
+
+    fn composer_send_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let has_prompt = !self.composer_prompt.trim().is_empty();
+
+        div()
+            .id("chat-composer-send")
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(32.0))
+            .h(px(32.0))
+            .rounded(px(16.0))
+            .bg(if has_prompt {
+                self.theme.primary.opacity(0.92)
+            } else {
+                self.theme.primary.opacity(0.30)
+            })
+            .cursor_pointer()
+            .on_click(cx.listener(|this, _, window, cx| {
+                if this.composer_prompt.trim().is_empty() {
+                    this.composer_prompt_focused = true;
+                    window.focus(&this.composer_focus_handle);
+                } else {
+                    this.submit_composer(cx);
+                }
+                cx.notify();
+            }))
+            .child(
+                svg()
+                    .path("icons/arrow-up.svg")
+                    .size_4()
+                    .text_color(hsla(0.0, 0.0, 1.0, 1.0)),
+            )
+    }
+
+    fn composer_model(&self) -> ComposerModel {
+        COMPOSER_MODELS[self.composer_model_index % COMPOSER_MODELS.len()]
+    }
+
+    fn runtime_mode(&self) -> ComposerRuntimeMode {
+        COMPOSER_RUNTIME_MODES[self.composer_runtime_index % COMPOSER_RUNTIME_MODES.len()]
     }
 
     fn settings_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -3626,6 +3917,62 @@ impl R3Shell {
         self.settings_section = section;
         self.settings_select_open = None;
         cx.notify();
+    }
+
+    fn submit_composer(&mut self, cx: &mut Context<Self>) {
+        if self.composer_prompt.trim().is_empty() {
+            return;
+        }
+
+        self.composer_prompt.clear();
+        self.composer_prompt_focused = true;
+        self.composer_submitted_count = self.composer_submitted_count.saturating_add(1);
+        cx.notify();
+    }
+
+    fn on_composer_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let handled = match event.keystroke.key.as_str() {
+            "enter" => {
+                self.submit_composer(cx);
+                true
+            }
+            "backspace" => {
+                self.composer_prompt.pop();
+                cx.notify();
+                true
+            }
+            "escape" => {
+                self.composer_prompt_focused = false;
+                cx.notify();
+                true
+            }
+            _ => {
+                let modifiers = event.keystroke.modifiers;
+                if modifiers.control || modifiers.alt || modifiers.platform || modifiers.function {
+                    false
+                } else if let Some(text) = event.keystroke.key_char.as_deref() {
+                    if text != "\n" && text != "\t" {
+                        self.composer_prompt.push_str(text);
+                        self.composer_prompt_focused = true;
+                        cx.notify();
+                        true
+                    } else {
+                        false
+                    }
+                } else {
+                    false
+                }
+            }
+        };
+
+        if handled {
+            cx.stop_propagation();
+        }
     }
 
     fn is_command_palette_shortcut(&self, event: &KeyDownEvent) -> bool {

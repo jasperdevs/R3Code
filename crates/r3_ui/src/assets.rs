@@ -13,6 +13,7 @@ impl AssetSource for R3Assets {
             "icons/arrow-up-down.svg" => {
                 include_bytes!("../assets/icons/arrow-up-down.svg").as_slice()
             }
+            "icons/arrow-up.svg" => include_bytes!("../assets/icons/arrow-up.svg").as_slice(),
             "icons/bot.svg" => include_bytes!("../assets/icons/bot.svg").as_slice(),
             "icons/chevron-down.svg" => {
                 include_bytes!("../assets/icons/chevron-down.svg").as_slice()
@@ -49,6 +50,7 @@ impl AssetSource for R3Assets {
             "archive.svg",
             "arrow-left.svg",
             "arrow-up-down.svg",
+            "arrow-up.svg",
             "bot.svg",
             "chevron-down.svg",
             "chevron-right.svg",
