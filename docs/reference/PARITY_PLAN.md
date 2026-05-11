@@ -30,6 +30,7 @@ The task currently captures:
 - `reference/screenshots/t3code-empty-reference.png`
 - `reference/screenshots/t3code-command-palette-reference.png`
 - `reference/screenshots/t3code-settings-reference.png`
+- `reference/screenshots/t3code-settings-keybindings-reference.png`
 - `reference/screenshots/t3code-settings-theme-menu-reference.png`
 - `reference/screenshots/t3code-settings-dark-reference.png`
 
@@ -118,6 +119,24 @@ Last measured result: `5.334%`.
 The settings sidebar renders the upstream settings nav icon set through GPUI SVG assets:
 `Settings2`, `Keyboard`, `Bot`, `GitBranch`, `Link2`, `Archive`, and the footer `ArrowLeft`.
 The footer Back affordance is a native GPUI click target, and Escape follows the same settings-to-empty state transition for automated parity verification.
+The settings nav rows are native GPUI click targets; the parity gate opens Keybindings through the native settings nav click path.
+
+## Current Settings Keybindings Baseline
+
+Reference: `reference/screenshots/t3code-settings-keybindings-reference.png`
+
+R3Code capture: `reference/screenshots/r3code-settings-keybindings-window.png`
+
+Allowed brand-copy difference: `--ignore-rect 0,0,120,45`
+
+Current measured diff:
+
+```text
+cargo run -p xtask -- capture-r3code-window --theme light --screen settings-keybindings --output reference\screenshots\r3code-settings-keybindings-window.png
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\t3code-settings-keybindings-reference.png --actual reference\screenshots\r3code-settings-keybindings-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 10
+```
+
+Last measured result: `8.791%`.
 
 ## Current Settings Back Baseline
 

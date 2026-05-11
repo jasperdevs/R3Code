@@ -17,6 +17,7 @@ pub struct R3Shell {
     command_palette_query: String,
     command_palette_highlighted_index: usize,
     settings_select_open: Option<SettingsSelect>,
+    settings_section: SettingsSection,
     settings_theme_highlighted_index: usize,
     shell_focus_handle: FocusHandle,
     command_palette_focus_handle: FocusHandle,
@@ -40,6 +41,7 @@ impl R3Shell {
             command_palette_query: String::new(),
             command_palette_highlighted_index: 0,
             settings_select_open: None,
+            settings_section: SettingsSection::General,
             settings_theme_highlighted_index: 0,
             shell_focus_handle: cx.focus_handle(),
             command_palette_focus_handle: cx.focus_handle(),
@@ -63,6 +65,41 @@ enum CommandPaletteAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SettingsSelect {
     Theme,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SettingsSection {
+    General,
+    Keybindings,
+    Providers,
+    SourceControl,
+    Connections,
+    Archive,
+}
+
+impl SettingsSection {
+    fn id(self) -> &'static str {
+        match self {
+            Self::General => "settings-nav-general",
+            Self::Keybindings => "settings-nav-keybindings",
+            Self::Providers => "settings-nav-providers",
+            Self::SourceControl => "settings-nav-source-control",
+            Self::Connections => "settings-nav-connections",
+            Self::Archive => "settings-nav-archive",
+        }
+    }
+
+    fn from_shortcut_key(key: &str) -> Option<Self> {
+        match key {
+            "1" => Some(Self::General),
+            "2" => Some(Self::Keybindings),
+            "3" => Some(Self::Providers),
+            "4" => Some(Self::SourceControl),
+            "5" => Some(Self::Connections),
+            "6" => Some(Self::Archive),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,7 +129,14 @@ impl SettingsNavIcon {
 struct SettingsNavItem {
     label: &'static str,
     icon: SettingsNavIcon,
-    active: bool,
+    section: SettingsSection,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct KeybindingRow {
+    command: &'static str,
+    key: &'static str,
+    when: &'static str,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -432,32 +476,32 @@ impl R3Shell {
             SettingsNavItem {
                 label: "General",
                 icon: SettingsNavIcon::Settings,
-                active: true,
+                section: SettingsSection::General,
             },
             SettingsNavItem {
                 label: "Keybindings",
                 icon: SettingsNavIcon::Keyboard,
-                active: false,
+                section: SettingsSection::Keybindings,
             },
             SettingsNavItem {
                 label: "Providers",
                 icon: SettingsNavIcon::Bot,
-                active: false,
+                section: SettingsSection::Providers,
             },
             SettingsNavItem {
                 label: "Source Control",
                 icon: SettingsNavIcon::GitBranch,
-                active: false,
+                section: SettingsSection::SourceControl,
             },
             SettingsNavItem {
                 label: "Connections",
                 icon: SettingsNavIcon::Link,
-                active: false,
+                section: SettingsSection::Connections,
             },
             SettingsNavItem {
                 label: "Archive",
                 icon: SettingsNavIcon::Archive,
-                active: false,
+                section: SettingsSection::Archive,
             },
         ];
 
@@ -496,8 +540,10 @@ impl R3Shell {
 
         let mut nav = div().flex().flex_col().px_2().py_1();
         for item in nav_items {
+            let active = self.settings_section == item.section;
             nav = nav.child(
                 div()
+                    .id(item.section.id())
                     .flex()
                     .items_center()
                     .gap_2p5()
@@ -505,17 +551,21 @@ impl R3Shell {
                     .px_2p5()
                     .py_1p5()
                     .text_size(px(13.0))
-                    .font_weight(if item.active {
+                    .font_weight(if active {
                         FontWeight(500.0)
                     } else {
                         FontWeight(400.0)
                     })
-                    .text_color(if item.active {
+                    .text_color(if active {
                         self.theme.foreground
                     } else {
                         self.theme.muted_foreground
                     })
-                    .child(self.settings_nav_icon(item.icon, item.active))
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.set_settings_section(item.section, cx);
+                    }))
+                    .child(self.settings_nav_icon(item.icon, active))
                     .child(div().min_w_0().overflow_hidden().child(item.label)),
             );
         }
@@ -593,29 +643,305 @@ impl R3Shell {
                             .child("Restore defaults"),
                     ),
             )
+            .child(match self.settings_section {
+                SettingsSection::General => self.settings_general_panel(cx).into_any_element(),
+                SettingsSection::Keybindings => {
+                    self.settings_keybindings_panel().into_any_element()
+                }
+                section => self.settings_placeholder_panel(section).into_any_element(),
+            })
+    }
+
+    fn settings_general_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .pt_8()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .w(px(768.0))
+                    .pb_3()
+                    .child(div().h(px(1.0)).w(px(12.0)).bg(self.theme.border))
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(self.theme.muted_foreground)
+                            .child("GENERAL"),
+                    ),
+            )
+            .child(self.settings_card(cx))
+    }
+
+    fn settings_keybindings_panel(&self) -> impl IntoElement {
+        let rows = keybinding_rows();
+        let mut table = div()
+            .flex()
+            .flex_col()
+            .min_w(px(680.0))
+            .child(self.keybindings_table_header());
+
+        for (index, row) in rows.iter().enumerate() {
+            table = table.child(self.keybindings_table_row(*row, index));
+        }
+
+        div()
+            .id("settings-keybindings-scroll")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .items_center()
+            .overflow_y_scroll()
+            .pt(px(32.0))
+            .px_8()
+            .pb_8()
             .child(
                 div()
                     .flex()
                     .flex_col()
-                    .items_center()
-                    .pt_8()
+                    .w(px(960.0))
+                    .gap_2p5()
                     .child(
                         div()
                             .flex()
                             .items_center()
-                            .gap_3()
-                            .w(px(768.0))
-                            .pb_3()
-                            .child(div().h(px(1.0)).w(px(12.0)).bg(self.theme.border))
+                            .justify_between()
+                            .px_1()
                             .child(
                                 div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .text_size(px(11.0))
+                                    .font_weight(FontWeight(600.0))
+                                    .text_color(self.theme.muted_foreground)
+                                    .child(div().h(px(1.0)).w(px(12.0)).bg(self.theme.border))
+                                    .child("KEYBINDINGS"),
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
                                     .text_size(px(11.0))
                                     .text_color(self.theme.muted_foreground)
-                                    .child("GENERAL"),
+                                    .child(format!("{} bindings", rows.len()))
+                                    .child(self.header_icon_button("+"))
+                                    .child(self.header_icon_button("{}")),
                             ),
                     )
-                    .child(self.settings_card(cx)),
+                    .child(
+                        div()
+                            .relative()
+                            .overflow_hidden()
+                            .rounded(px(16.0))
+                            .border_1()
+                            .border_color(self.theme.border)
+                            .bg(self.theme.card)
+                            .child(self.keybindings_warning_banner())
+                            .child(table),
+                    ),
             )
+    }
+
+    fn keybindings_warning_banner(&self) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .border_b_1()
+            .border_color(hsla(36.0 / 360.0, 0.95, 0.58, 0.24))
+            .bg(hsla(36.0 / 360.0, 1.0, 0.58, 0.05))
+            .px_4()
+            .py_2p5()
+            .text_size(px(12.0))
+            .text_color(self.theme.muted_foreground)
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .w(px(16.0))
+                    .h(px(16.0))
+                    .rounded(px(8.0))
+                    .border_1()
+                    .border_color(hsla(36.0 / 360.0, 1.0, 0.50, 1.0))
+                    .text_size(px(11.0))
+                    .text_color(hsla(36.0 / 360.0, 1.0, 0.50, 1.0))
+                    .child("!"),
+            )
+            .child(
+                "Some shortcuts may be claimed by the browser before T3 Code sees them. Use the desktop app for better keybinding support.",
+            )
+    }
+
+    fn keybindings_table_header(&self) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .border_b_1()
+            .border_color(self.theme.border)
+            .bg(hsla(0.0, 0.0, 0.0, 0.025))
+            .px_4()
+            .py_2()
+            .text_size(px(11.0))
+            .font_weight(FontWeight(650.0))
+            .text_color(self.theme.muted_foreground)
+            .child(div().w(px(322.0)).child("Command"))
+            .child(div().w(px(250.0)).child("Keybinding"))
+            .child(div().w(px(294.0)).child("When"))
+            .child(div().w(px(60.0)).child("Status"))
+    }
+
+    fn keybindings_table_row(&self, row: KeybindingRow, index: usize) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .min_h(px(40.0))
+            .border_b_1()
+            .border_color(self.theme.border)
+            .bg(if index % 2 == 1 {
+                hsla(0.0, 0.0, 0.0, 0.015)
+            } else {
+                hsla(0.0, 0.0, 0.0, 0.0)
+            })
+            .px_4()
+            .py_1p5()
+            .child(
+                div()
+                    .w(px(322.0))
+                    .pr_4()
+                    .text_size(px(13.0))
+                    .font_weight(FontWeight(500.0))
+                    .child(row.command),
+            )
+            .child(
+                div()
+                    .w(px(250.0))
+                    .pr_4()
+                    .child(self.keybinding_pill(row.key)),
+            )
+            .child(div().w(px(300.0)).pr_4().child(self.when_pill(row.when)))
+            .child(
+                div()
+                    .w(px(60.0))
+                    .flex()
+                    .justify_end()
+                    .child(if row.when == "modelPickerOpen" {
+                        self.keybinding_warning_mark().into_any_element()
+                    } else {
+                        div().into_any_element()
+                    }),
+            )
+    }
+
+    fn keybinding_pill(&self, value: &'static str) -> impl IntoElement {
+        let mut group = div().flex().items_center().gap_1();
+        for part in value.split('+') {
+            let label = match part {
+                "mod" => "Ctrl".to_string(),
+                "shift" => "^".to_string(),
+                "alt" => "Alt".to_string(),
+                "ctrl" => "Ctrl".to_string(),
+                value if value.len() == 1 => value.to_ascii_uppercase(),
+                value => value.to_string(),
+            };
+            group = group.child(
+                div()
+                    .min_w(px(24.0))
+                    .rounded(px(5.0))
+                    .bg(hsla(0.0, 0.0, 0.0, 0.05))
+                    .px_1p5()
+                    .py_0p5()
+                    .text_align(TextAlign::Center)
+                    .text_size(px(11.0))
+                    .font_weight(FontWeight(600.0))
+                    .text_color(self.theme.muted_foreground)
+                    .child(label),
+            );
+        }
+        group
+    }
+
+    fn when_pill(&self, value: &'static str) -> impl IntoElement {
+        div()
+            .h(px(28.0))
+            .w(px(278.0))
+            .flex()
+            .items_center()
+            .justify_between()
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.background)
+            .px_2p5()
+            .text_size(px(12.0))
+            .text_color(if value.is_empty() {
+                self.theme.muted_foreground
+            } else {
+                self.theme.foreground
+            })
+            .child(if value.is_empty() { "Always" } else { value })
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(self.theme.muted_foreground)
+                    .child("v"),
+            )
+    }
+
+    fn keybinding_warning_mark(&self) -> impl IntoElement {
+        div()
+            .text_size(px(13.0))
+            .text_color(hsla(36.0 / 360.0, 1.0, 0.50, 1.0))
+            .child("!")
+    }
+
+    fn header_icon_button(&self, label: &'static str) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(20.0))
+            .h(px(20.0))
+            .rounded(px(4.0))
+            .text_size(px(11.0))
+            .text_color(self.theme.muted_foreground)
+            .child(label)
+    }
+
+    fn settings_placeholder_panel(&self, section: SettingsSection) -> impl IntoElement {
+        div().flex().flex_col().items_center().p_8().child(
+            div()
+                .flex()
+                .flex_col()
+                .w(px(768.0))
+                .gap_2p5()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .px_1()
+                        .text_size(px(11.0))
+                        .font_weight(FontWeight(600.0))
+                        .text_color(self.theme.muted_foreground)
+                        .child(div().h(px(1.0)).w(px(12.0)).bg(self.theme.border))
+                        .child(settings_section_label(section).to_ascii_uppercase()),
+                )
+                .child(
+                    div()
+                        .rounded(px(16.0))
+                        .border_1()
+                        .border_color(self.theme.border)
+                        .bg(self.theme.card)
+                        .h(px(72.0)),
+                ),
+        )
     }
 
     fn settings_card(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1186,6 +1512,12 @@ impl R3Shell {
             return;
         }
 
+        if let Some(section) = self.settings_section_shortcut(event) {
+            self.set_settings_section(section, cx);
+            cx.stop_propagation();
+            return;
+        }
+
         if self.screen == R3Screen::Settings
             && event.keystroke.key.as_str() == "tab"
             && self.settings_select_open.is_none()
@@ -1274,8 +1606,22 @@ impl R3Shell {
         cx.notify();
     }
 
+    fn set_settings_section(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
+        self.settings_section = section;
+        self.settings_select_open = None;
+        cx.notify();
+    }
+
     fn is_command_palette_shortcut(&self, event: &KeyDownEvent) -> bool {
         event.keystroke.modifiers.secondary() && event.keystroke.key.eq_ignore_ascii_case("k")
+    }
+
+    fn settings_section_shortcut(&self, event: &KeyDownEvent) -> Option<SettingsSection> {
+        if self.screen != R3Screen::Settings || !event.keystroke.modifiers.secondary() {
+            return None;
+        }
+
+        SettingsSection::from_shortcut_key(event.keystroke.key.as_str())
     }
 
     fn is_settings_theme_shortcut(&self, event: &KeyDownEvent) -> bool {
@@ -1343,6 +1689,7 @@ impl R3Shell {
             }
             CommandPaletteAction::OpenSettings => {
                 self.screen = R3Screen::Settings;
+                self.settings_section = SettingsSection::General;
                 self.close_command_palette(window, cx);
             }
         }
@@ -1363,6 +1710,177 @@ fn theme_mode_for_index(index: usize) -> ThemeMode {
         2 => ThemeMode::Dark,
         _ => ThemeMode::System,
     }
+}
+
+fn settings_section_label(section: SettingsSection) -> &'static str {
+    match section {
+        SettingsSection::General => "General",
+        SettingsSection::Keybindings => "Keybindings",
+        SettingsSection::Providers => "Providers",
+        SettingsSection::SourceControl => "Source Control",
+        SettingsSection::Connections => "Connections",
+        SettingsSection::Archive => "Archive",
+    }
+}
+
+fn keybinding_rows() -> &'static [KeybindingRow] {
+    &[
+        KeybindingRow {
+            command: "Chat: New",
+            key: "mod+n",
+            when: "!terminalFocus",
+        },
+        KeybindingRow {
+            command: "Chat: New",
+            key: "mod+shift+o",
+            when: "!terminalFocus",
+        },
+        KeybindingRow {
+            command: "Chat: New Local",
+            key: "mod+shift+n",
+            when: "!terminalFocus",
+        },
+        KeybindingRow {
+            command: "Command Palette: Toggle",
+            key: "mod+k",
+            when: "!terminalFocus",
+        },
+        KeybindingRow {
+            command: "Diff: Toggle",
+            key: "mod+d",
+            when: "!terminalFocus",
+        },
+        KeybindingRow {
+            command: "Editor: Open Favorite",
+            key: "mod+o",
+            when: "",
+        },
+        KeybindingRow {
+            command: "Model Picker: Jump: 1",
+            key: "mod+1",
+            when: "modelPickerOpen",
+        },
+        KeybindingRow {
+            command: "Model Picker: Jump: 2",
+            key: "mod+2",
+            when: "modelPickerOpen",
+        },
+        KeybindingRow {
+            command: "Model Picker: Jump: 3",
+            key: "mod+3",
+            when: "modelPickerOpen",
+        },
+        KeybindingRow {
+            command: "Model Picker: Jump: 4",
+            key: "mod+4",
+            when: "modelPickerOpen",
+        },
+        KeybindingRow {
+            command: "Model Picker: Jump: 5",
+            key: "mod+5",
+            when: "modelPickerOpen",
+        },
+        KeybindingRow {
+            command: "Model Picker: Jump: 6",
+            key: "mod+6",
+            when: "modelPickerOpen",
+        },
+        KeybindingRow {
+            command: "Model Picker: Jump: 7",
+            key: "mod+7",
+            when: "modelPickerOpen",
+        },
+        KeybindingRow {
+            command: "Model Picker: Jump: 8",
+            key: "mod+8",
+            when: "modelPickerOpen",
+        },
+        KeybindingRow {
+            command: "Model Picker: Jump: 9",
+            key: "mod+9",
+            when: "modelPickerOpen",
+        },
+        KeybindingRow {
+            command: "Model Picker: Toggle",
+            key: "mod+shift+m",
+            when: "!terminalFocus",
+        },
+        KeybindingRow {
+            command: "Terminal: Close",
+            key: "mod+w",
+            when: "terminalFocus",
+        },
+        KeybindingRow {
+            command: "Terminal: New",
+            key: "mod+n",
+            when: "terminalFocus",
+        },
+        KeybindingRow {
+            command: "Terminal: Split",
+            key: "mod+d",
+            when: "terminalFocus",
+        },
+        KeybindingRow {
+            command: "Terminal: Toggle",
+            key: "mod+j",
+            when: "",
+        },
+        KeybindingRow {
+            command: "Thread: Jump: 1",
+            key: "mod+1",
+            when: "",
+        },
+        KeybindingRow {
+            command: "Thread: Jump: 2",
+            key: "mod+2",
+            when: "",
+        },
+        KeybindingRow {
+            command: "Thread: Jump: 3",
+            key: "mod+3",
+            when: "",
+        },
+        KeybindingRow {
+            command: "Thread: Jump: 4",
+            key: "mod+4",
+            when: "",
+        },
+        KeybindingRow {
+            command: "Thread: Jump: 5",
+            key: "mod+5",
+            when: "",
+        },
+        KeybindingRow {
+            command: "Thread: Jump: 6",
+            key: "mod+6",
+            when: "",
+        },
+        KeybindingRow {
+            command: "Thread: Jump: 7",
+            key: "mod+7",
+            when: "",
+        },
+        KeybindingRow {
+            command: "Thread: Jump: 8",
+            key: "mod+8",
+            when: "",
+        },
+        KeybindingRow {
+            command: "Thread: Jump: 9",
+            key: "mod+9",
+            when: "",
+        },
+        KeybindingRow {
+            command: "Thread: Next",
+            key: "mod+shift+]",
+            when: "",
+        },
+        KeybindingRow {
+            command: "Thread: Previous",
+            key: "mod+shift+[",
+            when: "",
+        },
+    ]
 }
 
 impl Focusable for R3Shell {
