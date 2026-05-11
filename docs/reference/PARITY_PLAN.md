@@ -30,6 +30,7 @@ The task currently captures:
 - `reference/screenshots/t3code-empty-reference.png`
 - `reference/screenshots/t3code-command-palette-reference.png`
 - `reference/screenshots/t3code-settings-reference.png`
+- `reference/screenshots/t3code-settings-theme-menu-reference.png`
 
 Do not use screenshots from a different upstream commit unless `docs/reference/T3CODE_VERSION.md` is intentionally updated.
 
@@ -75,7 +76,7 @@ cargo run -p xtask -- capture-r3code-window --theme light --output reference\scr
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\t3code-empty-reference.png --actual reference\screenshots\r3code-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 2
 ```
 
-Last measured result: `1.557%`.
+Last measured result: `1.564%`.
 
 ## Current Command Palette Baseline
 
@@ -92,7 +93,7 @@ cargo run -p xtask -- capture-r3code-window --theme light --screen command-palet
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\t3code-command-palette-reference.png --actual reference\screenshots\r3code-command-palette-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 5
 ```
 
-Last measured result: `4.053%`.
+Last measured result: `4.054%`.
 
 The R3Code command palette capture launches the normal empty shell, focuses the GPUI window, and opens the palette with the native Ctrl+K shortcut path before taking the screenshot.
 
@@ -111,7 +112,26 @@ cargo run -p xtask -- capture-r3code-window --theme light --screen settings --ou
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\t3code-settings-reference.png --actual reference\screenshots\r3code-settings-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
 ```
 
-Last measured result: `5.108%`.
+Last measured result: `5.054%`.
+
+## Current Settings Theme Menu Baseline
+
+Reference: `reference/screenshots/t3code-settings-theme-menu-reference.png`
+
+R3Code capture: `reference/screenshots/r3code-settings-theme-menu-window.png`
+
+Allowed brand-copy difference: `--ignore-rect 0,0,120,45`
+
+Current measured diff:
+
+```text
+cargo run -p xtask -- capture-r3code-window --theme light --screen settings-theme-menu --output reference\screenshots\r3code-settings-theme-menu-window.png
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\t3code-settings-theme-menu-reference.png --actual reference\screenshots\r3code-settings-theme-menu-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
+```
+
+Last measured result: `5.467%`.
+
+The R3Code capture opens the settings route, focuses the native GPUI theme select with `Tab`, opens it with `Enter`, and then screenshots the open `System / Light / Dark` popup.
 
 ## Implementation Rule
 

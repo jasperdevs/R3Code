@@ -16,8 +16,10 @@ pub struct R3Shell {
     command_palette_open: bool,
     command_palette_query: String,
     command_palette_highlighted_index: usize,
+    settings_select_open: Option<SettingsSelect>,
     shell_focus_handle: FocusHandle,
     command_palette_focus_handle: FocusHandle,
+    settings_theme_select_focus_handle: FocusHandle,
 }
 
 impl R3Shell {
@@ -36,8 +38,10 @@ impl R3Shell {
             command_palette_open,
             command_palette_query: String::new(),
             command_palette_highlighted_index: 0,
+            settings_select_open: None,
             shell_focus_handle: cx.focus_handle(),
             command_palette_focus_handle: cx.focus_handle(),
+            settings_theme_select_focus_handle: cx.focus_handle(),
         }
     }
 }
@@ -52,6 +56,11 @@ pub enum R3Screen {
 enum CommandPaletteAction {
     AddProject,
     OpenSettings,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SettingsSelect {
+    Theme,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,6 +95,7 @@ const COMMAND_PALETTE_COMMANDS: &[CommandPaletteCommand] = &[
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SettingsControl {
+    Theme,
     Select(&'static str),
     Toggle(bool),
 }
@@ -117,7 +127,7 @@ impl Render for R3Shell {
             R3Screen::Empty => root.child(self.sidebar(cx)).child(self.main_panel()),
             R3Screen::Settings => root
                 .child(self.settings_sidebar())
-                .child(self.settings_panel()),
+                .child(self.settings_panel(cx)),
         };
 
         if self.command_palette_open {
@@ -461,7 +471,7 @@ impl R3Shell {
         )
     }
 
-    fn settings_panel(&self) -> impl IntoElement {
+    fn settings_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
@@ -510,16 +520,16 @@ impl R3Shell {
                                     .child("GENERAL"),
                             ),
                     )
-                    .child(self.settings_card()),
+                    .child(self.settings_card(cx)),
             )
     }
 
-    fn settings_card(&self) -> impl IntoElement {
+    fn settings_card(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let rows = [
             SettingsRow {
                 label: "Theme",
                 description: "Choose how R3Code looks across the app.",
-                control: SettingsControl::Select("System"),
+                control: SettingsControl::Theme,
             },
             SettingsRow {
                 label: "Time format",
@@ -605,15 +615,16 @@ impl R3Shell {
                                     .child(row.description),
                             ),
                     )
-                    .child(self.settings_value(row.control)),
+                    .child(self.settings_value(row.control, cx)),
             );
         }
 
         card
     }
 
-    fn settings_value(&self, control: SettingsControl) -> impl IntoElement {
+    fn settings_value(&self, control: SettingsControl, cx: &mut Context<Self>) -> impl IntoElement {
         match control {
+            SettingsControl::Theme => self.theme_select(cx).into_any_element(),
             SettingsControl::Toggle(is_on) => div()
                 .w(px(30.0))
                 .h(px(18.0))
@@ -645,6 +656,91 @@ impl R3Shell {
                 .child(value)
                 .into_any_element(),
         }
+    }
+
+    fn theme_select(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_open = self.settings_select_open == Some(SettingsSelect::Theme);
+        let mut select = div()
+            .id("settings-theme-select")
+            .relative()
+            .min_w(px(160.0))
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.background)
+            .px_3()
+            .py_2()
+            .text_size(px(14.0))
+            .track_focus(&self.settings_theme_select_focus_handle)
+            .tab_index(0)
+            .key_context("SettingsThemeSelect")
+            .on_key_down(cx.listener(Self::on_theme_select_key_down))
+            .cursor_pointer()
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.toggle_settings_select(SettingsSelect::Theme, cx);
+                cx.stop_propagation();
+            }))
+            .child(self.theme_mode_label());
+
+        if is_open {
+            select = select.child(self.theme_select_popup(cx));
+        }
+
+        select
+    }
+
+    fn theme_select_popup(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut popup = div()
+            .absolute()
+            .top(px(38.0))
+            .right(px(0.0))
+            .flex()
+            .flex_col()
+            .w(px(160.0))
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.background)
+            .p_1()
+            .shadow(vec![BoxShadow {
+                color: hsla(0.0, 0.0, 0.0, 0.05),
+                offset: point(px(0.0), px(10.0)),
+                blur_radius: px(15.0),
+                spread_radius: px(-3.0),
+            }]);
+
+        for mode in [ThemeMode::System, ThemeMode::Light, ThemeMode::Dark] {
+            popup = popup.child(self.theme_select_item(mode, cx));
+        }
+
+        popup
+    }
+
+    fn theme_select_item(&self, mode: ThemeMode, cx: &mut Context<Self>) -> impl IntoElement {
+        let active = self.theme_mode == mode;
+        div()
+            .id(match mode {
+                ThemeMode::System => "settings-theme-option-system",
+                ThemeMode::Light => "settings-theme-option-light",
+                ThemeMode::Dark => "settings-theme-option-dark",
+            })
+            .flex()
+            .items_center()
+            .min_h(px(30.0))
+            .rounded(px(4.0))
+            .px_2()
+            .text_size(px(14.0))
+            .cursor_pointer()
+            .bg(if active {
+                self.theme.accent
+            } else {
+                self.theme.background.alpha(0.0)
+            })
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.set_theme_mode(mode, cx);
+                cx.stop_propagation();
+            }))
+            .child(self.theme_mode_label_for(mode))
     }
 
     fn command_palette_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -897,12 +993,66 @@ impl R3Shell {
             })
     }
 
+    fn theme_mode_label(&self) -> &'static str {
+        self.theme_mode_label_for(self.theme_mode)
+    }
+
+    fn theme_mode_label_for(&self, mode: ThemeMode) -> &'static str {
+        match mode {
+            ThemeMode::System => "System",
+            ThemeMode::Light => "Light",
+            ThemeMode::Dark => "Dark",
+        }
+    }
+
+    fn toggle_settings_select(&mut self, select: SettingsSelect, cx: &mut Context<Self>) {
+        self.settings_select_open = if self.settings_select_open == Some(select) {
+            None
+        } else {
+            Some(select)
+        };
+        cx.notify();
+    }
+
+    fn set_theme_mode(&mut self, mode: ThemeMode, cx: &mut Context<Self>) {
+        self.theme_mode = mode;
+        self.settings_select_open = None;
+        cx.notify();
+    }
+
+    fn on_theme_select_key_down(
+        &mut self,
+        event: &KeyDownEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event.keystroke.key.as_str() {
+            "enter" | "space" => {
+                self.toggle_settings_select(SettingsSelect::Theme, cx);
+                cx.stop_propagation();
+            }
+            "escape" if self.settings_select_open == Some(SettingsSelect::Theme) => {
+                self.settings_select_open = None;
+                cx.notify();
+                cx.stop_propagation();
+            }
+            _ => {}
+        }
+    }
+
     fn on_shell_key_down(
         &mut self,
         event: &KeyDownEvent,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if event.keystroke.key.as_str() == "escape" && self.settings_select_open.is_some() {
+            self.settings_select_open = None;
+            cx.notify();
+            cx.stop_propagation();
+            return;
+        }
+
         if self.is_command_palette_shortcut(event) {
             self.open_command_palette(window, cx);
             cx.stop_propagation();
@@ -953,6 +1103,7 @@ impl R3Shell {
     fn open_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.command_palette_open = true;
         self.command_palette_highlighted_index = 0;
+        self.settings_select_open = None;
         window.focus(&self.command_palette_focus_handle);
         cx.notify();
     }
