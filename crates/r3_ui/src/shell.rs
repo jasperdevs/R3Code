@@ -24,6 +24,13 @@ pub struct R3Shell {
     providers_add_dialog_open: bool,
     expanded_provider_index: Option<usize>,
     provider_enabled: [bool; 4],
+    connections_network_accessible: bool,
+    connections_add_dialog_open: bool,
+    connections_mode: ConnectionMode,
+    connections_saved_environment: bool,
+    connections_saved_environment_connected: bool,
+    connections_endpoint_copied: bool,
+    connections_refresh_requested: bool,
     settings_theme_highlighted_index: usize,
     shell_focus_handle: FocusHandle,
     command_palette_focus_handle: FocusHandle,
@@ -54,6 +61,13 @@ impl R3Shell {
             providers_add_dialog_open: false,
             expanded_provider_index: Some(0),
             provider_enabled: [true, true, false, true],
+            connections_network_accessible: false,
+            connections_add_dialog_open: false,
+            connections_mode: ConnectionMode::Remote,
+            connections_saved_environment: false,
+            connections_saved_environment_connected: false,
+            connections_endpoint_copied: false,
+            connections_refresh_requested: false,
             settings_theme_highlighted_index: 0,
             shell_focus_handle: cx.focus_handle(),
             command_palette_focus_handle: cx.focus_handle(),
@@ -166,6 +180,12 @@ enum ProviderStatus {
     Ready,
     NotConfigured,
     EarlyAccess,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConnectionMode {
+    Remote,
+    Ssh,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -697,8 +717,10 @@ impl R3Shell {
                 SettingsSection::SourceControl => {
                     self.settings_source_control_panel(cx).into_any_element()
                 }
+                SettingsSection::Connections => {
+                    self.settings_connections_panel(cx).into_any_element()
+                }
                 SettingsSection::Archive => self.settings_archive_panel().into_any_element(),
-                section => self.settings_placeholder_panel(section).into_any_element(),
             })
     }
 
@@ -1735,27 +1757,701 @@ impl R3Shell {
             )
     }
 
-    fn settings_placeholder_panel(&self, section: SettingsSection) -> impl IntoElement {
-        div().flex().flex_col().items_center().p_8().child(
-            div()
-                .flex()
-                .flex_col()
-                .w(px(768.0))
-                .gap_2p5()
-                .child(
-                    self.settings_section_header(
-                        settings_section_label(section).to_ascii_uppercase(),
+    fn settings_connections_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut content = div()
+            .id("settings-connections-scroll")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .items_center()
+            .overflow_y_scroll()
+            .p_8()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .w(px(768.0))
+                    .gap_8()
+                    .child(self.connections_local_backend_section(cx))
+                    .child(self.connections_remote_environments_section(cx)),
+            );
+
+        if self.connections_add_dialog_open {
+            content = content.child(self.connections_add_panel(cx));
+        }
+
+        content
+    }
+
+    fn connections_local_backend_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let network_description = if self.connections_network_accessible {
+            "Exposed on all interfaces. Pairing links use the advertised endpoint."
+        } else {
+            "Only this machine can reach the local backend."
+        };
+        let tailscale_description = if self.connections_refresh_requested {
+            "Checked just now. No MagicDNS endpoint was detected."
+        } else {
+            "No MagicDNS endpoint detected. Refresh after enabling Tailscale Serve."
+        };
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_2p5()
+            .child(self.settings_section_header("MANAGE LOCAL BACKEND"))
+            .child(
+                self.connections_card()
+                    .child(self.connection_settings_row(
+                        "Network access",
+                        network_description,
+                        self.connections_network_switch(cx),
+                        true,
+                    ))
+                    .child(if self.connections_network_accessible {
+                        self.connections_endpoint_row(cx).into_any_element()
+                    } else {
+                        self.connection_settings_row(
+                            "Advertised endpoints",
+                            "Enable network access to publish local pairing endpoints.",
+                            self.connections_muted_badge("Local only"),
+                            false,
+                        )
+                        .into_any_element()
+                    })
+                    .child(self.connection_settings_row(
+                        "Tailscale HTTPS",
+                        tailscale_description,
+                        self.connections_refresh_button(cx),
+                        false,
+                    )),
+            )
+    }
+
+    fn connections_remote_environments_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let body = if self.connections_saved_environment {
+            self.connections_saved_environment_row(cx)
+                .into_any_element()
+        } else {
+            self.connections_empty_environment_row().into_any_element()
+        };
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_2p5()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .px_1()
+                    .child(self.settings_section_header("REMOTE ENVIRONMENTS"))
+                    .child(self.connections_add_button(cx)),
+            )
+            .child(self.connections_card().child(body))
+    }
+
+    fn connections_card(&self) -> gpui::Div {
+        div()
+            .relative()
+            .overflow_hidden()
+            .rounded(px(16.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.card)
+    }
+
+    fn connection_settings_row(
+        &self,
+        title: &'static str,
+        description: &'static str,
+        control: impl IntoElement,
+        first: bool,
+    ) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .min_h(px(68.0))
+            .border_t_1()
+            .border_color(if first {
+                self.theme.card
+            } else {
+                self.theme.border
+            })
+            .px_5()
+            .py_3p5()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .text_size(px(13.0))
+                            .font_weight(FontWeight(650.0))
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(self.theme.muted_foreground.opacity(0.82))
+                            .child(description),
                     ),
-                )
+            )
+            .child(control)
+    }
+
+    fn connections_network_switch(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let enabled = self.connections_network_accessible;
+        div()
+            .id("connections-network-access-toggle")
+            .relative()
+            .w(px(30.0))
+            .h(px(18.0))
+            .rounded(px(9.0))
+            .cursor_pointer()
+            .bg(if enabled {
+                self.theme.primary
+            } else {
+                self.theme.accent
+            })
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.connections_network_accessible = !this.connections_network_accessible;
+                this.connections_endpoint_copied = false;
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .absolute()
+                    .top(px(1.0))
+                    .left(if enabled { px(13.0) } else { px(1.0) })
+                    .w(px(16.0))
+                    .h(px(16.0))
+                    .rounded(px(8.0))
+                    .bg(self.theme.background),
+            )
+    }
+
+    fn connections_endpoint_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let description = if self.connections_endpoint_copied {
+            "Pairing URL copied."
+        } else {
+            "Default local network endpoint for pairing links."
+        };
+
+        self.connection_settings_row(
+            "http://127.0.0.1:8765",
+            description,
+            div()
+                .id("connections-copy-endpoint")
+                .flex()
+                .items_center()
+                .justify_center()
+                .w(px(28.0))
+                .h(px(28.0))
+                .rounded(px(7.0))
+                .border_1()
+                .border_color(self.theme.border)
+                .cursor_pointer()
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.connections_endpoint_copied = true;
+                    cx.notify();
+                }))
                 .child(
-                    div()
-                        .rounded(px(16.0))
-                        .border_1()
-                        .border_color(self.theme.border)
-                        .bg(self.theme.card)
-                        .h(px(72.0)),
+                    svg()
+                        .path("icons/copy.svg")
+                        .size_4()
+                        .text_color(self.theme.muted_foreground),
                 ),
+            false,
         )
+    }
+
+    fn connections_refresh_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("connections-refresh-tailscale")
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(28.0))
+            .h(px(28.0))
+            .rounded(px(7.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .cursor_pointer()
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.connections_refresh_requested = true;
+                cx.notify();
+            }))
+            .child(
+                svg()
+                    .path("icons/refresh-cw.svg")
+                    .size_4()
+                    .text_color(self.theme.muted_foreground),
+            )
+    }
+
+    fn connections_muted_badge(&self, label: &'static str) -> impl IntoElement {
+        div()
+            .rounded(px(9.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .px_2()
+            .py_0p5()
+            .text_size(px(11.0))
+            .text_color(self.theme.muted_foreground)
+            .child(label)
+    }
+
+    fn connections_add_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("connections-add-environment")
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(20.0))
+            .h(px(20.0))
+            .rounded(px(4.0))
+            .cursor_pointer()
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.connections_add_dialog_open = !this.connections_add_dialog_open;
+                cx.notify();
+            }))
+            .child(
+                svg()
+                    .path("icons/plus-square.svg")
+                    .size_3()
+                    .text_color(self.theme.muted_foreground),
+            )
+    }
+
+    fn connections_empty_environment_row(&self) -> impl IntoElement {
+        div()
+            .min_h(px(62.0))
+            .px_5()
+            .py_3p5()
+            .text_size(px(12.0))
+            .text_color(self.theme.muted_foreground)
+            .child("No remote environments yet. Use the plus control to pair another environment.")
+    }
+
+    fn connections_saved_environment_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let connected = self.connections_saved_environment_connected;
+        div()
+            .id("connections-saved-environment-row")
+            .flex()
+            .items_center()
+            .justify_between()
+            .min_h(px(76.0))
+            .px_5()
+            .py_3p5()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1p5()
+                            .child(self.connection_status_dot(connected))
+                            .child(
+                                div()
+                                    .text_size(px(13.0))
+                                    .font_weight(FontWeight(650.0))
+                                    .child(if connected {
+                                        "Remote environment"
+                                    } else {
+                                        "Saved environment"
+                                    }),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(self.theme.muted_foreground.opacity(0.82))
+                            .child(if connected {
+                                "Client · Last connected just now"
+                            } else {
+                                "Disconnected · Pairing saved"
+                            }),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(self.connections_connect_button(connected, cx))
+                    .child(self.connections_remove_button(cx)),
+            )
+    }
+
+    fn connection_status_dot(&self, connected: bool) -> impl IntoElement {
+        div()
+            .w(px(8.0))
+            .h(px(8.0))
+            .rounded(px(4.0))
+            .bg(if connected {
+                self.theme.primary
+            } else {
+                self.theme.muted_foreground.opacity(0.40)
+            })
+    }
+
+    fn connections_connect_button(
+        &self,
+        connected: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id("connections-environment-connect")
+            .rounded(px(7.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.background)
+            .px_3()
+            .py_1p5()
+            .text_size(px(12.0))
+            .cursor_pointer()
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.connections_saved_environment_connected =
+                    !this.connections_saved_environment_connected;
+                cx.notify();
+            }))
+            .child(if connected { "Disconnect" } else { "Connect" })
+    }
+
+    fn connections_remove_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("connections-environment-remove")
+            .rounded(px(7.0))
+            .border_1()
+            .border_color(hsla(0.0, 0.72, 0.48, 0.32))
+            .bg(hsla(0.0, 0.72, 0.48, 0.05))
+            .px_3()
+            .py_1p5()
+            .text_size(px(12.0))
+            .text_color(hsla(0.0, 0.72, 0.48, 1.0))
+            .cursor_pointer()
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.connections_saved_environment = false;
+                this.connections_saved_environment_connected = false;
+                cx.notify();
+            }))
+            .child("Remove")
+    }
+
+    fn connections_add_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let mode_body = match self.connections_mode {
+            ConnectionMode::Remote => self.connections_remote_form(cx).into_any_element(),
+            ConnectionMode::Ssh => self.connections_ssh_form(cx).into_any_element(),
+        };
+
+        div()
+            .absolute()
+            .top(px(88.0))
+            .right(px(48.0))
+            .w(px(560.0))
+            .rounded(px(14.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.card)
+            .p_4()
+            .shadow(vec![BoxShadow {
+                color: hsla(0.0, 0.0, 0.0, 0.12),
+                offset: point(px(0.0), px(16.0)),
+                blur_radius: px(28.0),
+                spread_radius: px(-10.0),
+            }])
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .mb_4()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_size(px(14.0))
+                                    .font_weight(FontWeight(650.0))
+                                    .child("Pair Environment"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(self.theme.muted_foreground)
+                                    .child("Pair another environment to this client."),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .id("connections-close-environment-dialog")
+                            .rounded(px(7.0))
+                            .border_1()
+                            .border_color(self.theme.border)
+                            .px_2()
+                            .py_1()
+                            .text_size(px(12.0))
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.connections_add_dialog_open = false;
+                                cx.notify();
+                            }))
+                            .child("Esc"),
+                    ),
+            )
+            .child(
+                div()
+                    .grid()
+                    .grid_cols(2)
+                    .gap_3()
+                    .child(self.connections_mode_card(
+                        ConnectionMode::Remote,
+                        "Remote link",
+                        "Enter a backend host and pairing code.",
+                        "icons/link-2.svg",
+                        cx,
+                    ))
+                    .child(self.connections_mode_card(
+                        ConnectionMode::Ssh,
+                        "SSH",
+                        "Use local SSH config, agent, and tunnels for the backend.",
+                        "icons/terminal.svg",
+                        cx,
+                    )),
+            )
+            .child(div().mt_4().child(mode_body))
+    }
+
+    fn connections_mode_card(
+        &self,
+        mode: ConnectionMode,
+        title: &'static str,
+        description: &'static str,
+        icon: &'static str,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let selected = self.connections_mode == mode;
+        div()
+            .id(match mode {
+                ConnectionMode::Remote => "connections-mode-remote",
+                ConnectionMode::Ssh => "connections-mode-ssh",
+            })
+            .flex()
+            .items_center()
+            .gap_3()
+            .min_h(px(96.0))
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(if selected {
+                self.theme.primary.opacity(0.50)
+            } else {
+                self.theme.border
+            })
+            .bg(if selected {
+                self.theme.primary.opacity(0.06)
+            } else {
+                self.theme.background
+            })
+            .p_4()
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.connections_mode = mode;
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .w(px(32.0))
+                    .h(px(32.0))
+                    .rounded(px(7.0))
+                    .border_1()
+                    .border_color(if selected {
+                        self.theme.primary.opacity(0.30)
+                    } else {
+                        self.theme.border
+                    })
+                    .bg(if selected {
+                        self.theme.primary.opacity(0.10)
+                    } else {
+                        self.theme.card
+                    })
+                    .child(svg().path(icon).size_4().text_color(if selected {
+                        self.theme.primary
+                    } else {
+                        self.theme.muted_foreground
+                    })),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .text_size(px(13.0))
+                            .font_weight(FontWeight(650.0))
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(self.theme.muted_foreground)
+                            .child(description),
+                    ),
+            )
+    }
+
+    fn connections_remote_form(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(
+                div()
+                    .grid()
+                    .grid_cols(2)
+                    .gap_3()
+                    .child(self.connection_field_box("Host", "backend.example.com"))
+                    .child(self.connection_field_box("Pairing code", "PAIRCODE")),
+            )
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(self.theme.muted_foreground)
+                    .child("Paste a full pairing URL here to fill both fields automatically."),
+            )
+            .child(self.connections_create_environment_button(cx))
+    }
+
+    fn connections_ssh_form(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(self.connection_field_box("SSH host or alias", "Search hosts or type devbox"))
+            .child(
+                div()
+                    .grid()
+                    .grid_cols(2)
+                    .gap_3()
+                    .child(self.connection_field_box("Username", "root"))
+                    .child(self.connection_field_box("Port", "22")),
+            )
+            .child(
+                div()
+                    .rounded(px(8.0))
+                    .border_1()
+                    .border_color(self.theme.border)
+                    .bg(self.theme.background)
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .border_b_1()
+                            .border_color(self.theme.border)
+                            .px_3()
+                            .py_2()
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_1()
+                                    .child(
+                                        div()
+                                            .text_size(px(12.0))
+                                            .font_weight(FontWeight(650.0))
+                                            .child("Suggested hosts"),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(11.0))
+                                            .text_color(self.theme.muted_foreground)
+                                            .child("From SSH config and known hosts"),
+                                    ),
+                            )
+                            .child(self.connections_refresh_button(cx)),
+                    )
+                    .child(
+                        div()
+                            .px_3()
+                            .py_3()
+                            .text_size(px(12.0))
+                            .text_color(self.theme.muted_foreground)
+                            .child("No new SSH hosts were discovered."),
+                    ),
+            )
+            .child(self.connections_create_environment_button(cx))
+    }
+
+    fn connection_field_box(&self, label: &'static str, value: &'static str) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap_1p5()
+            .child(
+                div()
+                    .text_size(px(12.0))
+                    .font_weight(FontWeight(600.0))
+                    .child(label),
+            )
+            .child(
+                div()
+                    .h(px(34.0))
+                    .rounded(px(7.0))
+                    .border_1()
+                    .border_color(self.theme.border)
+                    .bg(self.theme.background)
+                    .px_3()
+                    .py_2()
+                    .text_size(px(13.0))
+                    .text_color(self.theme.muted_foreground)
+                    .child(value),
+            )
+    }
+
+    fn connections_create_environment_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("connections-create-environment")
+            .flex()
+            .items_center()
+            .justify_center()
+            .gap_2()
+            .h(px(34.0))
+            .rounded(px(7.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.background)
+            .text_size(px(13.0))
+            .cursor_pointer()
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.connections_saved_environment = true;
+                this.connections_saved_environment_connected = true;
+                this.connections_add_dialog_open = false;
+                cx.notify();
+            }))
+            .child(
+                svg()
+                    .path("icons/plus-square.svg")
+                    .size_4()
+                    .text_color(self.theme.foreground),
+            )
+            .child("Create environment")
     }
 
     fn settings_section_header(&self, label: impl Into<SharedString>) -> impl IntoElement {
@@ -2572,17 +3268,6 @@ fn theme_mode_for_index(index: usize) -> ThemeMode {
         1 => ThemeMode::Light,
         2 => ThemeMode::Dark,
         _ => ThemeMode::System,
-    }
-}
-
-fn settings_section_label(section: SettingsSection) -> &'static str {
-    match section {
-        SettingsSection::General => "General",
-        SettingsSection::Keybindings => "Keybindings",
-        SettingsSection::Providers => "Providers",
-        SettingsSection::SourceControl => "Source Control",
-        SettingsSection::Connections => "Connections",
-        SettingsSection::Archive => "Archive",
     }
 }
 

@@ -20,6 +20,7 @@ impl AssetSource for R3Assets {
             "icons/chevron-right.svg" => {
                 include_bytes!("../assets/icons/chevron-right.svg").as_slice()
             }
+            "icons/copy.svg" => include_bytes!("../assets/icons/copy.svg").as_slice(),
             "icons/git-branch.svg" => include_bytes!("../assets/icons/git-branch.svg").as_slice(),
             "icons/git-pull-request.svg" => {
                 include_bytes!("../assets/icons/git-pull-request.svg").as_slice()
@@ -29,6 +30,7 @@ impl AssetSource for R3Assets {
             "icons/plus-square.svg" => include_bytes!("../assets/icons/plus-square.svg").as_slice(),
             "icons/refresh-cw.svg" => include_bytes!("../assets/icons/refresh-cw.svg").as_slice(),
             "icons/settings-2.svg" => include_bytes!("../assets/icons/settings-2.svg").as_slice(),
+            "icons/terminal.svg" => include_bytes!("../assets/icons/terminal.svg").as_slice(),
             _ => return Ok(None),
         };
 
@@ -47,6 +49,7 @@ impl AssetSource for R3Assets {
             "bot.svg",
             "chevron-down.svg",
             "chevron-right.svg",
+            "copy.svg",
             "git-branch.svg",
             "git-pull-request.svg",
             "keyboard.svg",
@@ -54,6 +57,7 @@ impl AssetSource for R3Assets {
             "plus-square.svg",
             "refresh-cw.svg",
             "settings-2.svg",
+            "terminal.svg",
         ]
         .into_iter()
         .map(SharedString::from)
