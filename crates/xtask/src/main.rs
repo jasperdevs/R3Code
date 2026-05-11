@@ -18,7 +18,7 @@ use windows::Win32::{
     },
     UI::Input::KeyboardAndMouse::{
         INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput,
-        VIRTUAL_KEY, VK_CONTROL, VK_DOWN, VK_K, VK_RETURN, VK_T,
+        VIRTUAL_KEY, VK_CONTROL, VK_DOWN, VK_ESCAPE, VK_K, VK_RETURN, VK_T,
     },
     UI::WindowsAndMessaging::{
         BringWindowToTop, EnumWindows, GetClientRect, GetWindowThreadProcessId, HWND_TOP,
@@ -90,7 +90,7 @@ fn print_usage() {
         "Usage:
   cargo run -p xtask -- check-parity [--refresh-t3code-reference]
   cargo run -p xtask -- compare-screenshots --expected <png> --actual <png> [--channel-tolerance <n>] [--ignore-rect x,y,w,h] [--max-different-pixels-percent <n>]
-  cargo run -p xtask -- capture-r3code-window [--screen settings|command-palette|settings-theme-menu|settings-dark] [--theme light|dark|system] [--output <png>]
+  cargo run -p xtask -- capture-r3code-window [--screen settings|command-palette|settings-theme-menu|settings-dark|settings-back] [--theme light|dark|system] [--output <png>]
   cargo run -p xtask -- capture-t3code-browser"
     );
 }
@@ -185,6 +185,25 @@ fn check_parity(refresh_t3code_reference: bool) -> Result<()> {
         expected: resolve_repo_path("reference/screenshots/t3code-settings-reference.png"),
         actual: resolve_repo_path("reference/screenshots/r3code-settings-window.png"),
         max_different_pixels_percent: 6.0,
+        channel_tolerance: 8,
+        ignore_rects: vec![Rect {
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 45,
+        }],
+    })?;
+
+    capture_r3code_window(CaptureR3CodeOptions {
+        screen: Some("settings-back".to_string()),
+        theme: Some("light".to_string()),
+        output: resolve_repo_path("reference/screenshots/r3code-settings-back-window.png"),
+        ..CaptureR3CodeOptions::default()
+    })?;
+    compare_screenshots(CompareOptions {
+        expected: resolve_repo_path("reference/screenshots/t3code-empty-reference.png"),
+        actual: resolve_repo_path("reference/screenshots/r3code-settings-back-window.png"),
+        max_different_pixels_percent: 2.0,
         channel_tolerance: 8,
         ignore_rects: vec![Rect {
             x: 0,
@@ -480,7 +499,7 @@ fn capture_r3code_window(options: CaptureR3CodeOptions) -> Result<()> {
     if let Some(screen) = &options.screen {
         match screen.as_str() {
             "command-palette" => {}
-            "settings-theme-menu" | "settings-dark" => {
+            "settings-theme-menu" | "settings-dark" | "settings-back" => {
                 command.env("R3CODE_SCREEN", "settings");
             }
             _ => {
@@ -505,6 +524,9 @@ fn capture_r3code_window(options: CaptureR3CodeOptions) -> Result<()> {
             thread::sleep(Duration::from_millis(350));
         } else if options.screen.as_deref() == Some("settings-dark") {
             send_settings_dark_shortcut()?;
+            thread::sleep(Duration::from_millis(350));
+        } else if options.screen.as_deref() == Some("settings-back") {
+            send_settings_back_shortcut()?;
             thread::sleep(Duration::from_millis(350));
         }
         let image = capture_client_area(hwnd)?;
@@ -558,6 +580,11 @@ fn send_settings_dark_shortcut() -> Result<()> {
     send_key_tap(VK_DOWN)?;
     thread::sleep(Duration::from_millis(60));
     send_key_tap(VK_RETURN)
+}
+
+#[cfg(windows)]
+fn send_settings_back_shortcut() -> Result<()> {
+    send_key_tap(VK_ESCAPE)
 }
 
 #[cfg(windows)]

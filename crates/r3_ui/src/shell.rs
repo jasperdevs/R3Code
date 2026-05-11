@@ -2,7 +2,7 @@ use gpui::prelude::{InteractiveElement, StatefulInteractiveElement};
 use gpui::{
     App, AppContext, BoxShadow, Context, CursorStyle, FocusHandle, Focusable, FontWeight,
     IntoElement, KeyDownEvent, ParentElement, Render, SharedString, Styled, TextAlign, Window, div,
-    hsla, point, px,
+    hsla, point, px, svg,
 };
 use r3_core::{APP_NAME, AppSnapshot, MessageAuthor, ThreadStatus};
 
@@ -63,6 +63,36 @@ enum CommandPaletteAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SettingsSelect {
     Theme,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SettingsNavIcon {
+    Settings,
+    Keyboard,
+    Bot,
+    GitBranch,
+    Link,
+    Archive,
+}
+
+impl SettingsNavIcon {
+    fn path(self) -> &'static str {
+        match self {
+            Self::Settings => "icons/settings-2.svg",
+            Self::Keyboard => "icons/keyboard.svg",
+            Self::Bot => "icons/bot.svg",
+            Self::GitBranch => "icons/git-branch.svg",
+            Self::Link => "icons/link-2.svg",
+            Self::Archive => "icons/archive.svg",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SettingsNavItem {
+    label: &'static str,
+    icon: SettingsNavIcon,
+    active: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -128,7 +158,7 @@ impl Render for R3Shell {
         root = match self.screen {
             R3Screen::Empty => root.child(self.sidebar(cx)).child(self.main_panel()),
             R3Screen::Settings => root
-                .child(self.settings_sidebar())
+                .child(self.settings_sidebar(cx))
                 .child(self.settings_panel(cx)),
         };
 
@@ -397,14 +427,38 @@ impl R3Shell {
         div().h(px(0.0))
     }
 
-    fn settings_sidebar(&self) -> impl IntoElement {
+    fn settings_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let nav_items = [
-            ("General", true),
-            ("Keybindings", false),
-            ("Providers", false),
-            ("Source Control", false),
-            ("Connections", false),
-            ("Archive", false),
+            SettingsNavItem {
+                label: "General",
+                icon: SettingsNavIcon::Settings,
+                active: true,
+            },
+            SettingsNavItem {
+                label: "Keybindings",
+                icon: SettingsNavIcon::Keyboard,
+                active: false,
+            },
+            SettingsNavItem {
+                label: "Providers",
+                icon: SettingsNavIcon::Bot,
+                active: false,
+            },
+            SettingsNavItem {
+                label: "Source Control",
+                icon: SettingsNavIcon::GitBranch,
+                active: false,
+            },
+            SettingsNavItem {
+                label: "Connections",
+                icon: SettingsNavIcon::Link,
+                active: false,
+            },
+            SettingsNavItem {
+                label: "Archive",
+                icon: SettingsNavIcon::Archive,
+                active: false,
+            },
         ];
 
         let mut sidebar = div()
@@ -420,9 +474,8 @@ impl R3Shell {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .px_5()
-                    .pt_4()
-                    .pb_6()
+                    .px_4()
+                    .py_3()
                     .child(
                         div()
                             .text_size(px(14.0))
@@ -441,36 +494,75 @@ impl R3Shell {
                     ),
             );
 
-        for (label, active) in nav_items {
-            sidebar = sidebar.child(
+        let mut nav = div().flex().flex_col().px_2().py_1();
+        for item in nav_items {
+            nav = nav.child(
                 div()
                     .flex()
                     .items_center()
-                    .px_5()
-                    .pb_4()
-                    .text_size(px(14.0))
-                    .text_color(if active {
+                    .gap_2p5()
+                    .rounded(px(6.0))
+                    .px_2p5()
+                    .py_1p5()
+                    .text_size(px(13.0))
+                    .font_weight(if item.active {
+                        FontWeight(500.0)
+                    } else {
+                        FontWeight(400.0)
+                    })
+                    .text_color(if item.active {
                         self.theme.foreground
                     } else {
                         self.theme.muted_foreground
                     })
-                    .child(label),
+                    .child(self.settings_nav_icon(item.icon, item.active))
+                    .child(div().min_w_0().overflow_hidden().child(item.label)),
             );
         }
+        sidebar = sidebar.child(nav);
 
         sidebar.child(
             div().flex_1().child("").child(
                 div()
+                    .id("settings-back")
                     .absolute()
-                    .bottom_4()
-                    .left_5()
+                    .bottom_2()
+                    .left_2()
+                    .right_2()
                     .flex()
+                    .items_center()
                     .gap_2()
-                    .text_size(px(13.0))
+                    .rounded(px(6.0))
+                    .px_2()
+                    .py_2()
+                    .text_size(px(12.0))
                     .text_color(self.theme.muted_foreground)
+                    .cursor_pointer()
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        this.close_settings(window, cx);
+                    }))
+                    .child(
+                        svg()
+                            .path("icons/arrow-left.svg")
+                            .size_4()
+                            .flex_shrink_0()
+                            .text_color(self.theme.muted_foreground),
+                    )
                     .child("Back"),
             ),
         )
+    }
+
+    fn settings_nav_icon(&self, icon: SettingsNavIcon, active: bool) -> impl IntoElement {
+        svg()
+            .path(icon.path())
+            .size_4()
+            .flex_shrink_0()
+            .text_color(if active {
+                self.theme.foreground
+            } else {
+                self.theme.muted_foreground
+            })
     }
 
     fn settings_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1083,6 +1175,12 @@ impl R3Shell {
             return;
         }
 
+        if self.screen == R3Screen::Settings && event.keystroke.key.as_str() == "escape" {
+            self.close_settings(window, cx);
+            cx.stop_propagation();
+            return;
+        }
+
         if self.settings_select_open == Some(SettingsSelect::Theme) {
             self.handle_theme_select_key(event.keystroke.key.as_str(), window, cx);
             return;
@@ -1159,6 +1257,16 @@ impl R3Shell {
     }
 
     fn close_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.command_palette_open = false;
+        self.command_palette_query.clear();
+        self.command_palette_highlighted_index = 0;
+        window.focus(&self.shell_focus_handle);
+        cx.notify();
+    }
+
+    fn close_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.screen = R3Screen::Empty;
+        self.settings_select_open = None;
         self.command_palette_open = false;
         self.command_palette_query.clear();
         self.command_palette_highlighted_index = 0;
