@@ -20,11 +20,5 @@ Useful local checks:
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-t3code-browser.ps1
 
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-r3code-window.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\compare-screenshots.ps1 -Expected reference\screenshots\t3code-empty-reference.png -Actual reference\screenshots\r3code-window.png -ChannelTolerance 8 -IgnoreRect 0,0,120,45 -MaxDifferentPixelsPercent 2
-
-$env:R3CODE_SCREEN = "settings"
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-r3code-window.ps1 -OutputPath reference\screenshots\r3code-settings-window.png
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\compare-screenshots.ps1 -Expected reference\screenshots\t3code-settings-reference.png -Actual reference\screenshots\r3code-settings-window.png -ChannelTolerance 8 -IgnoreRect 0,0,120,45 -MaxDifferentPixelsPercent 6
-Remove-Item Env:R3CODE_SCREEN
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check-parity.ps1
 ```

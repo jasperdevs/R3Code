@@ -1,6 +1,7 @@
 param(
   [string]$ExePath = "target\debug\r3code.exe",
   [string]$OutputPath = "reference\screenshots\r3code-window.png",
+  [string]$Screen = "",
   [int]$StartupDelaySeconds = 6
 )
 
@@ -11,6 +12,11 @@ $resolvedExe = Resolve-Path (Join-Path $repoRoot $ExePath)
 $resolvedOutput = Join-Path $repoRoot $OutputPath
 $outputDir = Split-Path -Parent $resolvedOutput
 New-Item -ItemType Directory -Force -Path $outputDir | Out-Null
+
+if ($Screen.Trim()) {
+  $oldScreen = $env:R3CODE_SCREEN
+  $env:R3CODE_SCREEN = $Screen.Trim()
+}
 
 $process = Start-Process -FilePath $resolvedExe -PassThru
 try {
@@ -60,4 +66,11 @@ public class Win32Capture {
   Write-Host $resolvedOutput
 } finally {
   Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+  if (Get-Variable -Name oldScreen -ErrorAction SilentlyContinue) {
+    if ($oldScreen) {
+      $env:R3CODE_SCREEN = $oldScreen
+    } else {
+      Remove-Item Env:R3CODE_SCREEN -ErrorAction SilentlyContinue
+    }
+  }
 }

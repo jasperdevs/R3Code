@@ -45,6 +45,18 @@ Each implemented GPUI screen needs:
 - Same empty, hover, active, disabled, loading, and error states where implemented
 - Screenshot comparison saved before commit
 
+Run the current implemented-screen gate:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check-parity.ps1
+```
+
+Run it with a fresh upstream T3Code capture:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check-parity.ps1 -RefreshT3CodeReference
+```
+
 ## Current Empty-State Baseline
 
 Reference: `reference/screenshots/t3code-empty-reference.png`
@@ -72,10 +84,8 @@ Allowed brand-copy difference: `-IgnoreRect 0,0,120,45`
 Current measured diff:
 
 ```powershell
-$env:R3CODE_SCREEN = "settings"
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-r3code-window.ps1 -OutputPath reference\screenshots\r3code-settings-window.png
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-r3code-window.ps1 -Screen settings -OutputPath reference\screenshots\r3code-settings-window.png
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\compare-screenshots.ps1 -Expected reference\screenshots\t3code-settings-reference.png -Actual reference\screenshots\r3code-settings-window.png -ChannelTolerance 8 -IgnoreRect 0,0,120,45 -MaxDifferentPixelsPercent 6
-Remove-Item Env:R3CODE_SCREEN
 ```
 
 Last measured result: `5.108%`.
