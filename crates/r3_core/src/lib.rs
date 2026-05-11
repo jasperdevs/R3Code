@@ -57,7 +57,7 @@ impl AppSnapshot {
             }],
             threads: vec![
                 ThreadSummary {
-                    title: "Port T3Code UI shell".to_string(),
+                    title: "Port R3Code UI shell".to_string(),
                     project_name: "r3code".to_string(),
                     status: ThreadStatus::Running,
                 },

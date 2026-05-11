@@ -10,6 +10,7 @@ use crate::theme::{FONT_FAMILY, SIDEBAR_MIN_WIDTH, Theme, ThemeMode};
 
 pub struct R3Shell {
     snapshot: AppSnapshot,
+    project_sort_ascending: bool,
     theme: Theme,
     theme_mode: ThemeMode,
     screen: R3Screen,
@@ -34,6 +35,7 @@ impl R3Shell {
     ) -> Self {
         Self {
             snapshot,
+            project_sort_ascending: true,
             theme: Theme::light(),
             theme_mode,
             screen,
@@ -301,10 +303,17 @@ impl R3Shell {
                     div()
                         .flex()
                         .gap_3()
-                        .text_size(px(12.0))
                         .text_color(self.theme.muted_foreground)
-                        .child("Sort")
-                        .child("Add"),
+                        .child(self.sidebar_icon_button(
+                            "project-sort",
+                            "icons/arrow-up-down.svg",
+                            cx,
+                        ))
+                        .child(self.sidebar_icon_button(
+                            "project-add",
+                            "icons/plus-square.svg",
+                            cx,
+                        )),
                 ),
         );
 
@@ -319,7 +328,16 @@ impl R3Shell {
             );
         }
 
-        for project in &self.snapshot.projects {
+        let mut projects: Vec<_> = self.snapshot.projects.iter().collect();
+        projects.sort_by(|left, right| {
+            if self.project_sort_ascending {
+                left.name.cmp(&right.name)
+            } else {
+                right.name.cmp(&left.name)
+            }
+        });
+
+        for project in projects {
             sidebar = sidebar.child(
                 div()
                     .rounded(px(8.0))
@@ -648,6 +666,7 @@ impl R3Shell {
                 SettingsSection::Keybindings => {
                     self.settings_keybindings_panel().into_any_element()
                 }
+                SettingsSection::Archive => self.settings_archive_panel().into_any_element(),
                 section => self.settings_placeholder_panel(section).into_any_element(),
             })
     }
@@ -775,7 +794,7 @@ impl R3Shell {
                     .child("!"),
             )
             .child(
-                "Some shortcuts may be claimed by the browser before T3 Code sees them. Use the desktop app for better keybinding support.",
+                "Some shortcuts may be claimed by the browser before R3Code sees them. Use the desktop app for better keybinding support.",
             )
     }
 
@@ -914,6 +933,74 @@ impl R3Shell {
             .child(label)
     }
 
+    fn settings_archive_panel(&self) -> impl IntoElement {
+        div()
+            .id("settings-archive-scroll")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .items_center()
+            .overflow_y_scroll()
+            .p_8()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .w(px(768.0))
+                    .gap_2p5()
+                    .child(self.settings_section_header("ARCHIVED THREADS"))
+                    .child(
+                        div()
+                            .relative()
+                            .overflow_hidden()
+                            .rounded(px(16.0))
+                            .border_1()
+                            .border_color(self.theme.border)
+                            .bg(self.theme.card)
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .min_h(px(76.0))
+                                    .px_5()
+                                    .py_3p5()
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_1()
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .items_center()
+                                                    .gap_2()
+                                                    .text_size(px(13.0))
+                                                    .font_weight(FontWeight(650.0))
+                                                    .child(
+                                                        svg()
+                                                            .path("icons/archive.svg")
+                                                            .size_4()
+                                                            .flex_shrink_0()
+                                                            .text_color(
+                                                                self.theme.muted_foreground,
+                                                            ),
+                                                    )
+                                                    .child("No archived threads"),
+                                            )
+                                            .child(
+                                                div()
+                                                    .text_size(px(12.0))
+                                                    .text_color(self.theme.muted_foreground)
+                                                    .child("Archived threads will appear here."),
+                                            ),
+                                    ),
+                            ),
+                    ),
+            )
+    }
+
     fn settings_placeholder_panel(&self, section: SettingsSection) -> impl IntoElement {
         div().flex().flex_col().items_center().p_8().child(
             div()
@@ -922,16 +1009,9 @@ impl R3Shell {
                 .w(px(768.0))
                 .gap_2p5()
                 .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .px_1()
-                        .text_size(px(11.0))
-                        .font_weight(FontWeight(600.0))
-                        .text_color(self.theme.muted_foreground)
-                        .child(div().h(px(1.0)).w(px(12.0)).bg(self.theme.border))
-                        .child(settings_section_label(section).to_ascii_uppercase()),
+                    self.settings_section_header(
+                        settings_section_label(section).to_ascii_uppercase(),
+                    ),
                 )
                 .child(
                     div()
@@ -942,6 +1022,19 @@ impl R3Shell {
                         .h(px(72.0)),
                 ),
         )
+    }
+
+    fn settings_section_header(&self, label: impl Into<SharedString>) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .px_1()
+            .text_size(px(11.0))
+            .font_weight(FontWeight(600.0))
+            .text_color(self.theme.muted_foreground)
+            .child(div().h(px(1.0)).w(px(12.0)).bg(self.theme.border))
+            .child(label.into())
     }
 
     fn settings_card(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1392,6 +1485,42 @@ impl R3Shell {
                     .w(px(5.0))
                     .h(px(1.0))
                     .bg(self.theme.muted_foreground.opacity(0.55)),
+            )
+    }
+
+    fn sidebar_icon_button(
+        &self,
+        id: &'static str,
+        icon_path: &'static str,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id(id)
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(16.0))
+            .h(px(16.0))
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, window, cx| {
+                match id {
+                    "project-add" => {
+                        this.open_command_palette(window, cx);
+                        this.execute_palette_action(CommandPaletteAction::AddProject, window, cx);
+                    }
+                    "project-sort" => {
+                        this.project_sort_ascending = !this.project_sort_ascending;
+                        cx.notify();
+                    }
+                    _ => {}
+                }
+                cx.stop_propagation();
+            }))
+            .child(
+                svg()
+                    .path(icon_path)
+                    .size_4()
+                    .text_color(self.theme.muted_foreground),
             )
     }
 

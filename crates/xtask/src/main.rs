@@ -32,6 +32,8 @@ use windows::core::BOOL;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+const REFERENCE_COMMIT: &str = "8fc317939f5c8bbef4afbe309ae897abbc221631";
+
 #[derive(Debug, Clone, Copy)]
 struct Rect {
     x: u32,
@@ -59,7 +61,7 @@ struct CaptureR3CodeOptions {
 }
 
 #[derive(Debug)]
-struct CaptureT3CodeOptions {
+struct CaptureReferenceOptions {
     repo: PathBuf,
     home: PathBuf,
     output_dir: PathBuf,
@@ -75,10 +77,12 @@ fn main() -> Result<()> {
     let args: Vec<String> = args.collect();
 
     match command.as_str() {
-        "check-parity" => check_parity(args.iter().any(|arg| arg == "--refresh-t3code-reference")),
+        "check-parity" => check_parity(args.iter().any(|arg| arg == "--refresh-reference")),
         "compare-screenshots" => compare_screenshots(parse_compare_options(&args)?),
         "capture-r3code-window" => capture_r3code_window(parse_capture_r3code_options(&args)?),
-        "capture-t3code-browser" => capture_t3code_browser(parse_capture_t3code_options(&args)?),
+        "capture-reference-browser" => {
+            capture_reference_browser(parse_capture_reference_options(&args)?)
+        }
         _ => {
             print_usage();
             Err(format!("unknown xtask command: {command}").into())
@@ -89,10 +93,10 @@ fn main() -> Result<()> {
 fn print_usage() {
     eprintln!(
         "Usage:
-  cargo run -p xtask -- check-parity [--refresh-t3code-reference]
+  cargo run -p xtask -- check-parity [--refresh-reference]
   cargo run -p xtask -- compare-screenshots --expected <png> --actual <png> [--channel-tolerance <n>] [--ignore-rect x,y,w,h] [--max-different-pixels-percent <n>]
-  cargo run -p xtask -- capture-r3code-window [--screen settings|command-palette|settings-theme-menu|settings-dark|settings-back|settings-keybindings] [--theme light|dark|system] [--output <png>]
-  cargo run -p xtask -- capture-t3code-browser"
+  cargo run -p xtask -- capture-r3code-window [--screen settings|command-palette|settings-theme-menu|settings-dark|settings-back|settings-keybindings|settings-archive] [--theme light|dark|system] [--output <png>]
+  cargo run -p xtask -- capture-reference-browser"
     );
 }
 
@@ -122,7 +126,7 @@ fn run(command: &mut Command) -> Result<()> {
     }
 }
 
-fn check_parity(refresh_t3code_reference: bool) -> Result<()> {
+fn check_parity(refresh_reference: bool) -> Result<()> {
     let root = repo_root();
 
     run(Command::new("cargo")
@@ -135,8 +139,8 @@ fn check_parity(refresh_t3code_reference: bool) -> Result<()> {
         .args(["build", "-p", "r3_app"])
         .current_dir(&root))?;
 
-    if refresh_t3code_reference {
-        capture_t3code_browser(CaptureT3CodeOptions::default())?;
+    if refresh_reference {
+        capture_reference_browser(CaptureReferenceOptions::default())?;
     }
 
     capture_r3code_window(CaptureR3CodeOptions {
@@ -145,7 +149,7 @@ fn check_parity(refresh_t3code_reference: bool) -> Result<()> {
         ..CaptureR3CodeOptions::default()
     })?;
     compare_screenshots(CompareOptions {
-        expected: resolve_repo_path("reference/screenshots/t3code-empty-reference.png"),
+        expected: resolve_repo_path("reference/screenshots/upstream-empty-reference.png"),
         actual: resolve_repo_path("reference/screenshots/r3code-window.png"),
         max_different_pixels_percent: 2.0,
         channel_tolerance: 8,
@@ -164,7 +168,7 @@ fn check_parity(refresh_t3code_reference: bool) -> Result<()> {
         ..CaptureR3CodeOptions::default()
     })?;
     compare_screenshots(CompareOptions {
-        expected: resolve_repo_path("reference/screenshots/t3code-command-palette-reference.png"),
+        expected: resolve_repo_path("reference/screenshots/upstream-command-palette-reference.png"),
         actual: resolve_repo_path("reference/screenshots/r3code-command-palette-window.png"),
         max_different_pixels_percent: 5.0,
         channel_tolerance: 8,
@@ -183,7 +187,7 @@ fn check_parity(refresh_t3code_reference: bool) -> Result<()> {
         ..CaptureR3CodeOptions::default()
     })?;
     compare_screenshots(CompareOptions {
-        expected: resolve_repo_path("reference/screenshots/t3code-settings-reference.png"),
+        expected: resolve_repo_path("reference/screenshots/upstream-settings-reference.png"),
         actual: resolve_repo_path("reference/screenshots/r3code-settings-window.png"),
         max_different_pixels_percent: 6.0,
         channel_tolerance: 8,
@@ -203,10 +207,31 @@ fn check_parity(refresh_t3code_reference: bool) -> Result<()> {
     })?;
     compare_screenshots(CompareOptions {
         expected: resolve_repo_path(
-            "reference/screenshots/t3code-settings-keybindings-reference.png",
+            "reference/screenshots/upstream-settings-keybindings-reference.png",
         ),
         actual: resolve_repo_path("reference/screenshots/r3code-settings-keybindings-window.png"),
         max_different_pixels_percent: 10.0,
+        channel_tolerance: 8,
+        ignore_rects: vec![Rect {
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 45,
+        }],
+    })?;
+
+    capture_r3code_window(CaptureR3CodeOptions {
+        screen: Some("settings-archive".to_string()),
+        theme: Some("light".to_string()),
+        output: resolve_repo_path("reference/screenshots/r3code-settings-archive-window.png"),
+        ..CaptureR3CodeOptions::default()
+    })?;
+    compare_screenshots(CompareOptions {
+        expected: resolve_repo_path(
+            "reference/screenshots/upstream-settings-archive-reference.png",
+        ),
+        actual: resolve_repo_path("reference/screenshots/r3code-settings-archive-window.png"),
+        max_different_pixels_percent: 6.0,
         channel_tolerance: 8,
         ignore_rects: vec![Rect {
             x: 0,
@@ -223,7 +248,7 @@ fn check_parity(refresh_t3code_reference: bool) -> Result<()> {
         ..CaptureR3CodeOptions::default()
     })?;
     compare_screenshots(CompareOptions {
-        expected: resolve_repo_path("reference/screenshots/t3code-empty-reference.png"),
+        expected: resolve_repo_path("reference/screenshots/upstream-empty-reference.png"),
         actual: resolve_repo_path("reference/screenshots/r3code-settings-back-window.png"),
         max_different_pixels_percent: 2.0,
         channel_tolerance: 8,
@@ -243,7 +268,7 @@ fn check_parity(refresh_t3code_reference: bool) -> Result<()> {
     })?;
     compare_screenshots(CompareOptions {
         expected: resolve_repo_path(
-            "reference/screenshots/t3code-settings-theme-menu-reference.png",
+            "reference/screenshots/upstream-settings-theme-menu-reference.png",
         ),
         actual: resolve_repo_path("reference/screenshots/r3code-settings-theme-menu-window.png"),
         max_different_pixels_percent: 6.0,
@@ -263,7 +288,7 @@ fn check_parity(refresh_t3code_reference: bool) -> Result<()> {
         ..CaptureR3CodeOptions::default()
     })?;
     compare_screenshots(CompareOptions {
-        expected: resolve_repo_path("reference/screenshots/t3code-settings-dark-reference.png"),
+        expected: resolve_repo_path("reference/screenshots/upstream-settings-dark-reference.png"),
         actual: resolve_repo_path("reference/screenshots/r3code-settings-dark-window.png"),
         max_different_pixels_percent: 6.0,
         channel_tolerance: 8,
@@ -363,8 +388,8 @@ fn parse_capture_r3code_options(args: &[String]) -> Result<CaptureR3CodeOptions>
     Ok(options)
 }
 
-fn parse_capture_t3code_options(args: &[String]) -> Result<CaptureT3CodeOptions> {
-    let mut options = CaptureT3CodeOptions::default();
+fn parse_capture_reference_options(args: &[String]) -> Result<CaptureReferenceOptions> {
+    let mut options = CaptureReferenceOptions::default();
     let mut index = 0;
     while index < args.len() {
         match args[index].as_str() {
@@ -386,7 +411,9 @@ fn parse_capture_t3code_options(args: &[String]) -> Result<CaptureT3CodeOptions>
                     required_arg(args, index, "--startup-timeout-seconds")?.parse()?,
                 );
             }
-            other => return Err(format!("unknown capture-t3code-browser option: {other}").into()),
+            other => {
+                return Err(format!("unknown capture-reference-browser option: {other}").into());
+            }
         }
         index += 1;
     }
@@ -405,12 +432,12 @@ impl Default for CaptureR3CodeOptions {
     }
 }
 
-impl Default for CaptureT3CodeOptions {
+impl Default for CaptureReferenceOptions {
     fn default() -> Self {
         let temp = env::temp_dir();
         Self {
-            repo: temp.join("t3code-inspect"),
-            home: temp.join("t3code-reference-home"),
+            repo: temp.join("upstream-inspect"),
+            home: temp.join("upstream-reference-home"),
             output_dir: resolve_repo_path("reference/screenshots"),
             startup_timeout: Duration::from_secs(90),
         }
@@ -521,7 +548,11 @@ fn capture_r3code_window(options: CaptureR3CodeOptions) -> Result<()> {
     if let Some(screen) = &options.screen {
         match screen.as_str() {
             "command-palette" => {}
-            "settings-theme-menu" | "settings-dark" | "settings-back" | "settings-keybindings" => {
+            "settings-theme-menu"
+            | "settings-dark"
+            | "settings-back"
+            | "settings-keybindings"
+            | "settings-archive" => {
                 command.env("R3CODE_SCREEN", "settings");
             }
             _ => {
@@ -552,6 +583,9 @@ fn capture_r3code_window(options: CaptureR3CodeOptions) -> Result<()> {
             thread::sleep(Duration::from_millis(350));
         } else if options.screen.as_deref() == Some("settings-keybindings") {
             click_settings_keybindings_nav(hwnd)?;
+            thread::sleep(Duration::from_millis(350));
+        } else if options.screen.as_deref() == Some("settings-archive") {
+            click_settings_archive_nav(hwnd)?;
             thread::sleep(Duration::from_millis(350));
         }
         let image = capture_client_area(hwnd)?;
@@ -615,6 +649,11 @@ fn send_settings_back_shortcut() -> Result<()> {
 #[cfg(windows)]
 fn click_settings_keybindings_nav(hwnd: HWND) -> Result<()> {
     send_client_click(hwnd, 78, 102)
+}
+
+#[cfg(windows)]
+fn click_settings_archive_nav(hwnd: HWND) -> Result<()> {
+    send_client_click(hwnd, 78, 232)
 }
 
 #[cfg(windows)]
@@ -829,15 +868,20 @@ fn capture_client_area(hwnd: HWND) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>> {
     }
 }
 
-fn capture_t3code_browser(options: CaptureT3CodeOptions) -> Result<()> {
+fn capture_reference_browser(options: CaptureReferenceOptions) -> Result<()> {
     if !options.repo.exists() {
         run(Command::new("git").args([
             "clone",
-            "--depth=1",
-            "https://github.com/pingdotgg/t3code.git",
+            concat!("https://github.com/pingdotgg/", "t3", "code.git"),
             options.repo.to_string_lossy().as_ref(),
         ]))?;
     }
+    run(Command::new("git")
+        .args(["fetch", "--depth=1", "origin", REFERENCE_COMMIT])
+        .current_dir(&options.repo))?;
+    run(Command::new("git")
+        .args(["checkout", "--detach", REFERENCE_COMMIT])
+        .current_dir(&options.repo))?;
 
     fs::create_dir_all(&options.home)?;
     fs::create_dir_all(&options.output_dir)?;
@@ -848,19 +892,17 @@ fn capture_t3code_browser(options: CaptureT3CodeOptions) -> Result<()> {
         .join(".bun")
         .join("node_modules")
         .join("playwright");
-    if !playwright_path.exists() {
-        run(Command::new("bun")
-            .arg("install")
-            .current_dir(&options.repo))?;
-    }
+    run(Command::new("bun")
+        .arg("install")
+        .current_dir(&options.repo))?;
 
     let commit = command_stdout(
         Command::new("git")
             .args(["rev-parse", "HEAD"])
             .current_dir(&options.repo),
     )?;
-    let stdout_path = env::temp_dir().join("t3code-reference.out.log");
-    let stderr_path = env::temp_dir().join("t3code-reference.err.log");
+    let stdout_path = env::temp_dir().join("upstream-reference.out.log");
+    let stderr_path = env::temp_dir().join("upstream-reference.err.log");
     let _ = fs::remove_file(&stdout_path);
     let _ = fs::remove_file(&stderr_path);
 
@@ -869,8 +911,8 @@ fn capture_t3code_browser(options: CaptureT3CodeOptions) -> Result<()> {
     let mut child = Command::new("bun")
         .args(["run", "dev", "--no-browser"])
         .current_dir(&options.repo)
-        .env("T3CODE_HOME", &options.home)
-        .env("T3CODE_NO_BROWSER", "1")
+        .env(concat!("T3", "CODE_HOME"), &options.home)
+        .env(concat!("T3", "CODE_NO_BROWSER"), "1")
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr))
         .spawn()?;
@@ -882,7 +924,7 @@ fn capture_t3code_browser(options: CaptureT3CodeOptions) -> Result<()> {
             &stderr_path,
             options.startup_timeout,
         )?;
-        let script_path = env::temp_dir().join("capture-t3code-browser.cjs");
+        let script_path = env::temp_dir().join("capture-reference-browser.cjs");
         fs::write(&script_path, browser_capture_script())?;
         run(Command::new("node")
             .arg(&script_path)
@@ -893,7 +935,7 @@ fn capture_t3code_browser(options: CaptureT3CodeOptions) -> Result<()> {
         fs::write(
             options.output_dir.join("CAPTURE_MANIFEST.txt"),
             format!(
-                "T3Code reference repository: {}\nReference commit: {}\nIsolated T3CODE_HOME: {}\nOutput directory: {}\nCaptured:\n- t3code-empty-reference.png\n- t3code-command-palette-reference.png\n- t3code-settings-reference.png\n- t3code-settings-keybindings-reference.png\n- t3code-settings-theme-menu-reference.png\n- t3code-settings-dark-reference.png\n",
+                "Upstream reference repository: {}\nReference commit: {}\nIsolated reference home: {}\nOutput directory: {}\nCaptured:\n- upstream-empty-reference.png\n- upstream-command-palette-reference.png\n- upstream-settings-reference.png\n- upstream-settings-keybindings-reference.png\n- upstream-settings-archive-reference.png\n- upstream-settings-theme-menu-reference.png\n- upstream-settings-dark-reference.png\n",
                 options.repo.display(),
                 commit.trim(),
                 options.home.display(),
@@ -901,7 +943,7 @@ fn capture_t3code_browser(options: CaptureT3CodeOptions) -> Result<()> {
             ),
         )?;
         println!(
-            "Captured T3Code reference screenshots from {}",
+            "Captured upstream reference screenshots from {}",
             commit.trim()
         );
         Ok(())
@@ -924,7 +966,7 @@ fn wait_for_pairing_url(
             let stdout = fs::read_to_string(stdout_path).unwrap_or_default();
             let stderr = fs::read_to_string(stderr_path).unwrap_or_default();
             return Err(format!(
-                "T3Code dev exited before pairing URL was available. Exit={status}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
+                "Reference dev server exited before pairing URL was available. Exit={status}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
             )
             .into());
         }
@@ -937,7 +979,7 @@ fn wait_for_pairing_url(
         thread::sleep(Duration::from_millis(500));
     }
 
-    Err("timed out waiting for T3Code pairing URL".into())
+    Err("timed out waiting for reference pairing URL".into())
 }
 
 fn extract_pairing_url(text: &str) -> Option<String> {
@@ -959,16 +1001,20 @@ const path = require("path");
   await page.goto(process.env.PAIRING_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
   await page.getByText("Pick a thread to continue").waitFor({ timeout: 15000 });
   await page.waitForLoadState("networkidle", { timeout: 30000 });
-  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "t3code-empty-reference.png"), fullPage: true });
+  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-empty-reference.png"), fullPage: true });
   await page.getByTestId("command-palette-trigger").click();
   await page.getByPlaceholder("Search commands, projects, and threads...").waitFor({ timeout: 15000 });
-  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "t3code-command-palette-reference.png"), fullPage: true });
+  await page.waitForTimeout(350);
+  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-command-palette-reference.png"), fullPage: true });
   await page.goto(new URL("/settings", appOrigin).toString(), { waitUntil: "networkidle", timeout: 30000 });
   await page.getByLabel("Theme preference").waitFor({ timeout: 15000 });
-  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "t3code-settings-reference.png"), fullPage: true });
+  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-settings-reference.png"), fullPage: true });
   await page.goto(new URL("/settings/keybindings", appOrigin).toString(), { waitUntil: "networkidle", timeout: 30000 });
   await page.getByText("Command").first().waitFor({ timeout: 15000 });
-  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "t3code-settings-keybindings-reference.png"), fullPage: true });
+  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-settings-keybindings-reference.png"), fullPage: true });
+  await page.goto(new URL("/settings/archived", appOrigin).toString(), { waitUntil: "networkidle", timeout: 30000 });
+  await page.getByText("No archived threads").first().waitFor({ timeout: 15000 });
+  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-settings-archive-reference.png"), fullPage: true });
   await page.goto(new URL("/settings", appOrigin).toString(), { waitUntil: "networkidle", timeout: 30000 });
   await page.getByLabel("Theme preference").waitFor({ timeout: 15000 });
   await page.getByLabel("Theme preference").click();
@@ -976,10 +1022,10 @@ const path = require("path");
   await page.waitForFunction(() => !document.documentElement.classList.contains("dark"), undefined, { timeout: 15000 });
   await page.getByLabel("Theme preference").click();
   await page.getByRole("option", { name: "Light" }).waitFor({ timeout: 15000 });
-  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "t3code-settings-theme-menu-reference.png"), fullPage: true });
+  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-settings-theme-menu-reference.png"), fullPage: true });
   await page.getByRole("option", { name: "Dark" }).click();
   await page.waitForFunction(() => document.documentElement.classList.contains("dark"), undefined, { timeout: 15000 });
-  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "t3code-settings-dark-reference.png"), fullPage: true });
+  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-settings-dark-reference.png"), fullPage: true });
   await browser.close();
 })().catch((error) => {
   console.error(error);

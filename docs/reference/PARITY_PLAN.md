@@ -1,6 +1,6 @@
 # UI Parity Plan
 
-R3Code should be judged against frozen T3Code reference screenshots, not against taste or memory.
+R3Code should be judged against frozen reference screenshots, not against taste or memory.
 
 ## Required Reference Screens
 
@@ -19,22 +19,23 @@ R3Code should be judged against frozen T3Code reference screenshots, not against
 
 ## Refreshing References
 
-Use the Rust xtask to launch the frozen upstream T3Code checkout with an isolated `T3CODE_HOME`, capture the currently automated reference screens, and stop the watcher process tree:
+Use the Rust xtask to launch the frozen upstream checkout with an isolated reference home, capture the currently automated reference screens, and stop the watcher process tree:
 
 ```text
-cargo run -p xtask -- capture-t3code-browser
+cargo run -p xtask -- capture-reference-browser
 ```
 
 The task currently captures:
 
-- `reference/screenshots/t3code-empty-reference.png`
-- `reference/screenshots/t3code-command-palette-reference.png`
-- `reference/screenshots/t3code-settings-reference.png`
-- `reference/screenshots/t3code-settings-keybindings-reference.png`
-- `reference/screenshots/t3code-settings-theme-menu-reference.png`
-- `reference/screenshots/t3code-settings-dark-reference.png`
+- `reference/screenshots/upstream-empty-reference.png`
+- `reference/screenshots/upstream-command-palette-reference.png`
+- `reference/screenshots/upstream-settings-reference.png`
+- `reference/screenshots/upstream-settings-keybindings-reference.png`
+- `reference/screenshots/upstream-settings-archive-reference.png`
+- `reference/screenshots/upstream-settings-theme-menu-reference.png`
+- `reference/screenshots/upstream-settings-dark-reference.png`
 
-Do not use screenshots from a different upstream commit unless `docs/reference/T3CODE_VERSION.md` is intentionally updated.
+Do not use screenshots from a different upstream commit unless `docs/reference/UPSTREAM_REFERENCE.md` is intentionally updated.
 
 ## Parity Gates
 
@@ -55,17 +56,17 @@ Run the current implemented-screen gate:
 cargo run -p xtask -- check-parity
 ```
 
-The app defaults to `R3CODE_THEME=system`, which resolves from GPUI's OS window appearance. The parity gate forces `light` for screenshots that compare against the current light T3Code references and also captures a dark R3Code smoke screenshot.
+The app defaults to `R3CODE_THEME=system`, which resolves from GPUI's OS window appearance. The parity gate forces `light` for screenshots that compare against the current light reference captures and also captures a dark R3Code smoke screenshot.
 
-Run it with a fresh upstream T3Code capture:
+Run it with a fresh upstream reference capture:
 
 ```text
-cargo run -p xtask -- check-parity --refresh-t3code-reference
+cargo run -p xtask -- check-parity --refresh-reference
 ```
 
 ## Current Empty-State Baseline
 
-Reference: `reference/screenshots/t3code-empty-reference.png`
+Reference: `reference/screenshots/upstream-empty-reference.png`
 
 R3Code capture: `reference/screenshots/r3code-window.png`
 
@@ -75,14 +76,14 @@ Current measured diff:
 
 ```text
 cargo run -p xtask -- capture-r3code-window --theme light --output reference\screenshots\r3code-window.png
-cargo run -p xtask -- compare-screenshots --expected reference\screenshots\t3code-empty-reference.png --actual reference\screenshots\r3code-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 2
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-empty-reference.png --actual reference\screenshots\r3code-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 2
 ```
 
-Last measured result: `1.564%`.
+Last measured result: `1.565%`.
 
 ## Current Command Palette Baseline
 
-Reference: `reference/screenshots/t3code-command-palette-reference.png`
+Reference: `reference/screenshots/upstream-command-palette-reference.png`
 
 R3Code capture: `reference/screenshots/r3code-command-palette-window.png`
 
@@ -92,16 +93,16 @@ Current measured diff:
 
 ```text
 cargo run -p xtask -- capture-r3code-window --theme light --screen command-palette --output reference\screenshots\r3code-command-palette-window.png
-cargo run -p xtask -- compare-screenshots --expected reference\screenshots\t3code-command-palette-reference.png --actual reference\screenshots\r3code-command-palette-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 5
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-command-palette-reference.png --actual reference\screenshots\r3code-command-palette-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 5
 ```
 
-Last measured result: `4.054%`.
+Last measured result: `3.267%`.
 
 The R3Code command palette capture launches the normal empty shell, focuses the GPUI window, and opens the palette with the native Ctrl+K shortcut path before taking the screenshot.
 
 ## Current Settings Baseline
 
-Reference: `reference/screenshots/t3code-settings-reference.png`
+Reference: `reference/screenshots/upstream-settings-reference.png`
 
 R3Code capture: `reference/screenshots/r3code-settings-window.png`
 
@@ -111,7 +112,7 @@ Current measured diff:
 
 ```text
 cargo run -p xtask -- capture-r3code-window --theme light --screen settings --output reference\screenshots\r3code-settings-window.png
-cargo run -p xtask -- compare-screenshots --expected reference\screenshots\t3code-settings-reference.png --actual reference\screenshots\r3code-settings-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-reference.png --actual reference\screenshots\r3code-settings-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
 ```
 
 Last measured result: `5.334%`.
@@ -123,7 +124,7 @@ The settings nav rows are native GPUI click targets; the parity gate opens Keybi
 
 ## Current Settings Keybindings Baseline
 
-Reference: `reference/screenshots/t3code-settings-keybindings-reference.png`
+Reference: `reference/screenshots/upstream-settings-keybindings-reference.png`
 
 R3Code capture: `reference/screenshots/r3code-settings-keybindings-window.png`
 
@@ -133,14 +134,31 @@ Current measured diff:
 
 ```text
 cargo run -p xtask -- capture-r3code-window --theme light --screen settings-keybindings --output reference\screenshots\r3code-settings-keybindings-window.png
-cargo run -p xtask -- compare-screenshots --expected reference\screenshots\t3code-settings-keybindings-reference.png --actual reference\screenshots\r3code-settings-keybindings-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 10
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-keybindings-reference.png --actual reference\screenshots\r3code-settings-keybindings-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 10
 ```
 
-Last measured result: `8.791%`.
+Last measured result: `8.790%`.
+
+## Current Settings Archive Baseline
+
+Reference: `reference/screenshots/upstream-settings-archive-reference.png`
+
+R3Code capture: `reference/screenshots/r3code-settings-archive-window.png`
+
+Allowed brand-copy difference: `--ignore-rect 0,0,120,45`
+
+Current measured diff:
+
+```text
+cargo run -p xtask -- capture-r3code-window --theme light --screen settings-archive --output reference\screenshots\r3code-settings-archive-window.png
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-archive-reference.png --actual reference\screenshots\r3code-settings-archive-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
+```
+
+Last measured result: `1.249%`.
 
 ## Current Settings Back Baseline
 
-Reference: `reference/screenshots/t3code-empty-reference.png`
+Reference: `reference/screenshots/upstream-empty-reference.png`
 
 R3Code capture: `reference/screenshots/r3code-settings-back-window.png`
 
@@ -150,14 +168,14 @@ Current measured diff:
 
 ```text
 cargo run -p xtask -- capture-r3code-window --theme light --screen settings-back --output reference\screenshots\r3code-settings-back-window.png
-cargo run -p xtask -- compare-screenshots --expected reference\screenshots\t3code-empty-reference.png --actual reference\screenshots\r3code-settings-back-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 2
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-empty-reference.png --actual reference\screenshots\r3code-settings-back-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 2
 ```
 
-Last measured result: `1.564%`.
+Last measured result: `1.565%`.
 
 ## Current Settings Theme Menu Baseline
 
-Reference: `reference/screenshots/t3code-settings-theme-menu-reference.png`
+Reference: `reference/screenshots/upstream-settings-theme-menu-reference.png`
 
 R3Code capture: `reference/screenshots/r3code-settings-theme-menu-window.png`
 
@@ -167,16 +185,16 @@ Current measured diff:
 
 ```text
 cargo run -p xtask -- capture-r3code-window --theme light --screen settings-theme-menu --output reference\screenshots\r3code-settings-theme-menu-window.png
-cargo run -p xtask -- compare-screenshots --expected reference\screenshots\t3code-settings-theme-menu-reference.png --actual reference\screenshots\r3code-settings-theme-menu-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-theme-menu-reference.png --actual reference\screenshots\r3code-settings-theme-menu-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
 ```
 
 Last measured result: `5.432%`.
 
-The R3Code capture opens the settings route in forced light mode, opens the native GPUI theme select with the settings keyboard path, and then screenshots the open `System / Light / Dark` popup. The T3Code reference selects `Light` before opening the menu so both screenshots compare the same selected value.
+The R3Code capture opens the settings route in forced light mode, opens the native GPUI theme select with the settings keyboard path, and then screenshots the open `System / Light / Dark` popup. The reference selects `Light` before opening the menu so both screenshots compare the same selected value.
 
 ## Current Settings Dark Selection Baseline
 
-Reference: `reference/screenshots/t3code-settings-dark-reference.png`
+Reference: `reference/screenshots/upstream-settings-dark-reference.png`
 
 R3Code capture: `reference/screenshots/r3code-settings-dark-window.png`
 
@@ -186,7 +204,7 @@ Current measured diff:
 
 ```text
 cargo run -p xtask -- capture-r3code-window --theme light --screen settings-dark --output reference\screenshots\r3code-settings-dark-window.png
-cargo run -p xtask -- compare-screenshots --expected reference\screenshots\t3code-settings-dark-reference.png --actual reference\screenshots\r3code-settings-dark-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-dark-reference.png --actual reference\screenshots\r3code-settings-dark-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
 ```
 
 Last measured result: `5.396%`.
