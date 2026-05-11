@@ -31,6 +31,7 @@ The task currently captures:
 - `reference/screenshots/t3code-command-palette-reference.png`
 - `reference/screenshots/t3code-settings-reference.png`
 - `reference/screenshots/t3code-settings-theme-menu-reference.png`
+- `reference/screenshots/t3code-settings-dark-reference.png`
 
 Do not use screenshots from a different upstream commit unless `docs/reference/T3CODE_VERSION.md` is intentionally updated.
 
@@ -112,7 +113,7 @@ cargo run -p xtask -- capture-r3code-window --theme light --screen settings --ou
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\t3code-settings-reference.png --actual reference\screenshots\r3code-settings-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
 ```
 
-Last measured result: `5.054%`.
+Last measured result: `5.373%`.
 
 ## Current Settings Theme Menu Baseline
 
@@ -129,9 +130,28 @@ cargo run -p xtask -- capture-r3code-window --theme light --screen settings-them
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\t3code-settings-theme-menu-reference.png --actual reference\screenshots\r3code-settings-theme-menu-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
 ```
 
-Last measured result: `5.467%`.
+Last measured result: `5.470%`.
 
-The R3Code capture opens the settings route, focuses the native GPUI theme select with `Tab`, opens it with `Enter`, and then screenshots the open `System / Light / Dark` popup.
+The R3Code capture opens the settings route in forced light mode, opens the native GPUI theme select with the settings keyboard path, and then screenshots the open `System / Light / Dark` popup. The T3Code reference selects `Light` before opening the menu so both screenshots compare the same selected value.
+
+## Current Settings Dark Selection Baseline
+
+Reference: `reference/screenshots/t3code-settings-dark-reference.png`
+
+R3Code capture: `reference/screenshots/r3code-settings-dark-window.png`
+
+Allowed brand-copy difference: `--ignore-rect 0,0,120,45`
+
+Current measured diff:
+
+```text
+cargo run -p xtask -- capture-r3code-window --theme light --screen settings-dark --output reference\screenshots\r3code-settings-dark-window.png
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\t3code-settings-dark-reference.png --actual reference\screenshots\r3code-settings-dark-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
+```
+
+Last measured result: `5.435%`.
+
+The R3Code capture opens settings from forced light mode, opens the native theme select with the settings keyboard path, moves from `Light` to `Dark` with one Down arrow press, selects it with `Enter`, and screenshots the dark settings surface.
 
 ## Implementation Rule
 

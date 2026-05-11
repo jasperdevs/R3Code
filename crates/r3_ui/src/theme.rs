@@ -59,10 +59,10 @@ impl Theme {
 
     pub fn dark() -> Self {
         Self {
-            background: hsla(0.0, 0.0, 0.08, 1.0),
-            app_chrome_background: hsla(0.0, 0.0, 0.08, 1.0),
+            background: hsla(0.0, 0.0, 0.10, 1.0),
+            app_chrome_background: hsla(0.0, 0.0, 0.10, 1.0),
             foreground: hsla(0.0, 0.0, 0.96, 1.0),
-            card: hsla(0.0, 0.0, 0.09, 1.0),
+            card: hsla(0.0, 0.0, 0.11, 1.0),
             border: hsla(0.0, 0.0, 1.0, 0.06),
             muted_foreground: hsla(0.0, 0.0, 0.62, 1.0),
             accent: hsla(0.0, 0.0, 1.0, 0.04),

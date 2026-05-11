@@ -17,6 +17,7 @@ pub struct R3Shell {
     command_palette_query: String,
     command_palette_highlighted_index: usize,
     settings_select_open: Option<SettingsSelect>,
+    settings_theme_highlighted_index: usize,
     shell_focus_handle: FocusHandle,
     command_palette_focus_handle: FocusHandle,
     settings_theme_select_focus_handle: FocusHandle,
@@ -39,6 +40,7 @@ impl R3Shell {
             command_palette_query: String::new(),
             command_palette_highlighted_index: 0,
             settings_select_open: None,
+            settings_theme_highlighted_index: 0,
             shell_focus_handle: cx.focus_handle(),
             command_palette_focus_handle: cx.focus_handle(),
             settings_theme_select_focus_handle: cx.focus_handle(),
@@ -579,13 +581,14 @@ impl R3Shell {
         ];
 
         let mut card = div()
+            .relative()
             .flex()
             .flex_col()
             .w(px(768.0))
             .rounded(px(14.0))
             .border_1()
             .border_color(self.theme.border)
-            .bg(self.theme.background);
+            .bg(self.theme.card);
 
         for row in rows {
             card = card.child(
@@ -617,6 +620,10 @@ impl R3Shell {
                     )
                     .child(self.settings_value(row.control, cx)),
             );
+        }
+
+        if self.settings_select_open == Some(SettingsSelect::Theme) {
+            card = card.child(self.theme_select_popup(cx));
         }
 
         card
@@ -659,8 +666,7 @@ impl R3Shell {
     }
 
     fn theme_select(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let is_open = self.settings_select_open == Some(SettingsSelect::Theme);
-        let mut select = div()
+        div()
             .id("settings-theme-select")
             .relative()
             .min_w(px(160.0))
@@ -680,20 +686,14 @@ impl R3Shell {
                 this.toggle_settings_select(SettingsSelect::Theme, cx);
                 cx.stop_propagation();
             }))
-            .child(self.theme_mode_label());
-
-        if is_open {
-            select = select.child(self.theme_select_popup(cx));
-        }
-
-        select
+            .child(self.theme_mode_label())
     }
 
     fn theme_select_popup(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let mut popup = div()
             .absolute()
-            .top(px(38.0))
-            .right(px(0.0))
+            .top(px(54.0))
+            .right(px(20.0))
             .flex()
             .flex_col()
             .w(px(160.0))
@@ -718,6 +718,7 @@ impl R3Shell {
 
     fn theme_select_item(&self, mode: ThemeMode, cx: &mut Context<Self>) -> impl IntoElement {
         let active = self.theme_mode == mode;
+        let highlighted = self.settings_theme_highlighted_index == theme_mode_index(mode);
         div()
             .id(match mode {
                 ThemeMode::System => "settings-theme-option-system",
@@ -731,7 +732,7 @@ impl R3Shell {
             .px_2()
             .text_size(px(14.0))
             .cursor_pointer()
-            .bg(if active {
+            .bg(if active || highlighted {
                 self.theme.accent
             } else {
                 self.theme.background.alpha(0.0)
@@ -1009,6 +1010,9 @@ impl R3Shell {
         self.settings_select_open = if self.settings_select_open == Some(select) {
             None
         } else {
+            if select == SettingsSelect::Theme {
+                self.settings_theme_highlighted_index = theme_mode_index(self.theme_mode);
+            }
             Some(select)
         };
         cx.notify();
@@ -1016,6 +1020,7 @@ impl R3Shell {
 
     fn set_theme_mode(&mut self, mode: ThemeMode, cx: &mut Context<Self>) {
         self.theme_mode = mode;
+        self.settings_theme_highlighted_index = theme_mode_index(mode);
         self.settings_select_open = None;
         cx.notify();
     }
@@ -1023,12 +1028,37 @@ impl R3Shell {
     fn on_theme_select_key_down(
         &mut self,
         event: &KeyDownEvent,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        match event.keystroke.key.as_str() {
+        self.handle_theme_select_key(event.keystroke.key.as_str(), window, cx);
+    }
+
+    fn handle_theme_select_key(&mut self, key: &str, _: &mut Window, cx: &mut Context<Self>) {
+        match key {
+            "enter" | "space" if self.settings_select_open == Some(SettingsSelect::Theme) => {
+                self.set_theme_mode(
+                    theme_mode_for_index(self.settings_theme_highlighted_index),
+                    cx,
+                );
+                cx.stop_propagation();
+            }
             "enter" | "space" => {
                 self.toggle_settings_select(SettingsSelect::Theme, cx);
+                cx.stop_propagation();
+            }
+            "down" if self.settings_select_open == Some(SettingsSelect::Theme) => {
+                self.settings_theme_highlighted_index =
+                    (self.settings_theme_highlighted_index + 1) % 3;
+                cx.notify();
+                cx.stop_propagation();
+            }
+            "up" if self.settings_select_open == Some(SettingsSelect::Theme) => {
+                self.settings_theme_highlighted_index = self
+                    .settings_theme_highlighted_index
+                    .checked_sub(1)
+                    .unwrap_or(2);
+                cx.notify();
                 cx.stop_propagation();
             }
             "escape" if self.settings_select_open == Some(SettingsSelect::Theme) => {
@@ -1049,6 +1079,26 @@ impl R3Shell {
         if event.keystroke.key.as_str() == "escape" && self.settings_select_open.is_some() {
             self.settings_select_open = None;
             cx.notify();
+            cx.stop_propagation();
+            return;
+        }
+
+        if self.settings_select_open == Some(SettingsSelect::Theme) {
+            self.handle_theme_select_key(event.keystroke.key.as_str(), window, cx);
+            return;
+        }
+
+        if self.screen == R3Screen::Settings
+            && event.keystroke.key.as_str() == "tab"
+            && self.settings_select_open.is_none()
+        {
+            window.focus(&self.settings_theme_select_focus_handle);
+            cx.stop_propagation();
+            return;
+        }
+
+        if self.is_settings_theme_shortcut(event) {
+            self.toggle_settings_select(SettingsSelect::Theme, cx);
             cx.stop_propagation();
             return;
         }
@@ -1120,6 +1170,12 @@ impl R3Shell {
         event.keystroke.modifiers.secondary() && event.keystroke.key.eq_ignore_ascii_case("k")
     }
 
+    fn is_settings_theme_shortcut(&self, event: &KeyDownEvent) -> bool {
+        self.screen == R3Screen::Settings
+            && event.keystroke.modifiers.secondary()
+            && event.keystroke.key.eq_ignore_ascii_case("t")
+    }
+
     fn filtered_command_items(&self) -> Vec<&'static CommandPaletteCommand> {
         let query = self.command_palette_query.trim().to_ascii_lowercase();
         if query.is_empty() {
@@ -1185,6 +1241,22 @@ impl R3Shell {
     }
 }
 
+fn theme_mode_index(mode: ThemeMode) -> usize {
+    match mode {
+        ThemeMode::System => 0,
+        ThemeMode::Light => 1,
+        ThemeMode::Dark => 2,
+    }
+}
+
+fn theme_mode_for_index(index: usize) -> ThemeMode {
+    match index {
+        1 => ThemeMode::Light,
+        2 => ThemeMode::Dark,
+        _ => ThemeMode::System,
+    }
+}
+
 impl Focusable for R3Shell {
     fn focus_handle(&self, _: &App) -> FocusHandle {
         self.shell_focus_handle.clone()
@@ -1222,9 +1294,15 @@ pub fn open_main_window(cx: &mut App) {
             if command_palette_open {
                 let focus_handle = shell.read(cx).command_palette_focus_handle.clone();
                 window.focus(&focus_handle);
+                window.defer(cx, move |window, _| {
+                    window.focus(&focus_handle);
+                });
             } else {
                 let focus_handle = shell.read(cx).focus_handle(cx);
                 window.focus(&focus_handle);
+                window.defer(cx, move |window, _| {
+                    window.focus(&focus_handle);
+                });
             }
             shell
         },

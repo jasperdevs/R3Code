@@ -18,7 +18,7 @@ use windows::Win32::{
     },
     UI::Input::KeyboardAndMouse::{
         INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT, KEYEVENTF_KEYUP, SendInput,
-        VIRTUAL_KEY, VK_CONTROL, VK_K, VK_RETURN, VK_TAB,
+        VIRTUAL_KEY, VK_CONTROL, VK_DOWN, VK_K, VK_RETURN, VK_T,
     },
     UI::WindowsAndMessaging::{
         BringWindowToTop, EnumWindows, GetClientRect, GetWindowThreadProcessId, HWND_TOP,
@@ -90,7 +90,7 @@ fn print_usage() {
         "Usage:
   cargo run -p xtask -- check-parity [--refresh-t3code-reference]
   cargo run -p xtask -- compare-screenshots --expected <png> --actual <png> [--channel-tolerance <n>] [--ignore-rect x,y,w,h] [--max-different-pixels-percent <n>]
-  cargo run -p xtask -- capture-r3code-window [--screen settings|command-palette|settings-theme-menu] [--theme light|dark|system] [--output <png>]
+  cargo run -p xtask -- capture-r3code-window [--screen settings|command-palette|settings-theme-menu|settings-dark] [--theme light|dark|system] [--output <png>]
   cargo run -p xtask -- capture-t3code-browser"
     );
 }
@@ -205,6 +205,25 @@ fn check_parity(refresh_t3code_reference: bool) -> Result<()> {
             "reference/screenshots/t3code-settings-theme-menu-reference.png",
         ),
         actual: resolve_repo_path("reference/screenshots/r3code-settings-theme-menu-window.png"),
+        max_different_pixels_percent: 6.0,
+        channel_tolerance: 8,
+        ignore_rects: vec![Rect {
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 45,
+        }],
+    })?;
+
+    capture_r3code_window(CaptureR3CodeOptions {
+        screen: Some("settings-dark".to_string()),
+        theme: Some("light".to_string()),
+        output: resolve_repo_path("reference/screenshots/r3code-settings-dark-window.png"),
+        ..CaptureR3CodeOptions::default()
+    })?;
+    compare_screenshots(CompareOptions {
+        expected: resolve_repo_path("reference/screenshots/t3code-settings-dark-reference.png"),
+        actual: resolve_repo_path("reference/screenshots/r3code-settings-dark-window.png"),
         max_different_pixels_percent: 6.0,
         channel_tolerance: 8,
         ignore_rects: vec![Rect {
@@ -461,7 +480,7 @@ fn capture_r3code_window(options: CaptureR3CodeOptions) -> Result<()> {
     if let Some(screen) = &options.screen {
         match screen.as_str() {
             "command-palette" => {}
-            "settings-theme-menu" => {
+            "settings-theme-menu" | "settings-dark" => {
                 command.env("R3CODE_SCREEN", "settings");
             }
             _ => {
@@ -483,6 +502,9 @@ fn capture_r3code_window(options: CaptureR3CodeOptions) -> Result<()> {
             thread::sleep(Duration::from_millis(350));
         } else if options.screen.as_deref() == Some("settings-theme-menu") {
             send_settings_theme_menu_shortcut()?;
+            thread::sleep(Duration::from_millis(350));
+        } else if options.screen.as_deref() == Some("settings-dark") {
+            send_settings_dark_shortcut()?;
             thread::sleep(Duration::from_millis(350));
         }
         let image = capture_client_area(hwnd)?;
@@ -526,8 +548,15 @@ fn send_command_palette_shortcut() -> Result<()> {
 
 #[cfg(windows)]
 fn send_settings_theme_menu_shortcut() -> Result<()> {
-    send_key_tap(VK_TAB)?;
+    send_key_sequence(&[VK_CONTROL, VK_T])
+}
+
+#[cfg(windows)]
+fn send_settings_dark_shortcut() -> Result<()> {
+    send_settings_theme_menu_shortcut()?;
     thread::sleep(Duration::from_millis(100));
+    send_key_tap(VK_DOWN)?;
+    thread::sleep(Duration::from_millis(60));
     send_key_tap(VK_RETURN)
 }
 
@@ -773,7 +802,7 @@ fn capture_t3code_browser(options: CaptureT3CodeOptions) -> Result<()> {
         fs::write(
             options.output_dir.join("CAPTURE_MANIFEST.txt"),
             format!(
-                "T3Code reference repository: {}\nReference commit: {}\nIsolated T3CODE_HOME: {}\nOutput directory: {}\nCaptured:\n- t3code-empty-reference.png\n- t3code-command-palette-reference.png\n- t3code-settings-reference.png\n- t3code-settings-theme-menu-reference.png\n",
+                "T3Code reference repository: {}\nReference commit: {}\nIsolated T3CODE_HOME: {}\nOutput directory: {}\nCaptured:\n- t3code-empty-reference.png\n- t3code-command-palette-reference.png\n- t3code-settings-reference.png\n- t3code-settings-theme-menu-reference.png\n- t3code-settings-dark-reference.png\n",
                 options.repo.display(),
                 commit.trim(),
                 options.home.display(),
@@ -847,8 +876,14 @@ const path = require("path");
   await page.getByLabel("Theme preference").waitFor({ timeout: 15000 });
   await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "t3code-settings-reference.png"), fullPage: true });
   await page.getByLabel("Theme preference").click();
+  await page.getByRole("option", { name: "Light" }).click();
+  await page.waitForFunction(() => !document.documentElement.classList.contains("dark"), undefined, { timeout: 15000 });
+  await page.getByLabel("Theme preference").click();
   await page.getByRole("option", { name: "Light" }).waitFor({ timeout: 15000 });
   await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "t3code-settings-theme-menu-reference.png"), fullPage: true });
+  await page.getByRole("option", { name: "Dark" }).click();
+  await page.waitForFunction(() => document.documentElement.classList.contains("dark"), undefined, { timeout: 15000 });
+  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "t3code-settings-dark-reference.png"), fullPage: true });
   await browser.close();
 })().catch((error) => {
   console.error(error);
