@@ -22,6 +22,9 @@ pub struct R3Shell {
     keybindings_file_opened: bool,
     settings_select_open: Option<SettingsSelect>,
     settings_section: SettingsSection,
+    settings_defaults_restored: bool,
+    settings_update_checked: bool,
+    settings_diagnostics_opened: bool,
     source_control_scan_requested: bool,
     providers_refresh_requested: bool,
     providers_add_dialog_open: bool,
@@ -62,6 +65,9 @@ impl R3Shell {
             keybindings_file_opened: false,
             settings_select_open: None,
             settings_section: SettingsSection::General,
+            settings_defaults_restored: false,
+            settings_update_checked: false,
+            settings_diagnostics_opened: false,
             source_control_scan_requested: false,
             providers_refresh_requested: false,
             providers_add_dialog_open: false,
@@ -711,6 +717,7 @@ impl R3Shell {
                     .child(div().text_size(px(14.0)).child("Settings"))
                     .child(
                         div()
+                            .id("settings-restore-defaults")
                             .rounded(px(7.0))
                             .border_1()
                             .border_color(self.theme.border)
@@ -718,7 +725,17 @@ impl R3Shell {
                             .py_1()
                             .text_size(px(13.0))
                             .text_color(self.theme.muted_foreground)
-                            .child("Restore defaults"),
+                            .cursor_pointer()
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.settings_defaults_restored = true;
+                                this.settings_select_open = None;
+                                cx.notify();
+                            }))
+                            .child(if self.settings_defaults_restored {
+                                "Defaults restored"
+                            } else {
+                                "Restore defaults"
+                            }),
                     ),
             )
             .child(match self.settings_section {
@@ -739,26 +756,30 @@ impl R3Shell {
 
     fn settings_general_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
+            .id("settings-general-scroll")
             .flex()
             .flex_col()
+            .flex_1()
+            .min_h_0()
             .items_center()
-            .pt_8()
+            .overflow_y_scroll()
+            .p_8()
             .child(
                 div()
                     .flex()
-                    .items_center()
-                    .gap_3()
+                    .flex_col()
                     .w(px(768.0))
-                    .pb_3()
-                    .child(div().h(px(1.0)).w(px(12.0)).bg(self.theme.border))
+                    .gap_8()
                     .child(
                         div()
-                            .text_size(px(11.0))
-                            .text_color(self.theme.muted_foreground)
-                            .child("GENERAL"),
-                    ),
+                            .flex()
+                            .flex_col()
+                            .gap_2p5()
+                            .child(self.settings_section_header("GENERAL"))
+                            .child(self.settings_card(cx)),
+                    )
+                    .child(self.settings_about_section(cx)),
             )
-            .child(self.settings_card(cx))
     }
 
     fn settings_keybindings_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -2644,6 +2665,155 @@ impl R3Shell {
             .text_color(self.theme.muted_foreground)
             .child(div().h(px(1.0)).w(px(12.0)).bg(self.theme.border))
             .child(label.into())
+    }
+
+    fn settings_about_section(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let version_description = if self.settings_update_checked {
+            "Current version of the application. No update is queued."
+        } else {
+            "Current version of the application."
+        };
+        let diagnostics_description = if self.settings_diagnostics_opened {
+            "Diagnostics view selected."
+        } else {
+            "View runtime, environment, and integration diagnostics."
+        };
+
+        div()
+            .flex()
+            .flex_col()
+            .gap_2p5()
+            .child(self.settings_section_header("ABOUT"))
+            .child(
+                self.settings_about_card()
+                    .child(self.settings_about_row(
+                        "Version",
+                        version_description,
+                        self.settings_update_button(cx),
+                        true,
+                    ))
+                    .child(self.settings_about_row(
+                        "Update track",
+                        "Stable follows full releases. Nightly follows the desktop channel.",
+                        self.settings_about_badge("Stable"),
+                        false,
+                    ))
+                    .child(self.settings_about_row(
+                        "Diagnostics",
+                        diagnostics_description,
+                        self.settings_diagnostics_button(cx),
+                        false,
+                    )),
+            )
+    }
+
+    fn settings_about_card(&self) -> gpui::Div {
+        div()
+            .relative()
+            .overflow_hidden()
+            .rounded(px(16.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.card)
+    }
+
+    fn settings_about_row(
+        &self,
+        title: &'static str,
+        description: &'static str,
+        control: impl IntoElement,
+        first: bool,
+    ) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .min_h(px(68.0))
+            .border_t_1()
+            .border_color(if first {
+                self.theme.card
+            } else {
+                self.theme.border
+            })
+            .px_5()
+            .py_3p5()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .text_size(px(13.0))
+                            .font_weight(FontWeight(650.0))
+                            .child(title),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .text_color(self.theme.muted_foreground.opacity(0.82))
+                            .child(description),
+                    ),
+            )
+            .child(control)
+    }
+
+    fn settings_update_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("settings-check-updates")
+            .rounded(px(7.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.background)
+            .px_3()
+            .py_1p5()
+            .text_size(px(12.0))
+            .cursor_pointer()
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.settings_update_checked = true;
+                cx.notify();
+            }))
+            .child(if self.settings_update_checked {
+                "Up to Date"
+            } else {
+                "Check for Updates"
+            })
+    }
+
+    fn settings_diagnostics_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("settings-view-diagnostics")
+            .rounded(px(7.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.background)
+            .px_3()
+            .py_1p5()
+            .text_size(px(12.0))
+            .cursor_pointer()
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.settings_diagnostics_opened = true;
+                cx.notify();
+            }))
+            .child(if self.settings_diagnostics_opened {
+                "Diagnostics ready"
+            } else {
+                "View diagnostics"
+            })
+    }
+
+    fn settings_about_badge(&self, label: &'static str) -> impl IntoElement {
+        div()
+            .rounded(px(7.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.background)
+            .px_3()
+            .py_1p5()
+            .text_size(px(12.0))
+            .text_color(self.theme.foreground)
+            .child(label)
     }
 
     fn settings_card(&self, cx: &mut Context<Self>) -> impl IntoElement {
