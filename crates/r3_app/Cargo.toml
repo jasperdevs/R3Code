@@ -1,0 +1,15 @@
+[package]
+name = "r3_app"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "r3code"
+path = "src/main.rs"
+
+[dependencies]
+gpui.workspace = true
+r3_core = { path = "../r3_core" }
+r3_ui = { path = "../r3_ui" }

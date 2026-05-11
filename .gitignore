@@ -1,0 +1,9 @@
+/target/
+/.idea/
+/.vscode/
+*.pdb
+*.log
+
+# Reference artifacts are generated locally from the frozen upstream version.
+/reference/screenshots/
+/reference/t3code/
