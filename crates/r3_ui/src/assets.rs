@@ -14,6 +14,12 @@ impl AssetSource for R3Assets {
                 include_bytes!("../assets/icons/arrow-up-down.svg").as_slice()
             }
             "icons/bot.svg" => include_bytes!("../assets/icons/bot.svg").as_slice(),
+            "icons/chevron-down.svg" => {
+                include_bytes!("../assets/icons/chevron-down.svg").as_slice()
+            }
+            "icons/chevron-right.svg" => {
+                include_bytes!("../assets/icons/chevron-right.svg").as_slice()
+            }
             "icons/git-branch.svg" => include_bytes!("../assets/icons/git-branch.svg").as_slice(),
             "icons/git-pull-request.svg" => {
                 include_bytes!("../assets/icons/git-pull-request.svg").as_slice()
@@ -39,6 +45,8 @@ impl AssetSource for R3Assets {
             "arrow-left.svg",
             "arrow-up-down.svg",
             "bot.svg",
+            "chevron-down.svg",
+            "chevron-right.svg",
             "git-branch.svg",
             "git-pull-request.svg",
             "keyboard.svg",

@@ -20,6 +20,10 @@ pub struct R3Shell {
     settings_select_open: Option<SettingsSelect>,
     settings_section: SettingsSection,
     source_control_scan_requested: bool,
+    providers_refresh_requested: bool,
+    providers_add_dialog_open: bool,
+    expanded_provider_index: Option<usize>,
+    provider_enabled: [bool; 4],
     settings_theme_highlighted_index: usize,
     shell_focus_handle: FocusHandle,
     command_palette_focus_handle: FocusHandle,
@@ -46,6 +50,10 @@ impl R3Shell {
             settings_select_open: None,
             settings_section: SettingsSection::General,
             source_control_scan_requested: false,
+            providers_refresh_requested: false,
+            providers_add_dialog_open: false,
+            expanded_provider_index: Some(0),
+            provider_enabled: [true, true, false, true],
             settings_theme_highlighted_index: 0,
             shell_focus_handle: cx.focus_handle(),
             command_palette_focus_handle: cx.focus_handle(),
@@ -141,6 +149,23 @@ struct KeybindingRow {
     command: &'static str,
     key: &'static str,
     when: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ProviderInstanceRow {
+    label: &'static str,
+    id: &'static str,
+    driver: &'static str,
+    status: ProviderStatus,
+    badge: Option<&'static str>,
+    description: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProviderStatus {
+    Ready,
+    NotConfigured,
+    EarlyAccess,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -668,6 +693,7 @@ impl R3Shell {
                 SettingsSection::Keybindings => {
                     self.settings_keybindings_panel().into_any_element()
                 }
+                SettingsSection::Providers => self.settings_providers_panel(cx).into_any_element(),
                 SettingsSection::SourceControl => {
                     self.settings_source_control_panel(cx).into_any_element()
                 }
@@ -770,6 +796,418 @@ impl R3Shell {
                             .child(table),
                     ),
             )
+    }
+
+    fn settings_providers_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let rows = provider_instance_rows();
+        let mut card = div()
+            .relative()
+            .overflow_hidden()
+            .rounded(px(16.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.card);
+
+        for (index, row) in rows.iter().enumerate() {
+            card = card.child(self.provider_instance_row(index, *row, cx));
+            if self.expanded_provider_index == Some(index) {
+                card = card.child(self.provider_instance_details(*row));
+            }
+        }
+
+        let mut content = div()
+            .id("settings-providers-scroll")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .items_center()
+            .overflow_y_scroll()
+            .p_8()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .w(px(768.0))
+                    .gap_2p5()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .px_1()
+                            .child(self.settings_section_header("PROVIDERS"))
+                            .child(self.providers_header_actions(cx)),
+                    )
+                    .child(card),
+            );
+
+        if self.providers_add_dialog_open {
+            content = content.child(self.provider_add_panel(cx));
+        }
+
+        content
+    }
+
+    fn providers_header_actions(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut actions = div().flex().items_center().gap_1p5();
+
+        if self.providers_refresh_requested {
+            actions = actions.child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(self.theme.muted_foreground.opacity(0.72))
+                    .child("Checked just now"),
+            );
+        }
+
+        actions
+            .child(
+                div()
+                    .id("providers-add-instance")
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .w(px(20.0))
+                    .h(px(20.0))
+                    .rounded(px(4.0))
+                    .cursor_pointer()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.providers_add_dialog_open = !this.providers_add_dialog_open;
+                        cx.notify();
+                    }))
+                    .child(
+                        svg()
+                            .path("icons/plus-square.svg")
+                            .size_3()
+                            .text_color(self.theme.muted_foreground),
+                    ),
+            )
+            .child(
+                div()
+                    .id("providers-refresh")
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .w(px(20.0))
+                    .h(px(20.0))
+                    .rounded(px(4.0))
+                    .cursor_pointer()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.providers_refresh_requested = true;
+                        cx.notify();
+                    }))
+                    .child(
+                        svg()
+                            .path("icons/refresh-cw.svg")
+                            .size_3()
+                            .text_color(self.theme.muted_foreground),
+                    ),
+            )
+    }
+
+    fn provider_instance_row(
+        &self,
+        index: usize,
+        row: ProviderInstanceRow,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let expanded = self.expanded_provider_index == Some(index);
+        div()
+            .id(row.id)
+            .flex()
+            .items_center()
+            .justify_between()
+            .min_h(px(72.0))
+            .border_t_1()
+            .border_color(if index == 0 {
+                self.theme.card
+            } else {
+                self.theme.border
+            })
+            .px_5()
+            .py_3p5()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .min_w_0()
+                    .child(self.provider_instance_icon(row))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .text_size(px(13.0))
+                                            .font_weight(FontWeight(650.0))
+                                            .child(row.label),
+                                    )
+                                    .child(self.provider_status_badge(row.status))
+                                    .child(match row.badge {
+                                        Some(label) => {
+                                            self.provider_warning_badge(label).into_any_element()
+                                        }
+                                        None => div().into_any_element(),
+                                    }),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.0))
+                                    .text_color(self.theme.muted_foreground.opacity(0.82))
+                                    .child(row.description),
+                            ),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(self.provider_enabled_switch(index, cx))
+                    .child(
+                        div()
+                            .id(match index {
+                                0 => "provider-expand-codex",
+                                1 => "provider-expand-claude",
+                                2 => "provider-expand-cursor",
+                                _ => "provider-expand-opencode",
+                            })
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .w(px(28.0))
+                            .h(px(28.0))
+                            .rounded(px(7.0))
+                            .border_1()
+                            .border_color(self.theme.border)
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.expanded_provider_index =
+                                    if this.expanded_provider_index == Some(index) {
+                                        None
+                                    } else {
+                                        Some(index)
+                                    };
+                                cx.notify();
+                            }))
+                            .child(
+                                svg()
+                                    .path(if expanded {
+                                        "icons/chevron-down.svg"
+                                    } else {
+                                        "icons/chevron-right.svg"
+                                    })
+                                    .size_4()
+                                    .text_color(self.theme.muted_foreground),
+                            ),
+                    ),
+            )
+    }
+
+    fn provider_instance_details(&self, row: ProviderInstanceRow) -> impl IntoElement {
+        div()
+            .border_t_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.background.opacity(0.34))
+            .px_5()
+            .py_4()
+            .child(
+                div()
+                    .grid()
+                    .grid_cols(2)
+                    .gap_3()
+                    .child(self.provider_detail_cell("Driver", row.driver))
+                    .child(self.provider_detail_cell("Models", "Default list"))
+                    .child(self.provider_detail_cell("Environment", "No overrides"))
+                    .child(self.provider_detail_cell("Accent color", "Default")),
+            )
+    }
+
+    fn provider_detail_cell(&self, label: &'static str, value: &'static str) -> impl IntoElement {
+        div()
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.card)
+            .px_3()
+            .py_2p5()
+            .child(
+                div()
+                    .text_size(px(11.0))
+                    .text_color(self.theme.muted_foreground)
+                    .child(label),
+            )
+            .child(
+                div()
+                    .mt_1()
+                    .text_size(px(13.0))
+                    .font_weight(FontWeight(550.0))
+                    .child(value),
+            )
+    }
+
+    fn provider_instance_icon(&self, row: ProviderInstanceRow) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(34.0))
+            .h(px(34.0))
+            .rounded(px(9.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.background)
+            .child(
+                svg()
+                    .path("icons/bot.svg")
+                    .size_4()
+                    .text_color(match row.status {
+                        ProviderStatus::Ready => self.theme.foreground,
+                        ProviderStatus::NotConfigured => self.theme.muted_foreground,
+                        ProviderStatus::EarlyAccess => self.theme.muted_foreground,
+                    }),
+            )
+    }
+
+    fn provider_status_badge(&self, status: ProviderStatus) -> impl IntoElement {
+        let (label, color) = match status {
+            ProviderStatus::Ready => ("Ready", self.theme.primary.opacity(0.88)),
+            ProviderStatus::NotConfigured => ("Not configured", self.theme.muted_foreground),
+            ProviderStatus::EarlyAccess => ("Preview", self.theme.muted_foreground),
+        };
+
+        div()
+            .rounded(px(9.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .px_2()
+            .py_0p5()
+            .text_size(px(11.0))
+            .text_color(color)
+            .child(label)
+    }
+
+    fn provider_warning_badge(&self, label: &'static str) -> impl IntoElement {
+        div()
+            .rounded(px(9.0))
+            .border_1()
+            .border_color(hsla(36.0 / 360.0, 1.0, 0.50, 0.38))
+            .bg(hsla(36.0 / 360.0, 1.0, 0.58, 0.06))
+            .px_2()
+            .py_0p5()
+            .text_size(px(11.0))
+            .text_color(hsla(36.0 / 360.0, 1.0, 0.42, 1.0))
+            .child(label)
+    }
+
+    fn provider_enabled_switch(&self, index: usize, cx: &mut Context<Self>) -> impl IntoElement {
+        let enabled = self.provider_enabled[index];
+        div()
+            .id(match index {
+                0 => "provider-toggle-codex",
+                1 => "provider-toggle-claude",
+                2 => "provider-toggle-cursor",
+                _ => "provider-toggle-opencode",
+            })
+            .relative()
+            .w(px(30.0))
+            .h(px(18.0))
+            .rounded(px(9.0))
+            .cursor_pointer()
+            .bg(if enabled {
+                self.theme.primary
+            } else {
+                self.theme.accent
+            })
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if let Some(value) = this.provider_enabled.get_mut(index) {
+                    *value = !*value;
+                    cx.notify();
+                }
+            }))
+            .child(
+                div()
+                    .absolute()
+                    .top(px(1.0))
+                    .left(if enabled { px(13.0) } else { px(1.0) })
+                    .w(px(16.0))
+                    .h(px(16.0))
+                    .rounded(px(8.0))
+                    .bg(self.theme.background),
+            )
+    }
+
+    fn provider_add_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .absolute()
+            .top(px(88.0))
+            .right(px(48.0))
+            .w(px(280.0))
+            .rounded(px(12.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.card)
+            .p_2()
+            .shadow(vec![BoxShadow {
+                color: hsla(0.0, 0.0, 0.0, 0.10),
+                offset: point(px(0.0), px(12.0)),
+                blur_radius: px(22.0),
+                spread_radius: px(-8.0),
+            }])
+            .child(
+                div()
+                    .px_2()
+                    .py_2()
+                    .text_size(px(12.0))
+                    .font_weight(FontWeight(650.0))
+                    .child("Add provider instance"),
+            )
+            .child(self.provider_add_option("Codex", 0, cx))
+            .child(self.provider_add_option("Claude", 1, cx))
+            .child(self.provider_add_option("OpenCode", 3, cx))
+    }
+
+    fn provider_add_option(
+        &self,
+        label: &'static str,
+        index: usize,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id(match index {
+                0 => "provider-add-codex",
+                1 => "provider-add-claude",
+                2 => "provider-add-cursor",
+                _ => "provider-add-opencode",
+            })
+            .flex()
+            .items_center()
+            .gap_2()
+            .rounded(px(7.0))
+            .px_2()
+            .py_2()
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.providers_add_dialog_open = false;
+                this.expanded_provider_index = Some(index);
+                cx.notify();
+            }))
+            .child(
+                svg()
+                    .path("icons/bot.svg")
+                    .size_4()
+                    .text_color(self.theme.muted_foreground),
+            )
+            .child(div().text_size(px(13.0)).child(label))
     }
 
     fn keybindings_warning_banner(&self) -> impl IntoElement {
@@ -2146,6 +2584,43 @@ fn settings_section_label(section: SettingsSection) -> &'static str {
         SettingsSection::Connections => "Connections",
         SettingsSection::Archive => "Archive",
     }
+}
+
+fn provider_instance_rows() -> &'static [ProviderInstanceRow] {
+    &[
+        ProviderInstanceRow {
+            label: "Codex",
+            id: "provider-row-codex",
+            driver: "codex",
+            status: ProviderStatus::Ready,
+            badge: None,
+            description: "Default code agent provider.",
+        },
+        ProviderInstanceRow {
+            label: "Claude",
+            id: "provider-row-claude",
+            driver: "claudeAgent",
+            status: ProviderStatus::NotConfigured,
+            badge: None,
+            description: "Claude agent bridge.",
+        },
+        ProviderInstanceRow {
+            label: "Cursor",
+            id: "provider-row-cursor",
+            driver: "cursor",
+            status: ProviderStatus::EarlyAccess,
+            badge: Some("Early Access"),
+            description: "Cursor integration for existing desktop sessions.",
+        },
+        ProviderInstanceRow {
+            label: "OpenCode",
+            id: "provider-row-opencode",
+            driver: "opencode",
+            status: ProviderStatus::Ready,
+            badge: None,
+            description: "OpenCode CLI provider.",
+        },
+    ]
 }
 
 fn keybinding_rows() -> &'static [KeybindingRow] {
