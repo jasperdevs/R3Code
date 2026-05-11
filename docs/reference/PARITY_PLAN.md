@@ -19,13 +19,13 @@ R3Code should be judged against frozen T3Code reference screenshots, not against
 
 ## Refreshing References
 
-Use the browser capture script to launch the frozen upstream T3Code checkout with an isolated `T3CODE_HOME`, capture the currently automated reference screens, and stop the watcher process tree:
+Use the Rust xtask to launch the frozen upstream T3Code checkout with an isolated `T3CODE_HOME`, capture the currently automated reference screens, and stop the watcher process tree:
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-t3code-browser.ps1
+```text
+cargo run -p xtask -- capture-t3code-browser
 ```
 
-The script currently captures:
+The task currently captures:
 
 - `reference/screenshots/t3code-empty-reference.png`
 - `reference/screenshots/t3code-settings-reference.png`
@@ -47,16 +47,16 @@ Each implemented GPUI screen needs:
 
 Run the current implemented-screen gate:
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check-parity.ps1
+```text
+cargo run -p xtask -- check-parity
 ```
 
 The app defaults to `R3CODE_THEME=system`, which resolves from GPUI's OS window appearance. The parity gate forces `light` for screenshots that compare against the current light T3Code references and also captures a dark R3Code smoke screenshot.
 
 Run it with a fresh upstream T3Code capture:
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check-parity.ps1 -RefreshT3CodeReference
+```text
+cargo run -p xtask -- check-parity --refresh-t3code-reference
 ```
 
 ## Current Empty-State Baseline
@@ -65,13 +65,13 @@ Reference: `reference/screenshots/t3code-empty-reference.png`
 
 R3Code capture: `reference/screenshots/r3code-window.png`
 
-Allowed brand-copy difference: `-IgnoreRect 0,0,120,45`
+Allowed brand-copy difference: `--ignore-rect 0,0,120,45`
 
 Current measured diff:
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-r3code-window.ps1 -Theme light -OutputPath reference\screenshots\r3code-window.png
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\compare-screenshots.ps1 -Expected reference\screenshots\t3code-empty-reference.png -Actual reference\screenshots\r3code-window.png -ChannelTolerance 8 -IgnoreRect 0,0,120,45 -MaxDifferentPixelsPercent 2
+```text
+cargo run -p xtask -- capture-r3code-window --theme light --output reference\screenshots\r3code-window.png
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\t3code-empty-reference.png --actual reference\screenshots\r3code-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 2
 ```
 
 Last measured result: `1.557%`.
@@ -82,13 +82,13 @@ Reference: `reference/screenshots/t3code-settings-reference.png`
 
 R3Code capture: `reference/screenshots/r3code-settings-window.png`
 
-Allowed brand-copy difference: `-IgnoreRect 0,0,120,45`
+Allowed brand-copy difference: `--ignore-rect 0,0,120,45`
 
 Current measured diff:
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-r3code-window.ps1 -Theme light -Screen settings -OutputPath reference\screenshots\r3code-settings-window.png
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\compare-screenshots.ps1 -Expected reference\screenshots\t3code-settings-reference.png -Actual reference\screenshots\r3code-settings-window.png -ChannelTolerance 8 -IgnoreRect 0,0,120,45 -MaxDifferentPixelsPercent 6
+```text
+cargo run -p xtask -- capture-r3code-window --theme light --screen settings --output reference\screenshots\r3code-settings-window.png
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\t3code-settings-reference.png --actual reference\screenshots\r3code-settings-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
 ```
 
 Last measured result: `5.108%`.

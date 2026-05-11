@@ -6,7 +6,7 @@ The port target is visual and workflow parity with T3Code, with R3Code branding 
 
 ## Development
 
-```powershell
+```text
 cargo check --workspace
 cargo run -p r3_app
 ```
@@ -19,8 +19,8 @@ The UI is built against a frozen T3Code reference. See [docs/reference/T3CODE_VE
 
 Useful local checks:
 
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-t3code-browser.ps1
+```text
+cargo run -p xtask -- capture-t3code-browser
 
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\check-parity.ps1
+cargo run -p xtask -- check-parity
 ```
