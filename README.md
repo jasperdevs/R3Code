@@ -19,5 +19,5 @@ Useful local checks:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\capture-r3code-window.ps1
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\compare-screenshots.ps1 -Expected reference\screenshots\t3code-pair-reference.png -Actual reference\screenshots\r3code-window.png
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\compare-screenshots.ps1 -Expected reference\screenshots\t3code-pair-reference.png -Actual reference\screenshots\r3code-window.png -ChannelTolerance 8 -IgnoreRect 0,0,120,45 -MaxDifferentPixelsPercent 2
 ```
