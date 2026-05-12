@@ -366,15 +366,15 @@ const COMPOSER_MODELS: &[ComposerModel] = &[
 const COMPOSER_RUNTIME_MODES: &[ComposerRuntimeMode] = &[
     ComposerRuntimeMode {
         label: "Supervised",
-        icon: "icons/terminal.svg",
+        icon: "icons/lock.svg",
     },
     ComposerRuntimeMode {
         label: "Auto-accept edits",
-        icon: "icons/terminal.svg",
+        icon: "icons/pen-line.svg",
     },
     ComposerRuntimeMode {
         label: "Full access",
-        icon: "icons/terminal.svg",
+        icon: "icons/lock-open.svg",
     },
 ];
 
@@ -626,33 +626,47 @@ impl R3Shell {
     }
 
     fn toolbar(&self) -> impl IntoElement {
+        let renders_chat_view = self.snapshot.renders_chat_view();
         let mut toolbar = div()
             .flex()
             .items_center()
             .justify_between()
-            .h(px(41.0))
+            .h(if renders_chat_view {
+                px(49.0)
+            } else {
+                px(41.0)
+            })
             .px_5()
             .border_b_1()
             .border_color(self.theme.border)
             .child(
                 div()
                     .text_size(px(14.0))
-                    .text_color(self.theme.muted_foreground)
-                    .child(if self.snapshot.renders_chat_view() {
+                    .font_weight(if renders_chat_view {
+                        FontWeight(500.0)
+                    } else {
+                        FontWeight(400.0)
+                    })
+                    .text_color(if renders_chat_view {
+                        self.theme.foreground
+                    } else {
+                        self.theme.muted_foreground
+                    })
+                    .child(if renders_chat_view {
                         "New thread"
                     } else {
                         "No active thread"
                     }),
             );
 
-        if self.snapshot.renders_chat_view() {
+        if renders_chat_view {
             toolbar = toolbar.child(
                 div()
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(self.toolbar_icon_button("thread-terminal", "icons/terminal.svg"))
-                    .child(self.toolbar_icon_button("thread-new", "icons/plus.svg")),
+                    .child(self.toolbar_icon_button("thread-terminal", "icons/square-terminal.svg"))
+                    .child(self.toolbar_icon_button("thread-diff", "icons/diff.svg")),
             );
         }
 
@@ -742,7 +756,7 @@ impl R3Shell {
             .items_center()
             .justify_center()
             .px_8()
-            .pb_6()
+            .pb_1()
             .child(
                 div()
                     .id("chat-composer-form")
@@ -4103,12 +4117,11 @@ impl R3Shell {
                             .text_color(self.theme.muted_foreground),
                     )
                     .child(
-                        div()
-                            .w(px(13.0))
-                            .h(px(9.0))
-                            .rounded(px(2.0))
-                            .border_1()
-                            .border_color(self.theme.muted_foreground.opacity(0.55)),
+                        svg()
+                            .path("icons/folder.svg")
+                            .w(px(14.0))
+                            .h(px(14.0))
+                            .text_color(self.theme.muted_foreground.opacity(0.50)),
                     )
                     .child(project.name.clone()),
             )

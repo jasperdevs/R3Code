@@ -5,41 +5,104 @@ use gpui::{AssetSource, Result, SharedString};
 #[derive(Debug, Clone, Copy)]
 pub struct R3Assets;
 
+const ICON_ASSETS: &[(&str, &[u8])] = &[
+    (
+        "icons/archive.svg",
+        include_bytes!("../assets/icons/archive.svg"),
+    ),
+    (
+        "icons/arrow-left.svg",
+        include_bytes!("../assets/icons/arrow-left.svg"),
+    ),
+    (
+        "icons/arrow-up-down.svg",
+        include_bytes!("../assets/icons/arrow-up-down.svg"),
+    ),
+    (
+        "icons/arrow-up.svg",
+        include_bytes!("../assets/icons/arrow-up.svg"),
+    ),
+    ("icons/bot.svg", include_bytes!("../assets/icons/bot.svg")),
+    (
+        "icons/chevron-down.svg",
+        include_bytes!("../assets/icons/chevron-down.svg"),
+    ),
+    (
+        "icons/chevron-right.svg",
+        include_bytes!("../assets/icons/chevron-right.svg"),
+    ),
+    ("icons/copy.svg", include_bytes!("../assets/icons/copy.svg")),
+    ("icons/diff.svg", include_bytes!("../assets/icons/diff.svg")),
+    (
+        "icons/file-json.svg",
+        include_bytes!("../assets/icons/file-json.svg"),
+    ),
+    (
+        "icons/folder.svg",
+        include_bytes!("../assets/icons/folder.svg"),
+    ),
+    (
+        "icons/git-branch.svg",
+        include_bytes!("../assets/icons/git-branch.svg"),
+    ),
+    (
+        "icons/git-pull-request.svg",
+        include_bytes!("../assets/icons/git-pull-request.svg"),
+    ),
+    (
+        "icons/keyboard.svg",
+        include_bytes!("../assets/icons/keyboard.svg"),
+    ),
+    (
+        "icons/link-2.svg",
+        include_bytes!("../assets/icons/link-2.svg"),
+    ),
+    (
+        "icons/lock-open.svg",
+        include_bytes!("../assets/icons/lock-open.svg"),
+    ),
+    ("icons/lock.svg", include_bytes!("../assets/icons/lock.svg")),
+    (
+        "icons/minus.svg",
+        include_bytes!("../assets/icons/minus.svg"),
+    ),
+    (
+        "icons/pen-line.svg",
+        include_bytes!("../assets/icons/pen-line.svg"),
+    ),
+    (
+        "icons/plus-square.svg",
+        include_bytes!("../assets/icons/plus-square.svg"),
+    ),
+    ("icons/plus.svg", include_bytes!("../assets/icons/plus.svg")),
+    (
+        "icons/refresh-cw.svg",
+        include_bytes!("../assets/icons/refresh-cw.svg"),
+    ),
+    (
+        "icons/search.svg",
+        include_bytes!("../assets/icons/search.svg"),
+    ),
+    (
+        "icons/settings-2.svg",
+        include_bytes!("../assets/icons/settings-2.svg"),
+    ),
+    (
+        "icons/square-terminal.svg",
+        include_bytes!("../assets/icons/square-terminal.svg"),
+    ),
+    (
+        "icons/terminal.svg",
+        include_bytes!("../assets/icons/terminal.svg"),
+    ),
+];
+
 impl AssetSource for R3Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
-        let bytes = match path {
-            "icons/archive.svg" => include_bytes!("../assets/icons/archive.svg").as_slice(),
-            "icons/arrow-left.svg" => include_bytes!("../assets/icons/arrow-left.svg").as_slice(),
-            "icons/arrow-up-down.svg" => {
-                include_bytes!("../assets/icons/arrow-up-down.svg").as_slice()
-            }
-            "icons/arrow-up.svg" => include_bytes!("../assets/icons/arrow-up.svg").as_slice(),
-            "icons/bot.svg" => include_bytes!("../assets/icons/bot.svg").as_slice(),
-            "icons/chevron-down.svg" => {
-                include_bytes!("../assets/icons/chevron-down.svg").as_slice()
-            }
-            "icons/chevron-right.svg" => {
-                include_bytes!("../assets/icons/chevron-right.svg").as_slice()
-            }
-            "icons/copy.svg" => include_bytes!("../assets/icons/copy.svg").as_slice(),
-            "icons/file-json.svg" => include_bytes!("../assets/icons/file-json.svg").as_slice(),
-            "icons/git-branch.svg" => include_bytes!("../assets/icons/git-branch.svg").as_slice(),
-            "icons/git-pull-request.svg" => {
-                include_bytes!("../assets/icons/git-pull-request.svg").as_slice()
-            }
-            "icons/keyboard.svg" => include_bytes!("../assets/icons/keyboard.svg").as_slice(),
-            "icons/link-2.svg" => include_bytes!("../assets/icons/link-2.svg").as_slice(),
-            "icons/minus.svg" => include_bytes!("../assets/icons/minus.svg").as_slice(),
-            "icons/plus.svg" => include_bytes!("../assets/icons/plus.svg").as_slice(),
-            "icons/plus-square.svg" => include_bytes!("../assets/icons/plus-square.svg").as_slice(),
-            "icons/refresh-cw.svg" => include_bytes!("../assets/icons/refresh-cw.svg").as_slice(),
-            "icons/search.svg" => include_bytes!("../assets/icons/search.svg").as_slice(),
-            "icons/settings-2.svg" => include_bytes!("../assets/icons/settings-2.svg").as_slice(),
-            "icons/terminal.svg" => include_bytes!("../assets/icons/terminal.svg").as_slice(),
-            _ => return Ok(None),
-        };
-
-        Ok(Some(Cow::Borrowed(bytes)))
+        Ok(ICON_ASSETS
+            .iter()
+            .find(|(asset_path, _)| *asset_path == path)
+            .map(|(_, bytes)| Cow::Borrowed(*bytes)))
     }
 
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {
@@ -47,31 +110,11 @@ impl AssetSource for R3Assets {
             return Ok(Vec::new());
         }
 
-        Ok([
-            "archive.svg",
-            "arrow-left.svg",
-            "arrow-up-down.svg",
-            "arrow-up.svg",
-            "bot.svg",
-            "chevron-down.svg",
-            "chevron-right.svg",
-            "copy.svg",
-            "file-json.svg",
-            "git-branch.svg",
-            "git-pull-request.svg",
-            "keyboard.svg",
-            "link-2.svg",
-            "minus.svg",
-            "plus.svg",
-            "plus-square.svg",
-            "refresh-cw.svg",
-            "search.svg",
-            "settings-2.svg",
-            "terminal.svg",
-        ]
-        .into_iter()
-        .map(SharedString::from)
-        .collect())
+        Ok(ICON_ASSETS
+            .iter()
+            .filter_map(|(asset_path, _)| asset_path.strip_prefix("icons/"))
+            .map(SharedString::from)
+            .collect())
     }
 }
 
@@ -92,10 +135,34 @@ mod tests {
     }
 
     #[test]
-    fn project_header_icons_are_listed() {
+    fn icon_registry_is_sorted_and_unique() {
+        let mut previous = "";
+        for (path, _) in ICON_ASSETS {
+            assert!(
+                path.starts_with("icons/"),
+                "icon path must be scoped: {path}"
+            );
+            assert!(
+                *path > previous,
+                "icon registry must be sorted and unique: {path}"
+            );
+            previous = path;
+        }
+    }
+
+    #[test]
+    fn upstream_lucide_icons_used_by_chat_are_listed() {
         let icons = assets_list();
-        assert!(icons.iter().any(|icon| icon == "arrow-up-down.svg"));
-        assert!(icons.iter().any(|icon| icon == "plus-square.svg"));
+        for icon in [
+            "diff.svg",
+            "folder.svg",
+            "lock.svg",
+            "lock-open.svg",
+            "pen-line.svg",
+            "square-terminal.svg",
+        ] {
+            assert!(icons.iter().any(|listed| listed == icon), "{icon}");
+        }
     }
 
     fn assets_list() -> Vec<String> {
