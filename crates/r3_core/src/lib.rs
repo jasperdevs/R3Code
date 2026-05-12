@@ -414,6 +414,288 @@ pub struct DraftSessionState {
 pub struct ProjectSummary {
     pub name: String,
     pub path: String,
+    pub scripts: Vec<ProjectScript>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectScriptIcon {
+    Play,
+    Test,
+    Lint,
+    Configure,
+    Build,
+    Debug,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectScript {
+    pub id: String,
+    pub name: String,
+    pub command: String,
+    pub icon: ProjectScriptIcon,
+    pub run_on_worktree_create: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EditorId {
+    Cursor,
+    Trae,
+    Kiro,
+    VsCode,
+    VsCodeInsiders,
+    VsCodium,
+    Zed,
+    Antigravity,
+    Idea,
+    Aqua,
+    CLion,
+    DataGrip,
+    DataSpell,
+    GoLand,
+    PhpStorm,
+    PyCharm,
+    Rider,
+    RubyMine,
+    RustRover,
+    WebStorm,
+    FileManager,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EditorOption {
+    pub label: &'static str,
+    pub id: EditorId,
+}
+
+const MAX_SCRIPT_ID_LENGTH: usize = 64;
+
+pub fn command_for_project_script(script_id: &str) -> String {
+    format!("script.{script_id}.run")
+}
+
+pub fn project_script_id_from_command(command: &str) -> Option<String> {
+    let trimmed = command.trim();
+    let prefix = "script.";
+    let suffix = ".run";
+    if !trimmed.starts_with(prefix) || !trimmed.ends_with(suffix) {
+        return None;
+    }
+    let script_id = &trimmed[prefix.len()..trimmed.len() - suffix.len()];
+    if script_id.is_empty() {
+        None
+    } else {
+        Some(script_id.to_string())
+    }
+}
+
+fn normalize_script_id(value: &str) -> String {
+    let mut cleaned = String::new();
+    let mut last_was_dash = false;
+    for ch in value.trim().chars().flat_map(char::to_lowercase) {
+        if ch.is_ascii_alphanumeric() {
+            cleaned.push(ch);
+            last_was_dash = false;
+        } else if !last_was_dash && !cleaned.is_empty() {
+            cleaned.push('-');
+            last_was_dash = true;
+        }
+    }
+    while cleaned.ends_with('-') {
+        cleaned.pop();
+    }
+    if cleaned.is_empty() {
+        return "script".to_string();
+    }
+    if cleaned.len() <= MAX_SCRIPT_ID_LENGTH {
+        return cleaned;
+    }
+    let mut truncated = cleaned[..MAX_SCRIPT_ID_LENGTH]
+        .trim_end_matches('-')
+        .to_string();
+    if truncated.is_empty() {
+        truncated = "script".to_string();
+    }
+    truncated
+}
+
+pub fn next_project_script_id<I, S>(name: &str, existing_ids: I) -> String
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let taken = existing_ids
+        .into_iter()
+        .map(|id| id.as_ref().to_string())
+        .collect::<Vec<_>>();
+    let base_id = normalize_script_id(name);
+    if !taken.iter().any(|id| id == &base_id) {
+        return base_id;
+    }
+
+    for suffix in 2..10_000 {
+        let candidate = format!("{base_id}-{suffix}");
+        let safe_candidate = if candidate.len() <= MAX_SCRIPT_ID_LENGTH {
+            candidate
+        } else {
+            let suffix_len = suffix.to_string().len();
+            let prefix_len = MAX_SCRIPT_ID_LENGTH.saturating_sub(suffix_len + 1).max(1);
+            format!("{}-{suffix}", &base_id[..prefix_len])
+        };
+        if !taken.iter().any(|id| id == &safe_candidate) {
+            return safe_candidate;
+        }
+    }
+
+    base_id
+}
+
+pub fn primary_project_script(scripts: &[ProjectScript]) -> Option<&ProjectScript> {
+    scripts
+        .iter()
+        .find(|script| !script.run_on_worktree_create)
+        .or_else(|| scripts.first())
+}
+
+pub fn setup_project_script(scripts: &[ProjectScript]) -> Option<&ProjectScript> {
+    scripts.iter().find(|script| script.run_on_worktree_create)
+}
+
+pub fn project_script_cwd(project_cwd: &str, worktree_path: Option<&str>) -> String {
+    worktree_path.unwrap_or(project_cwd).to_string()
+}
+
+pub fn project_script_runtime_env(
+    project_cwd: &str,
+    worktree_path: Option<&str>,
+    extra_env: &[(&str, &str)],
+) -> BTreeMap<String, String> {
+    let mut env = BTreeMap::from([("T3CODE_PROJECT_ROOT".to_string(), project_cwd.to_string())]);
+    if let Some(worktree_path) = worktree_path {
+        env.insert(
+            "T3CODE_WORKTREE_PATH".to_string(),
+            worktree_path.to_string(),
+        );
+    }
+    for (key, value) in extra_env {
+        env.insert((*key).to_string(), (*value).to_string());
+    }
+    env
+}
+
+pub fn should_show_open_in_picker(
+    active_project_name: Option<&str>,
+    active_thread_environment_id: &str,
+    primary_environment_id: Option<&str>,
+) -> bool {
+    active_project_name.is_some()
+        && primary_environment_id
+            .map(|primary| primary == active_thread_environment_id)
+            .unwrap_or(false)
+}
+
+pub fn resolve_editor_options(platform: &str, available_editors: &[EditorId]) -> Vec<EditorOption> {
+    editor_options(platform)
+        .iter()
+        .copied()
+        .filter(|option| available_editors.iter().any(|editor| editor == &option.id))
+        .collect()
+}
+
+fn editor_options(platform: &str) -> Vec<EditorOption> {
+    let file_manager_label = if platform.to_ascii_lowercase().contains("win") {
+        "Explorer"
+    } else if platform.to_ascii_lowercase().contains("mac") {
+        "Finder"
+    } else {
+        "Files"
+    };
+
+    vec![
+        EditorOption {
+            label: "Cursor",
+            id: EditorId::Cursor,
+        },
+        EditorOption {
+            label: "Trae",
+            id: EditorId::Trae,
+        },
+        EditorOption {
+            label: "Kiro",
+            id: EditorId::Kiro,
+        },
+        EditorOption {
+            label: "VS Code",
+            id: EditorId::VsCode,
+        },
+        EditorOption {
+            label: "VS Code Insiders",
+            id: EditorId::VsCodeInsiders,
+        },
+        EditorOption {
+            label: "VSCodium",
+            id: EditorId::VsCodium,
+        },
+        EditorOption {
+            label: "Zed",
+            id: EditorId::Zed,
+        },
+        EditorOption {
+            label: "Antigravity",
+            id: EditorId::Antigravity,
+        },
+        EditorOption {
+            label: "IntelliJ IDEA",
+            id: EditorId::Idea,
+        },
+        EditorOption {
+            label: "Aqua",
+            id: EditorId::Aqua,
+        },
+        EditorOption {
+            label: "CLion",
+            id: EditorId::CLion,
+        },
+        EditorOption {
+            label: "DataGrip",
+            id: EditorId::DataGrip,
+        },
+        EditorOption {
+            label: "DataSpell",
+            id: EditorId::DataSpell,
+        },
+        EditorOption {
+            label: "GoLand",
+            id: EditorId::GoLand,
+        },
+        EditorOption {
+            label: "PhpStorm",
+            id: EditorId::PhpStorm,
+        },
+        EditorOption {
+            label: "PyCharm",
+            id: EditorId::PyCharm,
+        },
+        EditorOption {
+            label: "Rider",
+            id: EditorId::Rider,
+        },
+        EditorOption {
+            label: "RubyMine",
+            id: EditorId::RubyMine,
+        },
+        EditorOption {
+            label: "RustRover",
+            id: EditorId::RustRover,
+        },
+        EditorOption {
+            label: "WebStorm",
+            id: EditorId::WebStorm,
+        },
+        EditorOption {
+            label: file_manager_label,
+            id: EditorId::FileManager,
+        },
+    ]
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2216,6 +2498,9 @@ pub struct AppSnapshot {
     pub available_environments: Vec<BranchToolbarEnvironmentOption>,
     pub vcs_refs: Vec<VcsRef>,
     pub current_git_branch: Option<String>,
+    pub primary_environment_id: Option<String>,
+    pub available_editors: Vec<EditorId>,
+    pub preferred_editor: Option<EditorId>,
     pub messages: Vec<ChatMessage>,
     pub activities: Vec<ThreadActivity>,
     pub draft_sessions: Vec<DraftSessionState>,
@@ -2299,6 +2584,25 @@ impl AppSnapshot {
         ])
     }
 
+    fn reference_project_scripts() -> Vec<ProjectScript> {
+        vec![
+            ProjectScript {
+                id: "test".to_string(),
+                name: "Test".to_string(),
+                command: "cargo test --workspace".to_string(),
+                icon: ProjectScriptIcon::Test,
+                run_on_worktree_create: false,
+            },
+            ProjectScript {
+                id: "setup".to_string(),
+                name: "Setup".to_string(),
+                command: "cargo fetch".to_string(),
+                icon: ProjectScriptIcon::Configure,
+                run_on_worktree_create: true,
+            },
+        ]
+    }
+
     pub fn empty_reference_state() -> Self {
         Self {
             route: ChatRoute::Index,
@@ -2308,6 +2612,9 @@ impl AppSnapshot {
             available_environments: Vec::new(),
             vcs_refs: Vec::new(),
             current_git_branch: None,
+            primary_environment_id: None,
+            available_editors: Vec::new(),
+            preferred_editor: None,
             messages: Vec::new(),
             activities: Vec::new(),
             draft_sessions: Vec::new(),
@@ -2336,12 +2643,16 @@ impl AppSnapshot {
             projects: vec![ProjectSummary {
                 name: "server".to_string(),
                 path: "C:\\Users\\bunny\\Downloads\\r3code".to_string(),
+                scripts: Vec::new(),
             }],
             threads: Vec::new(),
             is_git_repo: false,
             available_environments: Self::reference_environments(),
             vcs_refs: Self::reference_vcs_refs(),
             current_git_branch: Some("main".to_string()),
+            primary_environment_id: Some("local".to_string()),
+            available_editors: vec![EditorId::VsCode, EditorId::FileManager],
+            preferred_editor: Some(EditorId::VsCode),
             messages: Vec::new(),
             activities: Vec::new(),
             draft_sessions: vec![DraftSessionState {
@@ -2378,11 +2689,15 @@ impl AppSnapshot {
             projects: vec![ProjectSummary {
                 name: "r3code".to_string(),
                 path: "C:\\Users\\bunny\\Downloads\\r3code".to_string(),
+                scripts: Self::reference_project_scripts(),
             }],
             is_git_repo: true,
             available_environments: Self::reference_environments(),
             vcs_refs: Self::reference_vcs_refs(),
             current_git_branch: Some("main".to_string()),
+            primary_environment_id: Some("local".to_string()),
+            available_editors: vec![EditorId::VsCode, EditorId::FileManager],
+            preferred_editor: Some(EditorId::VsCode),
             threads: vec![
                 ThreadSummary {
                     title: "Port R3Code UI shell".to_string(),
@@ -2690,6 +3005,47 @@ impl AppSnapshot {
 
     pub fn active_project_name(&self) -> Option<&str> {
         self.projects.first().map(|project| project.name.as_str())
+    }
+
+    pub fn active_project(&self) -> Option<&ProjectSummary> {
+        self.projects.first()
+    }
+
+    pub fn active_environment_id(&self) -> Option<&str> {
+        match &self.route {
+            ChatRoute::Thread(ThreadRouteTarget::Server { thread_ref }) => {
+                Some(thread_ref.environment_id.as_str())
+            }
+            ChatRoute::Thread(ThreadRouteTarget::Draft { draft_id }) => self
+                .draft_sessions
+                .iter()
+                .find(|draft| &draft.draft_id == draft_id)
+                .map(|draft| draft.thread_ref.environment_id.as_str()),
+            ChatRoute::Index => None,
+        }
+    }
+
+    pub fn open_in_picker_visible(&self) -> bool {
+        let Some(active_environment_id) = self.active_environment_id() else {
+            return false;
+        };
+        should_show_open_in_picker(
+            self.active_project_name(),
+            active_environment_id,
+            self.primary_environment_id.as_deref(),
+        )
+    }
+
+    pub fn active_editor_option(&self, platform: &str) -> Option<EditorOption> {
+        let options = resolve_editor_options(platform, &self.available_editors);
+        self.preferred_editor
+            .and_then(|preferred| {
+                options
+                    .iter()
+                    .copied()
+                    .find(|option| option.id == preferred)
+            })
+            .or_else(|| options.first().copied())
     }
 
     pub fn active_draft_session(&self) -> Option<&DraftSessionState> {
@@ -3221,6 +3577,120 @@ mod tests {
         assert_eq!(toolbar.workspace_label, "New worktree");
         assert_eq!(toolbar.branch_label, "From main");
         assert!(toolbar.show_environment_picker);
+    }
+
+    #[test]
+    fn project_scripts_helpers_match_upstream_logic() {
+        let command = command_for_project_script("lint");
+        assert_eq!(command, "script.lint.run");
+        assert_eq!(
+            project_script_id_from_command(&command),
+            Some("lint".to_string())
+        );
+        assert_eq!(project_script_id_from_command("terminal.toggle"), None);
+        assert_eq!(
+            next_project_script_id("Run Tests", [] as [&str; 0]),
+            "run-tests"
+        );
+        assert_eq!(
+            next_project_script_id("Run Tests", ["run-tests"]),
+            "run-tests-2"
+        );
+        assert_eq!(next_project_script_id("!!!", [] as [&str; 0]), "script");
+
+        let scripts = vec![
+            ProjectScript {
+                id: "setup".to_string(),
+                name: "Setup".to_string(),
+                command: "bun install".to_string(),
+                icon: ProjectScriptIcon::Configure,
+                run_on_worktree_create: true,
+            },
+            ProjectScript {
+                id: "test".to_string(),
+                name: "Test".to_string(),
+                command: "bun test".to_string(),
+                icon: ProjectScriptIcon::Test,
+                run_on_worktree_create: false,
+            },
+        ];
+
+        assert_eq!(primary_project_script(&scripts).unwrap().id, "test");
+        assert_eq!(setup_project_script(&scripts).unwrap().id, "setup");
+    }
+
+    #[test]
+    fn project_script_runtime_context_matches_upstream_logic() {
+        let env = project_script_runtime_env("/repo", Some("/repo/worktree-a"), &[]);
+
+        assert_eq!(
+            env.get("T3CODE_PROJECT_ROOT").map(String::as_str),
+            Some("/repo")
+        );
+        assert_eq!(
+            env.get("T3CODE_WORKTREE_PATH").map(String::as_str),
+            Some("/repo/worktree-a")
+        );
+        assert_eq!(
+            project_script_cwd("/repo", Some("/repo/worktree-a")),
+            "/repo/worktree-a"
+        );
+        assert_eq!(project_script_cwd("/repo", None), "/repo");
+
+        let env = project_script_runtime_env(
+            "/repo",
+            None,
+            &[
+                ("T3CODE_PROJECT_ROOT", "/custom-root"),
+                ("CUSTOM_FLAG", "1"),
+            ],
+        );
+        assert_eq!(
+            env.get("T3CODE_PROJECT_ROOT").map(String::as_str),
+            Some("/custom-root")
+        );
+        assert_eq!(env.get("CUSTOM_FLAG").map(String::as_str), Some("1"));
+        assert!(!env.contains_key("T3CODE_WORKTREE_PATH"));
+    }
+
+    #[test]
+    fn open_in_picker_visibility_and_options_match_upstream_logic() {
+        assert!(should_show_open_in_picker(
+            Some("codething-mvp"),
+            "environment-primary",
+            Some("environment-primary")
+        ));
+        assert!(!should_show_open_in_picker(
+            Some("codething-mvp"),
+            "environment-remote",
+            None
+        ));
+        assert!(!should_show_open_in_picker(
+            Some("codething-mvp"),
+            "environment-remote",
+            Some("environment-primary")
+        ));
+        assert!(!should_show_open_in_picker(
+            None,
+            "environment-primary",
+            Some("environment-primary")
+        ));
+
+        let options = resolve_editor_options(
+            "Windows",
+            &[
+                EditorId::VsCodeInsiders,
+                EditorId::VsCodium,
+                EditorId::FileManager,
+            ],
+        );
+        assert_eq!(
+            options
+                .iter()
+                .map(|option| option.label)
+                .collect::<Vec<_>>(),
+            vec!["VS Code Insiders", "VSCodium", "Explorer"]
+        );
     }
 
     #[test]

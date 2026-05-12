@@ -53,7 +53,7 @@ These T3 surfaces have no complete Rust implementation yet:
 | Diff panel and changed-file browsing | `DiffPanel.tsx`, `diffRouteSearch.ts`, `turnDiffTree.ts` | Partial static GPUI smoke |
 | Branch/worktree toolbar | `BranchToolbar.tsx`, `BranchToolbar.logic.ts`, `BranchToolbarBranchSelector.tsx` | Partial core logic + GPUI smoke |
 | Provider/model picker behavior | `ProviderModelPicker.tsx`, `ModelPickerContent.tsx`, `providerModels.ts` | Static footer only |
-| Project scripts and open-in-editor picker | `ProjectScriptsControl.tsx`, `OpenInPicker.tsx` | Missing |
+| Project scripts and open-in-editor picker | `ProjectScriptsControl.tsx`, `projectScripts.ts`, `OpenInPicker.tsx` | Partial core logic + header smoke |
 | Settings providers/connections diagnostics depth | `settings/*`, `Provider*`, `ConnectionsSettings.tsx` | Partial static |
 | Command palette real actions/search | `CommandPalette.tsx`, `CommandPaletteResults.tsx` | Visual shell only |
 | Sidebar real grouping, selection, archival actions | `Sidebar.tsx`, `uiStateStore.ts`, `threadSelectionStore.ts` | Partial static |

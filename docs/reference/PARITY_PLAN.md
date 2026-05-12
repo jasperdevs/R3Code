@@ -119,7 +119,7 @@ cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-draft-reference.png --actual reference\screenshots\r3code-draft-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 2
 ```
 
-Last measured result: `1.715%`.
+Last measured result: `1.808%`.
 
 The upstream draft reference is produced by the real T3 command-palette add-project flow, which creates a `/draft/$draftId` route and captures the active empty chat surface after dismissing unrelated provider-update toast chrome.
 
@@ -145,12 +145,13 @@ cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen branch-toolbar --output reference\screenshots\r3code-branch-toolbar-window.png
 ```
 
-This is a native Rust/GPUI smoke capture for the first server-thread state: active header title/project badge, sidebar thread row, user/assistant timeline rows, changed-files summary tree, and composer chrome. It is intentionally not a parity comparison yet because the current upstream reference harness has deterministic captures for empty/draft/settings, but not a full active server-thread route with persisted messages. The next parity step is to add a source-backed upstream fixture capture for the same `ChatView.browser.tsx` message state.
+This is a native Rust/GPUI smoke capture for the first server-thread state: active header title/project badge, project script and open-in controls, sidebar thread row, user/assistant timeline rows, changed-files summary tree, and composer chrome. It is intentionally not a parity comparison yet because the current upstream reference harness has deterministic captures for empty/draft/settings, but not a full active server-thread route with persisted messages. The next parity step is to add a source-backed upstream fixture capture for the same `ChatView.browser.tsx` message state.
 The running turn capture ports the upstream work-log derivation shape first: activity ordering, ignored lifecycle rows, checkpoint filtering, simple tool update/completion collapse, command previews, changed-file previews, and the `WorkGroupSection` smoke surface. It is not a live provider stream yet.
 The pending approval and pending user input captures use the same active-thread shell with upstream-shaped `ChatComposer` state: approval summary/actions, user-input question progress, option shortcut chips, selected `CheckIcon`, and pending primary actions. They are also smoke captures until the upstream browser harness can seed the matching server-thread pending request fixtures.
 The terminal drawer capture ports the upstream terminal UI state contract into Rust first: default drawer height, terminal IDs, active terminal/group, split/new/close behavior, running activity, and event replay filtering. The GPUI surface is a static terminal drawer smoke screen until the native runtime/xterm layer exists.
 The diff panel capture ports the upstream diff route parser, turn-diff summary ordering, changed-file tree/stat contracts, and the inline `DiffPanelShell` header controls. It remains a smoke screen until the Rust side has the real checkpoint-diff query and patch renderer equivalent to `@pierre/diffs`.
 The branch toolbar capture ports upstream `BranchToolbar.logic.ts`, the shared remote-branch dedupe helpers, the environment/worktree labels, current/new-worktree mode resolution, branch trigger text, worktree selection target rules, and lucide `Monitor`, `Cloud`, `FolderGit`, and `FolderGit2` assets. It is still a GPUI smoke screen: the full combobox, async git ref query, create-ref, PR checkout, and real environment switching paths remain missing.
+The project script/open-in header controls port upstream `projectScripts.ts`, `ProjectScriptsControl.tsx` primary/add button behavior, `OpenInPicker.tsx` visibility rules, editor option labels, script runtime cwd/env helpers, and the lucide script icon set. The add/edit/delete dialogs, custom editor SVG icon set, keybinding capture UI, and real shell/project-script process execution are still missing.
 
 ## Current Settings Baseline
 

@@ -6,10 +6,11 @@ use gpui::{
 };
 use r3_core::{
     APP_NAME, ActivityTone, AppSnapshot, ChatMessage, DiffOpenValue, DiffRouteSearch,
-    DraftThreadEnvMode, MAX_TERMINALS_PER_GROUP, MAX_VISIBLE_WORK_LOG_ENTRIES, PendingApproval,
-    PendingUserInputProgress, ProjectSummary, TerminalEvent, ThreadStatus, TurnDiffFileChange,
-    TurnDiffStat, TurnDiffSummary, TurnDiffTreeNode, WorkLogEntry, build_turn_diff_tree,
-    close_thread_terminal, new_thread_terminal, parse_diff_route_search,
+    DraftThreadEnvMode, EditorOption, MAX_TERMINALS_PER_GROUP, MAX_VISIBLE_WORK_LOG_ENTRIES,
+    PendingApproval, PendingUserInputProgress, ProjectScript, ProjectScriptIcon, ProjectSummary,
+    TerminalEvent, ThreadStatus, TurnDiffFileChange, TurnDiffStat, TurnDiffSummary,
+    TurnDiffTreeNode, WorkLogEntry, build_turn_diff_tree, close_thread_terminal,
+    new_thread_terminal, parse_diff_route_search, primary_project_script,
     set_pending_user_input_custom_answer, set_thread_active_terminal, set_thread_terminal_open,
     split_thread_terminal, summarize_turn_diff_stats, toggle_pending_user_input_option_selection,
 };
@@ -41,6 +42,8 @@ pub struct R3Shell {
     source_control_fetch_interval_seconds: u32,
     source_control_account_revealed: bool,
     source_control_provider_enabled: [bool; 3],
+    project_script_run_count: usize,
+    opened_editor_count: usize,
     providers_refresh_requested: bool,
     providers_add_dialog_open: bool,
     expanded_provider_index: Option<usize>,
@@ -101,6 +104,8 @@ impl R3Shell {
             source_control_fetch_interval_seconds: SOURCE_CONTROL_DEFAULT_FETCH_INTERVAL_SECONDS,
             source_control_account_revealed: false,
             source_control_provider_enabled: [true, false, false],
+            project_script_run_count: 0,
+            opened_editor_count: 0,
             providers_refresh_requested: false,
             providers_add_dialog_open: false,
             expanded_provider_index: Some(0),
@@ -747,6 +752,10 @@ impl R3Shell {
                     .flex()
                     .items_center()
                     .gap_2()
+                    .child(self.project_scripts_control(cx))
+                    .when(self.snapshot.open_in_picker_visible(), |actions| {
+                        actions.child(self.open_in_picker(cx))
+                    })
                     .child(self.toolbar_icon_button(
                         "thread-terminal",
                         "icons/square-terminal.svg",
@@ -2525,6 +2534,178 @@ impl R3Shell {
             .unwrap_or(0);
         refs.get((active_index + 1) % refs.len())
             .map(|ref_name| ref_name.name.clone())
+    }
+
+    fn project_scripts_control(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(project) = self.snapshot.active_project() else {
+            return div().into_any_element();
+        };
+
+        let primary_script = primary_project_script(&project.scripts);
+        let mut group = div()
+            .id("project-scripts-control")
+            .flex()
+            .items_center()
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.background)
+            .overflow_hidden();
+
+        if let Some(script) = primary_script {
+            group = group
+                .child(self.project_script_primary_button(script, cx))
+                .child(div().h(px(18.0)).w(px(1.0)).bg(self.theme.border))
+                .child(self.project_script_menu_button(cx));
+        } else {
+            group = group.child(self.project_script_add_button(cx));
+        }
+
+        group.into_any_element()
+    }
+
+    fn project_script_primary_button(
+        &self,
+        script: &ProjectScript,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let script_name = script.name.clone();
+        let command = script.command.clone();
+        div()
+            .id("project-script-primary")
+            .flex()
+            .items_center()
+            .gap_1p5()
+            .h(px(28.0))
+            .px_2()
+            .text_size(px(12.0))
+            .text_color(self.theme.foreground)
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.project_script_run_count = this.project_script_run_count.saturating_add(1);
+                this.composer_prompt = command.clone();
+                cx.notify();
+            }))
+            .child(
+                svg()
+                    .path(project_script_icon_path(script.icon))
+                    .size_3p5()
+                    .text_color(self.theme.foreground),
+            )
+            .child(div().child(script_name))
+    }
+
+    fn project_script_menu_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("project-script-menu")
+            .flex()
+            .items_center()
+            .justify_center()
+            .h(px(28.0))
+            .w(px(28.0))
+            .text_color(self.theme.muted_foreground)
+            .cursor_pointer()
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.project_script_run_count = this.project_script_run_count.saturating_add(1);
+                cx.notify();
+            }))
+            .child(
+                svg()
+                    .path("icons/chevron-down.svg")
+                    .size_4()
+                    .text_color(self.theme.muted_foreground),
+            )
+    }
+
+    fn project_script_add_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("project-script-add")
+            .flex()
+            .items_center()
+            .gap_1p5()
+            .h(px(28.0))
+            .px_2()
+            .text_size(px(12.0))
+            .text_color(self.theme.foreground)
+            .cursor_pointer()
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.composer_prompt = "Add action".to_string();
+                cx.notify();
+            }))
+            .child(
+                svg()
+                    .path("icons/plus.svg")
+                    .size_3p5()
+                    .text_color(self.theme.foreground),
+            )
+            .child("Add action")
+    }
+
+    fn open_in_picker(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let option = self
+            .snapshot
+            .active_editor_option("Windows")
+            .unwrap_or(EditorOption {
+                label: "Explorer",
+                id: r3_core::EditorId::FileManager,
+            });
+        let label = option.label;
+
+        div()
+            .id("open-in-picker")
+            .flex()
+            .items_center()
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.background)
+            .overflow_hidden()
+            .child(
+                div()
+                    .id("open-in-primary")
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
+                    .h(px(28.0))
+                    .px_2()
+                    .text_size(px(12.0))
+                    .text_color(self.theme.foreground)
+                    .cursor_pointer()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.opened_editor_count = this.opened_editor_count.saturating_add(1);
+                        cx.notify();
+                    }))
+                    .child(
+                        svg()
+                            .path(editor_option_icon_path(option))
+                            .size_3p5()
+                            .text_color(self.theme.foreground),
+                    )
+                    .child("Open"),
+            )
+            .child(div().h(px(18.0)).w(px(1.0)).bg(self.theme.border))
+            .child(
+                div()
+                    .id("open-in-menu")
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .h(px(28.0))
+                    .w(px(28.0))
+                    .text_color(self.theme.muted_foreground)
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.opened_editor_count = this.opened_editor_count.saturating_add(1);
+                        this.composer_prompt = format!("Open in {label}");
+                        cx.notify();
+                    }))
+                    .child(
+                        svg()
+                            .path("icons/chevron-down.svg")
+                            .size_4()
+                            .text_color(self.theme.muted_foreground),
+                    ),
+            )
     }
 
     fn composer(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -6984,6 +7165,24 @@ fn branch_toolbar_workspace_icon(
         "icons/folder-git.svg"
     } else {
         "icons/folder.svg"
+    }
+}
+
+fn project_script_icon_path(icon: ProjectScriptIcon) -> &'static str {
+    match icon {
+        ProjectScriptIcon::Play => "icons/play.svg",
+        ProjectScriptIcon::Test => "icons/flask-conical.svg",
+        ProjectScriptIcon::Lint => "icons/list-checks.svg",
+        ProjectScriptIcon::Configure => "icons/wrench.svg",
+        ProjectScriptIcon::Build => "icons/hammer.svg",
+        ProjectScriptIcon::Debug => "icons/bug.svg",
+    }
+}
+
+fn editor_option_icon_path(option: EditorOption) -> &'static str {
+    match option.id {
+        r3_core::EditorId::FileManager => "icons/folder-closed.svg",
+        _ => "icons/terminal.svg",
     }
 }
 

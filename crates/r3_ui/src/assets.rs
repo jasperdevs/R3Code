@@ -23,6 +23,7 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/arrow-up.svg"),
     ),
     ("icons/bot.svg", include_bytes!("../assets/icons/bot.svg")),
+    ("icons/bug.svg", include_bytes!("../assets/icons/bug.svg")),
     (
         "icons/check.svg",
         include_bytes!("../assets/icons/check.svg"),
@@ -54,6 +55,14 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/file-json.svg"),
     ),
     (
+        "icons/flask-conical.svg",
+        include_bytes!("../assets/icons/flask-conical.svg"),
+    ),
+    (
+        "icons/folder-closed.svg",
+        include_bytes!("../assets/icons/folder-closed.svg"),
+    ),
+    (
         "icons/folder-git-2.svg",
         include_bytes!("../assets/icons/folder-git-2.svg"),
     ),
@@ -74,12 +83,20 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/git-pull-request.svg"),
     ),
     (
+        "icons/hammer.svg",
+        include_bytes!("../assets/icons/hammer.svg"),
+    ),
+    (
         "icons/keyboard.svg",
         include_bytes!("../assets/icons/keyboard.svg"),
     ),
     (
         "icons/link-2.svg",
         include_bytes!("../assets/icons/link-2.svg"),
+    ),
+    (
+        "icons/list-checks.svg",
+        include_bytes!("../assets/icons/list-checks.svg"),
     ),
     (
         "icons/lock-open.svg",
@@ -102,6 +119,7 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         "icons/pilcrow.svg",
         include_bytes!("../assets/icons/pilcrow.svg"),
     ),
+    ("icons/play.svg", include_bytes!("../assets/icons/play.svg")),
     (
         "icons/plus-square.svg",
         include_bytes!("../assets/icons/plus-square.svg"),
@@ -150,6 +168,10 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
     (
         "icons/triangle-alert.svg",
         include_bytes!("../assets/icons/triangle-alert.svg"),
+    ),
+    (
+        "icons/wrench.svg",
+        include_bytes!("../assets/icons/wrench.svg"),
     ),
 ];
 
@@ -211,18 +233,24 @@ mod tests {
         let icons = assets_list();
         for icon in [
             "check.svg",
+            "bug.svg",
             "chevron-left.svg",
             "cloud.svg",
             "columns-2.svg",
             "diff.svg",
+            "flask-conical.svg",
+            "folder-closed.svg",
             "folder.svg",
             "folder-git-2.svg",
             "folder-git.svg",
+            "hammer.svg",
+            "list-checks.svg",
             "lock.svg",
             "lock-open.svg",
             "monitor.svg",
             "pen-line.svg",
             "pilcrow.svg",
+            "play.svg",
             "rotate-ccw.svg",
             "rows-3.svg",
             "square-split-horizontal.svg",
@@ -230,6 +258,7 @@ mod tests {
             "text-wrap.svg",
             "triangle-alert.svg",
             "trash-2.svg",
+            "wrench.svg",
         ] {
             assert!(icons.iter().any(|listed| listed == icon), "{icon}");
         }
