@@ -351,6 +351,20 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
         allow_window_capture: true,
         ..CaptureR3CodeOptions::default()
     })?;
+    compare_screenshots(CompareOptions {
+        expected: resolve_repo_path(
+            "reference/screenshots/upstream-settings-providers-reference.png",
+        ),
+        actual: resolve_repo_path("reference/screenshots/r3code-settings-providers-window.png"),
+        max_different_pixels_percent: 5.0,
+        channel_tolerance: 8,
+        ignore_rects: vec![Rect {
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 45,
+        }],
+    })?;
 
     capture_r3code_window(CaptureR3CodeOptions {
         screen: Some("settings-source-control".to_string()),
@@ -385,6 +399,20 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
         allow_window_capture: true,
         ..CaptureR3CodeOptions::default()
     })?;
+    compare_screenshots(CompareOptions {
+        expected: resolve_repo_path(
+            "reference/screenshots/upstream-settings-connections-reference.png",
+        ),
+        actual: resolve_repo_path("reference/screenshots/r3code-settings-connections-window.png"),
+        max_different_pixels_percent: 4.0,
+        channel_tolerance: 8,
+        ignore_rects: vec![Rect {
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 45,
+        }],
+    })?;
 
     capture_r3code_window(CaptureR3CodeOptions {
         screen: Some("settings-diagnostics".to_string()),
@@ -392,6 +420,20 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
         output: resolve_repo_path("reference/screenshots/r3code-settings-diagnostics-window.png"),
         allow_window_capture: true,
         ..CaptureR3CodeOptions::default()
+    })?;
+    compare_screenshots(CompareOptions {
+        expected: resolve_repo_path(
+            "reference/screenshots/upstream-settings-diagnostics-reference.png",
+        ),
+        actual: resolve_repo_path("reference/screenshots/r3code-settings-diagnostics-window.png"),
+        max_different_pixels_percent: 5.0,
+        channel_tolerance: 8,
+        ignore_rects: vec![Rect {
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 45,
+        }],
     })?;
 
     capture_r3code_window(CaptureR3CodeOptions {
@@ -1263,7 +1305,7 @@ fn capture_reference_browser(options: CaptureReferenceOptions) -> Result<()> {
         fs::write(
             options.output_dir.join("CAPTURE_MANIFEST.txt"),
             format!(
-                "Upstream reference repository: {}\nReference commit: {}\nIsolated reference home: {}\nOutput directory: {}\nCaptured:\n- upstream-empty-reference.png\n- upstream-command-palette-reference.png\n- upstream-draft-reference.png\n- upstream-settings-reference.png\n- upstream-settings-keybindings-reference.png\n- upstream-settings-source-control-reference.png\n- upstream-settings-archive-reference.png\n- upstream-settings-theme-menu-reference.png\n- upstream-settings-dark-reference.png\n",
+                "Upstream reference repository: {}\nReference commit: {}\nIsolated reference home: {}\nOutput directory: {}\nCaptured:\n- upstream-empty-reference.png\n- upstream-command-palette-reference.png\n- upstream-draft-reference.png\n- upstream-settings-reference.png\n- upstream-settings-keybindings-reference.png\n- upstream-settings-providers-reference.png\n- upstream-settings-source-control-reference.png\n- upstream-settings-connections-reference.png\n- upstream-settings-diagnostics-reference.png\n- upstream-settings-archive-reference.png\n- upstream-settings-theme-menu-reference.png\n- upstream-settings-dark-reference.png\n",
                 options.repo.display(),
                 commit.trim(),
                 options.home.display(),
@@ -1326,6 +1368,12 @@ const path = require("path");
   const appOrigin = new URL(process.env.PAIRING_URL).origin;
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
+  async function dismissUpdatesToast() {
+    if (await page.getByText("Updates Available").first().isVisible({ timeout: 500 }).catch(() => false)) {
+      await page.mouse.click(1242, 89);
+      await page.waitForTimeout(250);
+    }
+  }
   await page.goto(process.env.PAIRING_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
   await page.getByText("Pick a thread to continue").waitFor({ timeout: 15000 });
   await page.waitForLoadState("networkidle", { timeout: 30000 });
@@ -1346,10 +1394,7 @@ const path = require("path");
   await page.waitForURL(/\/draft\/[^/]+$/, { timeout: 30000 });
   await page.getByText("Send a message to start the conversation.").waitFor({ timeout: 30000 });
   await page.waitForTimeout(350);
-  if (await page.getByText("Updates Available").first().isVisible({ timeout: 500 }).catch(() => false)) {
-    await page.mouse.click(1242, 89);
-    await page.waitForTimeout(250);
-  }
+  await dismissUpdatesToast();
   await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-draft-reference.png"), fullPage: true });
   await page.goto(new URL("/settings", appOrigin).toString(), { waitUntil: "networkidle", timeout: 30000 });
   await page.getByLabel("Theme preference").waitFor({ timeout: 15000 });
@@ -1357,14 +1402,27 @@ const path = require("path");
   await page.goto(new URL("/settings/keybindings", appOrigin).toString(), { waitUntil: "networkidle", timeout: 30000 });
   await page.getByText("Command").first().waitFor({ timeout: 15000 });
   await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-settings-keybindings-reference.png"), fullPage: true });
+  await page.goto(new URL("/settings/providers", appOrigin).toString(), { waitUntil: "networkidle", timeout: 30000 });
+  await page.getByLabel("Refresh provider status").waitFor({ timeout: 15000 });
+  await page.waitForTimeout(500);
+  await dismissUpdatesToast();
+  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-settings-providers-reference.png"), fullPage: true });
   await page.goto(new URL("/settings/source-control", appOrigin).toString(), { waitUntil: "networkidle", timeout: 30000 });
   await page.getByText("VERSION CONTROL").first().waitFor({ timeout: 15000 });
   await page.waitForTimeout(1500);
-  if (await page.getByText("Updates Available").first().isVisible({ timeout: 500 }).catch(() => false)) {
-    await page.mouse.click(1242, 89);
-    await page.waitForTimeout(250);
-  }
+  await dismissUpdatesToast();
   await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-settings-source-control-reference.png"), fullPage: true });
+  await page.goto(new URL("/settings/connections", appOrigin).toString(), { waitUntil: "networkidle", timeout: 30000 });
+  await page.getByText("Manage local backend").first().waitFor({ timeout: 15000 });
+  await page.waitForTimeout(1000);
+  await dismissUpdatesToast();
+  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-settings-connections-reference.png"), fullPage: true });
+  await page.goto(new URL("/settings/diagnostics", appOrigin).toString(), { waitUntil: "networkidle", timeout: 30000 });
+  await page.getByText("Live Processes").first().waitFor({ timeout: 15000 });
+  await page.getByText("Trace Diagnostics").first().waitFor({ timeout: 15000 });
+  await page.waitForTimeout(1500);
+  await dismissUpdatesToast();
+  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-settings-diagnostics-reference.png"), fullPage: true });
   await page.goto(new URL("/settings/archived", appOrigin).toString(), { waitUntil: "networkidle", timeout: 30000 });
   await page.getByText("No archived threads").first().waitFor({ timeout: 15000 });
   await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-settings-archive-reference.png"), fullPage: true });

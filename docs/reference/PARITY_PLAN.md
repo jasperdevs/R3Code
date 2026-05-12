@@ -32,7 +32,10 @@ The task currently captures:
 - `reference/screenshots/upstream-draft-reference.png`
 - `reference/screenshots/upstream-settings-reference.png`
 - `reference/screenshots/upstream-settings-keybindings-reference.png`
+- `reference/screenshots/upstream-settings-providers-reference.png`
 - `reference/screenshots/upstream-settings-source-control-reference.png`
+- `reference/screenshots/upstream-settings-connections-reference.png`
+- `reference/screenshots/upstream-settings-diagnostics-reference.png`
 - `reference/screenshots/upstream-settings-archive-reference.png`
 - `reference/screenshots/upstream-settings-theme-menu-reference.png`
 - `reference/screenshots/upstream-settings-dark-reference.png`
@@ -177,8 +180,25 @@ The settings sidebar renders the upstream settings nav icon set through GPUI SVG
 `Settings2`, `Keyboard`, `Bot`, `GitBranch`, `Link2`, `Archive`, and the footer `ArrowLeft`.
 The footer Back affordance is a native GPUI click target, and the parity gate follows that click path for settings-to-empty verification.
 The settings nav rows are native GPUI click targets; the parity gate opens Keybindings through the native settings nav click path.
-The parity gate also captures provider, connections, and diagnostics settings smoke screens at `reference/screenshots/r3code-settings-providers-window.png`, `reference/screenshots/r3code-settings-connections-window.png`, and `reference/screenshots/r3code-settings-diagnostics-window.png`. These remain R3-only smoke captures until matching upstream provider/connection/diagnostics fixtures are added.
-The Rust core now ports the deterministic settings helpers from upstream `ConnectionsSettings.tsx`, `pairingUrls.ts`, `pairingUrl.ts`, `hostedPairing.ts`, `DiagnosticsSettings.tsx`, `SettingsPanels.logic.ts`, server `ProcessDiagnostics.ts`, and server `TraceDiagnostics.ts`: manual SSH target parsing, remote pairing URL/field parsing, desktop SSH error normalization, advertised endpoint preference/selection and pairing URL resolution, pairing/client-session sorting, diagnostics count/duration/byte/trace formatting, stale process signal detection, diagnostics description collapse rules, POSIX process row parsing, Windows process JSON normalization, descendant process aggregation, trace NDJSON aggregation, trace parse errors, slow-span/common-failure/latest-log buckets, rotated trace path ordering, totals, and diagnostics-query filtering. The general settings diagnostics row consumes the Rust diagnostics description helper; the connections/diagnostics UI still needs live saved-environment state, owner pairing links, client sessions, discovered SSH hosts, Tailscale Serve controls, process action wiring, trace file read wiring, and matching upstream fixture captures.
+The parity gate also compares provider, connections, and diagnostics settings screens against pinned upstream references at `reference/screenshots/upstream-settings-providers-reference.png`, `reference/screenshots/upstream-settings-connections-reference.png`, and `reference/screenshots/upstream-settings-diagnostics-reference.png`.
+The Rust core now ports the deterministic settings helpers from upstream `ConnectionsSettings.tsx`, `pairingUrls.ts`, `pairingUrl.ts`, `hostedPairing.ts`, `DiagnosticsSettings.tsx`, `SettingsPanels.logic.ts`, server `ProcessDiagnostics.ts`, and server `TraceDiagnostics.ts`: manual SSH target parsing, remote pairing URL/field parsing, desktop SSH error normalization, advertised endpoint preference/selection and pairing URL resolution, pairing/client-session sorting, diagnostics count/duration/byte/trace formatting, stale process signal detection, diagnostics description collapse rules, POSIX process row parsing, Windows process JSON normalization, descendant process aggregation, trace NDJSON aggregation, trace parse errors, slow-span/common-failure/latest-log buckets, rotated trace path ordering, totals, and diagnostics-query filtering. The general settings diagnostics row consumes the Rust diagnostics description helper; the connections/diagnostics UI still needs live saved-environment state, owner pairing links, client sessions, discovered SSH hosts, Tailscale Serve controls, process action wiring, trace file read wiring, and deeper live-state upstream fixture captures.
+
+## Current Settings Providers Baseline
+
+Reference: `reference/screenshots/upstream-settings-providers-reference.png`
+
+R3Code capture: `reference/screenshots/r3code-settings-providers-window.png`
+
+Allowed brand-copy difference: `--ignore-rect 0,0,120,45`
+
+Current measured diff:
+
+```text
+cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen settings-providers --output reference\screenshots\r3code-settings-providers-window.png
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-providers-reference.png --actual reference\screenshots\r3code-settings-providers-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 5
+```
+
+Last measured result: `4.228%`.
 
 ## Current Settings Keybindings Baseline
 
@@ -213,6 +233,40 @@ cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstr
 ```
 
 Last measured result: `3.441%`.
+
+## Current Settings Connections Baseline
+
+Reference: `reference/screenshots/upstream-settings-connections-reference.png`
+
+R3Code capture: `reference/screenshots/r3code-settings-connections-window.png`
+
+Allowed brand-copy difference: `--ignore-rect 0,0,120,45`
+
+Current measured diff:
+
+```text
+cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen settings-connections --output reference\screenshots\r3code-settings-connections-window.png
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-connections-reference.png --actual reference\screenshots\r3code-settings-connections-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 4
+```
+
+Last measured result: `2.854%`.
+
+## Current Settings Diagnostics Baseline
+
+Reference: `reference/screenshots/upstream-settings-diagnostics-reference.png`
+
+R3Code capture: `reference/screenshots/r3code-settings-diagnostics-window.png`
+
+Allowed brand-copy difference: `--ignore-rect 0,0,120,45`
+
+Current measured diff:
+
+```text
+cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen settings-diagnostics --output reference\screenshots\r3code-settings-diagnostics-window.png
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-diagnostics-reference.png --actual reference\screenshots\r3code-settings-diagnostics-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 5
+```
+
+Last measured result: `4.235%`.
 
 ## Current Settings Archive Baseline
 
