@@ -178,7 +178,7 @@ impl AppSnapshot {
                 draft_id: draft_id.clone(),
             }),
             projects: vec![ProjectSummary {
-                name: "r3code".to_string(),
+                name: "server".to_string(),
                 path: "C:\\Users\\bunny\\Downloads\\r3code".to_string(),
             }],
             threads: Vec::new(),

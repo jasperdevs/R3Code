@@ -4,7 +4,7 @@ use gpui::{
     IntoElement, KeyDownEvent, ParentElement, Render, SharedString, Styled, TextAlign, Window, div,
     hsla, point, px, svg,
 };
-use r3_core::{APP_NAME, AppSnapshot, MessageAuthor, ThreadStatus};
+use r3_core::{APP_NAME, AppSnapshot, MessageAuthor, ProjectSummary, ThreadStatus};
 
 use crate::theme::{FONT_FAMILY, SIDEBAR_MIN_WIDTH, Theme, ThemeMode};
 
@@ -105,7 +105,7 @@ impl R3Shell {
             composer_prompt: String::new(),
             composer_prompt_focused: false,
             composer_model_index: 0,
-            composer_runtime_index: 0,
+            composer_runtime_index: 2,
             composer_plan_mode: false,
             composer_submitted_count: 0,
             shell_focus_handle: cx.focus_handle(),
@@ -347,8 +347,8 @@ struct ComposerRuntimeMode {
 
 const COMPOSER_MODELS: &[ComposerModel] = &[
     ComposerModel {
-        provider: "Codex",
-        model: "gpt-5",
+        provider: "GPT-5.4",
+        model: "",
         icon: "icons/bot.svg",
     },
     ComposerModel {
@@ -470,6 +470,12 @@ impl R3Shell {
                         .gap_2()
                         .text_size(px(12.0))
                         .text_color(self.theme.muted_foreground)
+                        .child(
+                            svg()
+                                .path("icons/search.svg")
+                                .size_4()
+                                .text_color(self.theme.muted_foreground),
+                        )
                         .child("Search"),
                 )
                 .child(
@@ -536,24 +542,28 @@ impl R3Shell {
         });
 
         for project in projects {
-            sidebar = sidebar.child(
-                div()
-                    .rounded(px(8.0))
-                    .bg(self.theme.accent)
-                    .p_2()
-                    .child(
-                        div()
-                            .text_size(px(13.0))
-                            .font_weight(FontWeight(600.0))
-                            .child(project.name.clone()),
-                    )
-                    .child(
-                        div()
-                            .text_size(px(11.0))
-                            .text_color(self.theme.muted_foreground)
-                            .child(project.path.clone()),
-                    ),
-            );
+            sidebar = if self.snapshot.renders_chat_view() {
+                sidebar.child(self.sidebar_active_project_group(project))
+            } else {
+                sidebar.child(
+                    div()
+                        .rounded(px(8.0))
+                        .bg(self.theme.accent)
+                        .p_2()
+                        .child(
+                            div()
+                                .text_size(px(13.0))
+                                .font_weight(FontWeight(600.0))
+                                .child(project.name.clone()),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.0))
+                                .text_color(self.theme.muted_foreground)
+                                .child(project.path.clone()),
+                        ),
+                )
+            };
         }
 
         for thread in &self.snapshot.threads {
@@ -616,9 +626,10 @@ impl R3Shell {
     }
 
     fn toolbar(&self) -> impl IntoElement {
-        div()
+        let mut toolbar = div()
             .flex()
             .items_center()
+            .justify_between()
             .h(px(41.0))
             .px_5()
             .border_b_1()
@@ -632,7 +643,20 @@ impl R3Shell {
                     } else {
                         "No active thread"
                     }),
-            )
+            );
+
+        if self.snapshot.renders_chat_view() {
+            toolbar = toolbar.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(self.toolbar_icon_button("thread-terminal", "icons/terminal.svg"))
+                    .child(self.toolbar_icon_button("thread-new", "icons/plus.svg")),
+            );
+        }
+
+        toolbar
     }
 
     fn timeline(&self) -> impl IntoElement {
@@ -713,27 +737,33 @@ impl R3Shell {
     }
 
     fn composer(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        div().flex().items_center().px_8().pb_6().child(
-            div()
-                .id("chat-composer-form")
-                .w(px(832.0))
-                .rounded(px(22.0))
-                .bg(self.theme.primary.opacity(0.10))
-                .p(px(1.0))
-                .child(
-                    div()
-                        .rounded(px(20.0))
-                        .border_1()
-                        .border_color(if self.composer_prompt_focused {
-                            self.theme.primary.opacity(0.45)
-                        } else {
-                            self.theme.border
-                        })
-                        .bg(self.theme.card)
-                        .child(self.composer_prompt_editor(cx))
-                        .child(self.composer_footer(cx)),
-                ),
-        )
+        div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .px_8()
+            .pb_6()
+            .child(
+                div()
+                    .id("chat-composer-form")
+                    .w(px(832.0))
+                    .rounded(px(22.0))
+                    .bg(self.theme.primary.opacity(0.10))
+                    .p(px(1.0))
+                    .child(
+                        div()
+                            .rounded(px(20.0))
+                            .border_1()
+                            .border_color(if self.composer_prompt_focused {
+                                self.theme.primary.opacity(0.45)
+                            } else {
+                                self.theme.border
+                            })
+                            .bg(self.theme.card)
+                            .child(self.composer_prompt_editor(cx))
+                            .child(self.composer_footer(cx)),
+                    ),
+            )
     }
 
     fn composer_prompt_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -741,7 +771,7 @@ impl R3Shell {
             if self.composer_submitted_count > 0 {
                 "Message queued. Type another prompt.".to_string()
             } else {
-                "Ask anything, @tag files/folders, $use skills, or / for commands".to_string()
+                "Ask for follow-up changes or attach images".to_string()
             }
         } else {
             self.composer_prompt.clone()
@@ -798,12 +828,13 @@ impl R3Shell {
                     .gap_1()
                     .min_w_0()
                     .child(self.composer_model_picker(cx))
-                    .child(self.composer_footer_control(
-                        "chat-composer-runtime-mode",
-                        self.runtime_mode().icon,
-                        self.runtime_mode().label,
+                    .child(self.composer_footer_separator())
+                    .child(self.composer_footer_text_control(
+                        "chat-composer-effort-mode",
+                        "Medium · Normal",
                         cx,
                     ))
+                    .child(self.composer_footer_separator())
                     .child(self.composer_footer_control(
                         "chat-composer-plan-toggle",
                         "icons/bot.svg",
@@ -812,6 +843,13 @@ impl R3Shell {
                         } else {
                             "Build"
                         },
+                        cx,
+                    ))
+                    .child(self.composer_footer_separator())
+                    .child(self.composer_footer_control(
+                        "chat-composer-runtime-mode",
+                        self.runtime_mode().icon,
+                        self.runtime_mode().label,
                         cx,
                     )),
             )
@@ -848,15 +886,59 @@ impl R3Shell {
                     .items_center()
                     .gap_1()
                     .min_w_0()
-                    .child(
+                    .child(if model.model.is_empty() {
                         div()
                             .text_color(self.theme.foreground)
                             .font_weight(FontWeight(550.0))
-                            .child(model.provider),
-                    )
-                    .child(div().text_color(self.theme.muted_foreground).child("/"))
-                    .child(div().child(model.model)),
+                            .child(model.provider)
+                    } else {
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .text_color(self.theme.foreground)
+                                    .font_weight(FontWeight(550.0))
+                                    .child(model.provider),
+                            )
+                            .child(div().text_color(self.theme.muted_foreground).child("/"))
+                            .child(div().child(model.model))
+                    }),
             )
+            .child(
+                svg()
+                    .path("icons/chevron-down.svg")
+                    .size_3()
+                    .text_color(self.theme.muted_foreground.opacity(0.72)),
+            )
+    }
+
+    fn composer_footer_separator(&self) -> impl IntoElement {
+        div().w(px(1.0)).h(px(16.0)).bg(self.theme.border)
+    }
+
+    fn composer_footer_text_control(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id(id)
+            .flex()
+            .items_center()
+            .gap_1p5()
+            .h(px(32.0))
+            .rounded(px(8.0))
+            .px_2()
+            .text_size(px(12.0))
+            .text_color(self.theme.muted_foreground)
+            .cursor_pointer()
+            .on_click(cx.listener(|_, _, _, cx| {
+                cx.notify();
+            }))
+            .child(label)
             .child(
                 svg()
                     .path("icons/chevron-down.svg")
@@ -3979,6 +4061,76 @@ impl R3Shell {
                     .path(icon_path)
                     .size_4()
                     .text_color(self.theme.muted_foreground),
+            )
+    }
+
+    fn toolbar_icon_button(&self, id: &'static str, icon_path: &'static str) -> impl IntoElement {
+        div()
+            .id(id)
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(28.0))
+            .h(px(28.0))
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.background)
+            .text_color(self.theme.muted_foreground)
+            .child(
+                svg()
+                    .path(icon_path)
+                    .size_4()
+                    .text_color(self.theme.muted_foreground),
+            )
+    }
+
+    fn sidebar_active_project_group(&self, project: &ProjectSummary) -> impl IntoElement {
+        div()
+            .px_3()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .h(px(22.0))
+                    .text_size(px(13.0))
+                    .text_color(self.theme.foreground)
+                    .child(
+                        svg()
+                            .path("icons/chevron-down.svg")
+                            .size_3()
+                            .text_color(self.theme.muted_foreground),
+                    )
+                    .child(
+                        div()
+                            .w(px(13.0))
+                            .h(px(9.0))
+                            .rounded(px(2.0))
+                            .border_1()
+                            .border_color(self.theme.muted_foreground.opacity(0.55)),
+                    )
+                    .child(project.name.clone()),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .mt_2()
+                    .ml_3()
+                    .pl_3()
+                    .border_l_1()
+                    .border_color(self.theme.border)
+                    .h(px(24.0))
+                    .text_size(px(13.0))
+                    .child(div().child("New thread"))
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(self.theme.muted_foreground.opacity(0.70))
+                            .child("just now"),
+                    ),
             )
     }
 
