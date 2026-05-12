@@ -2780,6 +2780,316 @@ pub fn is_stale_process_signal_message(message: Option<&str>) -> bool {
         .unwrap_or(false)
 }
 
+const POSIX_PROCESS_QUERY_COMMAND: &str = "pid=,ppid=,pgid=,stat=,pcpu=,rss=,etime=,command=";
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProcessDiagnosticsRow {
+    pub pid: u32,
+    pub ppid: u32,
+    pub pgid: Option<i32>,
+    pub status: String,
+    pub cpu_percent: f64,
+    pub rss_bytes: u64,
+    pub elapsed: String,
+    pub command: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProcessDiagnosticsEntry {
+    pub pid: u32,
+    pub ppid: u32,
+    pub pgid: Option<i32>,
+    pub status: String,
+    pub cpu_percent: f64,
+    pub rss_bytes: u64,
+    pub elapsed: String,
+    pub command: String,
+    pub depth: usize,
+    pub child_pids: Vec<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProcessDiagnosticsResult {
+    pub server_pid: u32,
+    pub read_at: String,
+    pub process_count: usize,
+    pub total_rss_bytes: u64,
+    pub total_cpu_percent: f64,
+    pub processes: Vec<ProcessDiagnosticsEntry>,
+    pub error: Option<String>,
+}
+
+pub fn parse_posix_process_rows(output: &str) -> Vec<ProcessDiagnosticsRow> {
+    output.lines().filter_map(parse_posix_process_row).collect()
+}
+
+fn parse_posix_process_row(line: &str) -> Option<ProcessDiagnosticsRow> {
+    if line.trim().is_empty() {
+        return None;
+    }
+
+    let fields = split_posix_process_fields(line)?;
+    let pid = parse_positive_u32(&fields[0])?;
+    let ppid = parse_non_negative_u32(&fields[1])?;
+    let pgid = fields[2].parse::<i32>().ok()?;
+    let status = fields[3].clone();
+    let cpu_percent = fields[4].parse::<f64>().ok()?;
+    if !cpu_percent.is_finite() {
+        return None;
+    }
+    let rss_kib = fields[5].parse::<u64>().ok()?;
+    let elapsed = fields[6].clone();
+    let command = fields[7].clone();
+
+    if status.is_empty() || elapsed.is_empty() || command.is_empty() {
+        return None;
+    }
+
+    Some(ProcessDiagnosticsRow {
+        pid,
+        ppid,
+        pgid: Some(pgid),
+        status,
+        cpu_percent,
+        rss_bytes: rss_kib.saturating_mul(1024),
+        elapsed,
+        command,
+    })
+}
+
+fn split_posix_process_fields(line: &str) -> Option<Vec<String>> {
+    let mut fields = Vec::with_capacity(8);
+    let mut index = 0_usize;
+    let bytes = line.as_bytes();
+
+    while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+        index += 1;
+    }
+
+    for _ in 0..7 {
+        let start = index;
+        while index < bytes.len() && !bytes[index].is_ascii_whitespace() {
+            index += 1;
+        }
+        if start == index {
+            return None;
+        }
+        fields.push(line[start..index].to_string());
+        while index < bytes.len() && bytes[index].is_ascii_whitespace() {
+            index += 1;
+        }
+    }
+
+    let command = line.get(index..)?.trim_end();
+    if command.is_empty() {
+        return None;
+    }
+    fields.push(command.to_string());
+    Some(fields)
+}
+
+pub fn parse_windows_process_rows(output: &str) -> Vec<ProcessDiagnosticsRow> {
+    if output.trim().is_empty() {
+        return Vec::new();
+    }
+
+    let Ok(parsed) = serde_json::from_str::<serde_json::Value>(output) else {
+        return Vec::new();
+    };
+    match parsed {
+        serde_json::Value::Array(records) => records
+            .iter()
+            .filter_map(normalize_windows_process_row)
+            .collect(),
+        record => normalize_windows_process_row(&record).into_iter().collect(),
+    }
+}
+
+fn normalize_windows_process_row(value: &serde_json::Value) -> Option<ProcessDiagnosticsRow> {
+    let record = value.as_object()?;
+    let pid = record
+        .get("ProcessId")?
+        .as_u64()
+        .and_then(to_positive_u32)?;
+    let ppid = record
+        .get("ParentProcessId")?
+        .as_u64()
+        .and_then(to_non_negative_u32)?;
+    let command = record
+        .get("CommandLine")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| record.get("Name").and_then(serde_json::Value::as_str))?
+        .to_string();
+    let working_set = record
+        .get("WorkingSetSize")
+        .and_then(serde_json::Value::as_f64)
+        .filter(|value| value.is_finite())
+        .map(|value| value.max(0.0).round() as u64)
+        .unwrap_or(0);
+    let cpu_percent = record
+        .get("PercentProcessorTime")
+        .and_then(serde_json::Value::as_f64)
+        .filter(|value| value.is_finite())
+        .map(|value| value.max(0.0))
+        .unwrap_or(0.0);
+    let status = record
+        .get("Status")
+        .and_then(serde_json::Value::as_str)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Live")
+        .to_string();
+
+    Some(ProcessDiagnosticsRow {
+        pid,
+        ppid,
+        pgid: None,
+        status,
+        cpu_percent,
+        rss_bytes: working_set,
+        elapsed: String::new(),
+        command,
+    })
+}
+
+pub fn build_process_descendant_entries(
+    rows: &[ProcessDiagnosticsRow],
+    server_pid: u32,
+) -> Vec<ProcessDiagnosticsEntry> {
+    let mut children_by_parent = BTreeMap::<u32, Vec<ProcessDiagnosticsRow>>::new();
+    for row in rows {
+        children_by_parent
+            .entry(row.ppid)
+            .or_default()
+            .push(row.clone());
+    }
+
+    for children in children_by_parent.values_mut() {
+        children.sort_by_key(|row| row.pid);
+    }
+
+    let mut entries = Vec::new();
+    let mut visited = Vec::<u32>::new();
+    let mut stack = children_by_parent
+        .get(&server_pid)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|row| (row, 0_usize))
+        .collect::<Vec<_>>();
+
+    while let Some((row, depth)) = stack.first().cloned() {
+        stack.remove(0);
+        if visited.contains(&row.pid) {
+            continue;
+        }
+        visited.push(row.pid);
+
+        let children = children_by_parent
+            .get(&row.pid)
+            .cloned()
+            .unwrap_or_default();
+        entries.push(ProcessDiagnosticsEntry {
+            pid: row.pid,
+            ppid: row.ppid,
+            pgid: row.pgid,
+            status: row.status,
+            cpu_percent: row.cpu_percent,
+            rss_bytes: row.rss_bytes,
+            elapsed: if row.elapsed.is_empty() {
+                "n/a".to_string()
+            } else {
+                row.elapsed
+            },
+            command: row.command,
+            depth,
+            child_pids: children.iter().map(|child| child.pid).collect(),
+        });
+
+        stack.splice(
+            0..0,
+            children
+                .into_iter()
+                .map(|child| (child, depth + 1))
+                .collect::<Vec<_>>(),
+        );
+    }
+
+    entries
+}
+
+pub fn aggregate_process_diagnostics(
+    server_pid: u32,
+    rows: &[ProcessDiagnosticsRow],
+    read_at: &str,
+) -> ProcessDiagnosticsResult {
+    make_process_diagnostics_result(server_pid, rows, read_at, None)
+}
+
+pub fn make_process_diagnostics_result(
+    server_pid: u32,
+    rows: &[ProcessDiagnosticsRow],
+    read_at: &str,
+    error: Option<&str>,
+) -> ProcessDiagnosticsResult {
+    let rows = rows
+        .iter()
+        .filter(|row| !is_diagnostics_query_process(row, server_pid))
+        .cloned()
+        .collect::<Vec<_>>();
+    let processes = build_process_descendant_entries(&rows, server_pid);
+    let total_rss_bytes = processes.iter().map(|process| process.rss_bytes).sum();
+    let total_cpu_percent = processes
+        .iter()
+        .map(|process| process.cpu_percent)
+        .sum::<f64>();
+
+    ProcessDiagnosticsResult {
+        server_pid,
+        read_at: read_at.to_string(),
+        process_count: processes.len(),
+        total_rss_bytes,
+        total_cpu_percent,
+        processes,
+        error: error.map(str::to_string),
+    }
+}
+
+pub fn is_diagnostics_query_process(row: &ProcessDiagnosticsRow, server_pid: u32) -> bool {
+    if row.ppid != server_pid {
+        return false;
+    }
+
+    let command = row.command.trim();
+    let command_lower = command.to_ascii_lowercase();
+    let posix_query = command.contains(POSIX_PROCESS_QUERY_COMMAND)
+        && (command.starts_with("ps -axo ")
+            || command.contains("/ps -axo ")
+            || command.contains("\\ps -axo "));
+    let windows_query = (command_lower.contains("powershell ")
+        || command_lower.contains("powershell.exe"))
+        && command_lower.contains("get-ciminstance win32_process");
+    posix_query || windows_query
+}
+
+fn parse_positive_u32(value: &str) -> Option<u32> {
+    let value = value.parse::<u32>().ok()?;
+    (value > 0).then_some(value)
+}
+
+fn parse_non_negative_u32(value: &str) -> Option<u32> {
+    value.parse::<u32>().ok()
+}
+
+fn to_positive_u32(value: u64) -> Option<u32> {
+    let value = u32::try_from(value).ok()?;
+    (value > 0).then_some(value)
+}
+
+fn to_non_negative_u32(value: u64) -> Option<u32> {
+    u32::try_from(value).ok()
+}
+
 fn trimmed_non_empty(value: &str) -> Option<&str> {
     let value = value.trim();
     if value.is_empty() { None } else { Some(value) }
@@ -6140,6 +6450,222 @@ mod tests {
                 otlp_metrics_url: None,
             }),
             "Terminal logs only."
+        );
+    }
+
+    fn diagnostics_row(
+        pid: u32,
+        ppid: u32,
+        pgid: i32,
+        cpu_percent: f64,
+        rss_bytes: u64,
+        elapsed: &str,
+        command: &str,
+    ) -> ProcessDiagnosticsRow {
+        ProcessDiagnosticsRow {
+            pid,
+            ppid,
+            pgid: Some(pgid),
+            status: "S".to_string(),
+            cpu_percent,
+            rss_bytes,
+            elapsed: elapsed.to_string(),
+            command: command.to_string(),
+        }
+    }
+
+    #[test]
+    fn parses_posix_process_rows_with_full_commands() {
+        let rows = parse_posix_process_rows(
+            &[
+                "  10     1    10 Ss      0.0   1024   01:02.03 /usr/bin/node server.js",
+                "  11    10    10 S+     12.5  20480      00:04 codex app-server --config /tmp/one two",
+            ]
+            .join("\n"),
+        );
+
+        assert_eq!(
+            rows,
+            vec![
+                ProcessDiagnosticsRow {
+                    pid: 10,
+                    ppid: 1,
+                    pgid: Some(10),
+                    status: "Ss".to_string(),
+                    cpu_percent: 0.0,
+                    rss_bytes: 1024 * 1024,
+                    elapsed: "01:02.03".to_string(),
+                    command: "/usr/bin/node server.js".to_string(),
+                },
+                ProcessDiagnosticsRow {
+                    pid: 11,
+                    ppid: 10,
+                    pgid: Some(10),
+                    status: "S+".to_string(),
+                    cpu_percent: 12.5,
+                    rss_bytes: 20480 * 1024,
+                    elapsed: "00:04".to_string(),
+                    command: "codex app-server --config /tmp/one two".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn parses_windows_process_rows_from_powershell_json() {
+        let rows = parse_windows_process_rows(
+            r#"[
+                {
+                    "ProcessId": 4242,
+                    "ParentProcessId": 100,
+                    "Name": "agent.exe",
+                    "CommandLine": "codex app-server --config C:\\tmp\\one two",
+                    "Status": "",
+                    "WorkingSetSize": 1536.6,
+                    "PercentProcessorTime": -3
+                },
+                {
+                    "ProcessId": 4243,
+                    "ParentProcessId": 4242,
+                    "Name": "git.exe",
+                    "CommandLine": "   ",
+                    "WorkingSetSize": -10,
+                    "PercentProcessorTime": 2.5
+                },
+                { "ProcessId": 0, "ParentProcessId": 1, "Name": "bad.exe" }
+            ]"#,
+        );
+
+        assert_eq!(
+            rows,
+            vec![
+                ProcessDiagnosticsRow {
+                    pid: 4242,
+                    ppid: 100,
+                    pgid: None,
+                    status: "Live".to_string(),
+                    cpu_percent: 0.0,
+                    rss_bytes: 1537,
+                    elapsed: String::new(),
+                    command: "codex app-server --config C:\\tmp\\one two".to_string(),
+                },
+                ProcessDiagnosticsRow {
+                    pid: 4243,
+                    ppid: 4242,
+                    pgid: None,
+                    status: "Live".to_string(),
+                    cpu_percent: 2.5,
+                    rss_bytes: 0,
+                    elapsed: String::new(),
+                    command: "git.exe".to_string(),
+                },
+            ]
+        );
+        assert!(parse_windows_process_rows("").is_empty());
+        assert!(parse_windows_process_rows("not json").is_empty());
+    }
+
+    #[test]
+    fn aggregates_only_descendants_of_the_server_process() {
+        let diagnostics = aggregate_process_diagnostics(
+            100,
+            &[
+                diagnostics_row(100, 1, 100, 0.0, 1_000, "01:00", "t3 server"),
+                diagnostics_row(101, 100, 100, 1.5, 2_000, "00:20", "codex app-server"),
+                diagnostics_row(102, 101, 100, 3.25, 4_000, "00:05", "git status"),
+                diagnostics_row(200, 1, 200, 99.0, 8_000, "00:01", "unrelated"),
+                diagnostics_row(
+                    201,
+                    100,
+                    100,
+                    9.0,
+                    9_000,
+                    "00:00",
+                    "ps -axo pid=,ppid=,pgid=,stat=,pcpu=,rss=,etime=,command=",
+                ),
+            ],
+            "2026-05-05T10:00:00.000Z",
+        );
+
+        assert_eq!(diagnostics.server_pid, 100);
+        assert_eq!(diagnostics.read_at, "2026-05-05T10:00:00.000Z");
+        assert_eq!(diagnostics.process_count, 2);
+        assert_eq!(diagnostics.total_rss_bytes, 6_000);
+        assert_eq!(diagnostics.total_cpu_percent, 4.75);
+        assert_eq!(
+            diagnostics
+                .processes
+                .iter()
+                .map(|process| process.pid)
+                .collect::<Vec<_>>(),
+            vec![101, 102]
+        );
+        assert_eq!(
+            diagnostics
+                .processes
+                .iter()
+                .map(|process| process.depth)
+                .collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+        assert_eq!(diagnostics.processes[0].pgid, Some(100));
+        assert_eq!(diagnostics.processes[0].child_pids, vec![102]);
+    }
+
+    #[test]
+    fn preserves_ascending_sibling_order_for_nested_descendants() {
+        let diagnostics = aggregate_process_diagnostics(
+            100,
+            &[
+                diagnostics_row(101, 100, 100, 0.0, 100, "00:10", "agent"),
+                diagnostics_row(103, 101, 100, 0.0, 100, "00:10", "child-b"),
+                diagnostics_row(102, 101, 100, 0.0, 100, "00:10", "child-a"),
+            ],
+            "2026-05-05T10:00:00.000Z",
+        );
+
+        assert_eq!(
+            diagnostics
+                .processes
+                .iter()
+                .map(|process| process.pid)
+                .collect::<Vec<_>>(),
+            vec![101, 102, 103]
+        );
+    }
+
+    #[test]
+    fn filters_diagnostics_query_processes_before_signaling_checks() {
+        let ps_query = diagnostics_row(
+            4242,
+            100,
+            100,
+            1.5,
+            2048,
+            "00:00",
+            "ps -axo pid=,ppid=,pgid=,stat=,pcpu=,rss=,etime=,command=",
+        );
+        let powershell_query = ProcessDiagnosticsRow {
+            pid: 4243,
+            ppid: 100,
+            pgid: None,
+            status: "Live".to_string(),
+            cpu_percent: 1.0,
+            rss_bytes: 2048,
+            elapsed: String::new(),
+            command: "powershell.exe -NoProfile Get-CimInstance Win32_Process".to_string(),
+        };
+
+        assert!(is_diagnostics_query_process(&ps_query, 100));
+        assert!(is_diagnostics_query_process(&powershell_query, 100));
+        assert_eq!(
+            aggregate_process_diagnostics(
+                100,
+                &[ps_query, powershell_query],
+                "2026-05-05T10:00:00.000Z",
+            )
+            .process_count,
+            0
         );
     }
 

@@ -3962,6 +3962,9 @@ dependencies = [
 [[package]]
 name = "r3_core"
 version = "0.1.0"
+dependencies = [
+ "serde_json",
+]
 
 [[package]]
 name = "r3_ui"
