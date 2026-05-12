@@ -46,7 +46,7 @@ These screens have automated reference captures and native GPUI comparisons:
 | Pending approval composer state | 5% |
 | Pending user input composer state | 5.5% |
 | Settings general | 6% |
-| Settings keybindings | 9% |
+| Settings keybindings | 6.8% |
 | Settings providers | 5% |
 | Settings source control | 6% |
 | Settings connections | 4% |
@@ -57,7 +57,7 @@ These screens have automated reference captures and native GPUI comparisons:
 | Settings dark selection | 6% |
 | Empty/no active thread, dark theme | 2% |
 
-The strongest parity areas are the empty shell, draft chat chrome, archive empty state, and settings back path. The weakest implemented area is still Keybindings because it is a dense editable table with browser-vs-GPUI font, border, and control rendering differences.
+The strongest parity areas are the empty shell, draft chat chrome, archive empty state, and settings back path. The weakest implemented area is now the diff panel renderer, followed by Keybindings; the keybindings table still carries browser-vs-GPUI font and control rendering differences after the source-backed warning/table pass.
 
 ## Major Missing Product Surfaces
 

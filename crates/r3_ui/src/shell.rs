@@ -5360,7 +5360,7 @@ impl R3Shell {
                             .rounded(px(16.0))
                             .border_1()
                             .border_color(self.theme.border)
-                            .bg(self.theme.card)
+                            .bg(self.theme.background)
                             .child(self.keybindings_warning_banner())
                             .child(table),
                     )
@@ -5852,31 +5852,27 @@ impl R3Shell {
     fn keybindings_warning_banner(&self) -> impl IntoElement {
         div()
             .flex()
-            .items_center()
+            .items_start()
             .gap_2()
             .border_b_1()
-            .border_color(hsla(36.0 / 360.0, 0.95, 0.58, 0.24))
+            .border_color(hsla(38.0 / 360.0, 0.92, 0.50, 0.20))
             .bg(hsla(36.0 / 360.0, 1.0, 0.58, 0.05))
-            .px_4()
+            .px_3()
             .py_2p5()
             .text_size(px(12.0))
+            .line_height(px(18.0))
             .text_color(self.theme.muted_foreground)
             .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .w(px(16.0))
-                    .h(px(16.0))
-                    .rounded(px(8.0))
-                    .border_1()
-                    .border_color(hsla(36.0 / 360.0, 1.0, 0.50, 1.0))
-                    .text_size(px(11.0))
-                    .text_color(hsla(36.0 / 360.0, 1.0, 0.50, 1.0))
-                    .child("!"),
+                svg()
+                    .path("icons/info.svg")
+                    .mt(px(2.0))
+                    .w(px(14.0))
+                    .h(px(14.0))
+                    .flex_shrink_0()
+                    .text_color(hsla(38.0 / 360.0, 0.92, 0.50, 1.0)),
             )
             .child(
-                "Some shortcuts may be claimed by the browser before R3Code sees them. Use the desktop app for better keybinding support.",
+                "Some shortcuts may be claimed by the browser before T3 Code sees them. Use the desktop app for better keybinding support.",
             )
     }
 
@@ -5885,15 +5881,15 @@ impl R3Shell {
             .flex()
             .items_center()
             .border_b_1()
-            .border_color(self.theme.border)
-            .bg(hsla(0.0, 0.0, 0.0, 0.025))
+            .border_color(self.theme.border.opacity(0.70))
+            .bg(hsla(0.0, 0.0, 0.0, 0.010))
             .px_4()
             .py_2()
             .text_size(px(11.0))
             .font_weight(FontWeight(650.0))
             .text_color(self.theme.muted_foreground)
-            .child(div().w(px(322.0)).child("Command"))
-            .child(div().w(px(250.0)).child("Keybinding"))
+            .child(div().w(px(282.0)).child("Command"))
+            .child(div().w(px(292.0)).child("Keybinding"))
             .child(div().w(px(294.0)).child("When"))
             .child(div().w(px(60.0)).child("Status"))
     }
@@ -5904,9 +5900,9 @@ impl R3Shell {
             .items_center()
             .min_h(px(40.0))
             .border_b_1()
-            .border_color(self.theme.border)
+            .border_color(self.theme.border.opacity(0.60))
             .bg(if index % 2 == 1 {
-                hsla(0.0, 0.0, 0.0, 0.015)
+                hsla(0.0, 0.0, 0.0, 0.006)
             } else {
                 hsla(0.0, 0.0, 0.0, 0.0)
             })
@@ -5914,7 +5910,7 @@ impl R3Shell {
             .py_1p5()
             .child(
                 div()
-                    .w(px(322.0))
+                    .w(px(282.0))
                     .pr_4()
                     .text_size(px(13.0))
                     .font_weight(FontWeight(500.0))
@@ -5922,11 +5918,11 @@ impl R3Shell {
             )
             .child(
                 div()
-                    .w(px(250.0))
+                    .w(px(292.0))
                     .pr_4()
                     .child(self.keybinding_pill(row.key)),
             )
-            .child(div().w(px(300.0)).pr_4().child(self.when_pill(row.when)))
+            .child(div().w(px(294.0)).pr_4().child(self.when_pill(row.when)))
             .child(
                 div()
                     .w(px(60.0))
@@ -5941,13 +5937,21 @@ impl R3Shell {
     }
 
     fn keybinding_pill(&self, value: &'static str) -> impl IntoElement {
-        let mut group = div().flex().items_center().gap_1();
+        let mut group = div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .h(px(28.0))
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(hsla(0.0, 0.0, 0.0, 0.0))
+            .px_1p5();
         for part in value.split('+') {
             let label = match part {
                 "mod" => "Ctrl".to_string(),
-                "shift" => "^".to_string(),
+                "shift" => "⇧".to_string(),
                 "alt" => "Alt".to_string(),
-                "ctrl" => "Ctrl".to_string(),
+                "ctrl" => "⌃".to_string(),
                 value if value.len() == 1 => value.to_ascii_uppercase(),
                 value => value.to_string(),
             };

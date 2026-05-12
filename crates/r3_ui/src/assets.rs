@@ -114,6 +114,7 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         "icons/hammer.svg",
         include_bytes!("../assets/icons/hammer.svg"),
     ),
+    ("icons/info.svg", include_bytes!("../assets/icons/info.svg")),
     (
         "icons/keyboard.svg",
         include_bytes!("../assets/icons/keyboard.svg"),
@@ -310,6 +311,7 @@ mod tests {
             "git-commit.svg",
             "git-pull-request.svg",
             "hammer.svg",
+            "info.svg",
             "list-checks.svg",
             "lock.svg",
             "lock-open.svg",

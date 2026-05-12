@@ -586,7 +586,7 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
             "reference/screenshots/upstream-settings-keybindings-reference.png",
         ),
         actual: resolve_repo_path("reference/screenshots/r3code-settings-keybindings-window.png"),
-        max_different_pixels_percent: 9.0,
+        max_different_pixels_percent: 6.8,
         channel_tolerance: 8,
         ignore_rects: vec![Rect {
             x: 0,

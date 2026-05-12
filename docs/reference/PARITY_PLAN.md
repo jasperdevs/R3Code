@@ -493,10 +493,12 @@ Current measured diff:
 
 ```text
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen settings-keybindings --output reference\screenshots\r3code-settings-keybindings-window.png
-cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-keybindings-reference.png --actual reference\screenshots\r3code-settings-keybindings-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 9
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-keybindings-reference.png --actual reference\screenshots\r3code-settings-keybindings-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6.8
 ```
 
-Last measured result: `8.739%`.
+Last measured result: `6.579%`.
+
+Current ported parity scope: native keybindings table now follows the upstream `SettingsSection` table proportions more closely: upstream `InfoIcon` warning banner, T3 Code warning copy, `muted/25` and `muted/15` table backgrounds, `border/70` and `border/60` dividers, upstream grid column math, and upstream Windows shortcut glyph labels.
 
 ## Current Settings Source Control Baseline
 
