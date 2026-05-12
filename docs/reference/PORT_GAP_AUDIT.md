@@ -30,6 +30,7 @@ These screens have automated reference captures and native GPUI comparisons:
 | Empty/no active thread | 2% |
 | Command palette | 5% |
 | Draft empty chat | 2% |
+| Composer focused empty state | 2% |
 | Composer slash-command menu | 5% |
 | Composer inline mention/skill chips | 5% |
 | Provider/model picker | 6% |

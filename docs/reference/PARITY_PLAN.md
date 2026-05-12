@@ -127,6 +127,23 @@ Last measured result: `1.814%`.
 
 The upstream draft reference is produced by the real T3 command-palette add-project flow, which creates a `/draft/$draftId` route and captures the active empty chat surface after dismissing unrelated provider-update toast chrome.
 
+## Current Composer Focus Baseline
+
+Reference: `reference/screenshots/upstream-composer-focused-reference.png`
+
+R3Code capture: `reference/screenshots/r3code-composer-focused-window.png`
+
+Allowed brand-copy difference: `--ignore-rect 0,0,120,45`
+
+Current measured diff:
+
+```text
+cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen composer-focused --output reference\screenshots\r3code-composer-focused-window.png
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-composer-focused-reference.png --actual reference\screenshots\r3code-composer-focused-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 2
+```
+
+Last measured result: `1.911%`.
+
 ## Current Active Chat Smoke Baseline
 
 R3Code capture: `reference/screenshots/r3code-active-chat-window.png`

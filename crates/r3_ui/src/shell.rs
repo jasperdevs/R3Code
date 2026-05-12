@@ -153,7 +153,9 @@ impl R3Shell {
             },
             composer_prompt_focused: matches!(
                 screen,
-                R3Screen::ComposerCommandMenu | R3Screen::ComposerInlineTokens
+                R3Screen::ComposerFocused
+                    | R3Screen::ComposerCommandMenu
+                    | R3Screen::ComposerInlineTokens
             ),
             composer_highlighted_item_id: None,
             composer_highlighted_search_key: None,
@@ -182,6 +184,7 @@ impl R3Shell {
 pub enum R3Screen {
     Empty,
     Draft,
+    ComposerFocused,
     ActiveChat,
     RunningTurn,
     PendingApproval,
@@ -451,6 +454,7 @@ impl Render for R3Shell {
         root = match self.screen {
             R3Screen::Empty
             | R3Screen::Draft
+            | R3Screen::ComposerFocused
             | R3Screen::ActiveChat
             | R3Screen::RunningTurn
             | R3Screen::PendingApproval
@@ -9258,6 +9262,7 @@ pub fn open_main_window(cx: &mut App) {
     let (screen, command_palette_open) = match std::env::var("R3CODE_SCREEN").as_deref() {
         Ok("command-palette") => (R3Screen::Empty, true),
         Ok("draft") | Ok("chat-composer") => (R3Screen::Draft, false),
+        Ok("composer-focused") | Ok("focused-composer") => (R3Screen::ComposerFocused, false),
         Ok("composer-menu") | Ok("slash-menu") => (R3Screen::ComposerCommandMenu, false),
         Ok("composer-inline-tokens") | Ok("inline-tokens") => {
             (R3Screen::ComposerInlineTokens, false)
@@ -9284,7 +9289,7 @@ pub fn open_main_window(cx: &mut App) {
         },
         move |window, cx| {
             let snapshot = match screen {
-                R3Screen::Draft => AppSnapshot::draft_reference_state(),
+                R3Screen::Draft | R3Screen::ComposerFocused => AppSnapshot::draft_reference_state(),
                 R3Screen::ActiveChat => AppSnapshot::active_chat_reference_state(),
                 R3Screen::RunningTurn => AppSnapshot::running_turn_reference_state(),
                 R3Screen::PendingApproval => AppSnapshot::pending_approval_reference_state(),
