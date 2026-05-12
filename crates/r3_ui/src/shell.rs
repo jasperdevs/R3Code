@@ -7,7 +7,7 @@ use gpui::{
 use r3_core::{
     APP_NAME, AppSnapshot, ChatMessage, DiffOpenValue, DiffRouteSearch, MAX_TERMINALS_PER_GROUP,
     PendingApproval, PendingUserInputProgress, ProjectSummary, TerminalEvent, ThreadStatus,
-    TurnDiffFileChange, TurnDiffStat, TurnDiffTreeNode, build_turn_diff_tree,
+    TurnDiffFileChange, TurnDiffStat, TurnDiffSummary, TurnDiffTreeNode, build_turn_diff_tree,
     close_thread_terminal, new_thread_terminal, parse_diff_route_search,
     set_pending_user_input_custom_answer, set_thread_active_terminal, set_thread_terminal_open,
     split_thread_terminal, summarize_turn_diff_stats, toggle_pending_user_input_option_selection,
@@ -657,7 +657,7 @@ impl R3Shell {
             .flex_1()
             .min_w_0()
             .child(self.toolbar(cx))
-            .child(self.timeline());
+            .child(self.timeline(cx));
 
         if self.snapshot.terminal_open() {
             panel = panel.child(self.terminal_drawer(cx));
@@ -751,9 +751,9 @@ impl R3Shell {
         toolbar
     }
 
-    fn timeline(&self) -> impl IntoElement {
+    fn timeline(&self, cx: &mut Context<Self>) -> impl IntoElement {
         if !self.snapshot.messages.is_empty() {
-            return self.messages_timeline().into_any_element();
+            return self.messages_timeline(cx).into_any_element();
         }
 
         let mut timeline = div()
@@ -828,7 +828,7 @@ impl R3Shell {
         timeline.into_any_element()
     }
 
-    fn messages_timeline(&self) -> impl IntoElement {
+    fn messages_timeline(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let content_width = if self.snapshot.diff_open() {
             460.0
         } else {
@@ -837,7 +837,7 @@ impl R3Shell {
         let mut content = div().flex().flex_col().gap_4().w(px(content_width));
 
         for message in &self.snapshot.messages {
-            content = content.child(self.timeline_message(message));
+            content = content.child(self.timeline_message(message, cx));
         }
 
         div()
@@ -854,12 +854,12 @@ impl R3Shell {
             .child(content)
     }
 
-    fn timeline_message(&self, message: &ChatMessage) -> impl IntoElement {
+    fn timeline_message(&self, message: &ChatMessage, cx: &mut Context<Self>) -> impl IntoElement {
         match message.role {
             r3_core::MessageRole::User => self.user_timeline_message(message).into_any_element(),
-            r3_core::MessageRole::Assistant | r3_core::MessageRole::System => {
-                self.assistant_timeline_message(message).into_any_element()
-            }
+            r3_core::MessageRole::Assistant | r3_core::MessageRole::System => self
+                .assistant_timeline_message(message, cx)
+                .into_any_element(),
         }
     }
 
@@ -896,7 +896,11 @@ impl R3Shell {
         )
     }
 
-    fn assistant_timeline_message(&self, message: &ChatMessage) -> impl IntoElement {
+    fn assistant_timeline_message(
+        &self,
+        message: &ChatMessage,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
@@ -918,6 +922,231 @@ impl R3Shell {
                     .text_color(self.theme.muted_foreground.opacity(0.30))
                     .child("12:00 PM"),
             )
+            .when_some(
+                self.turn_diff_summary_for_message(&message.id),
+                |message_node, summary| {
+                    message_node.child(self.assistant_changed_files_section(summary, cx))
+                },
+            )
+    }
+
+    fn turn_diff_summary_for_message(&self, message_id: &str) -> Option<&TurnDiffSummary> {
+        self.snapshot
+            .turn_diff_summaries
+            .iter()
+            .find(|summary| summary.assistant_message_id.as_deref() == Some(message_id))
+    }
+
+    fn assistant_changed_files_section(
+        &self,
+        summary: &TurnDiffSummary,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let files = &summary.files;
+        let stat = summarize_turn_diff_stats(files);
+        let tree = build_turn_diff_tree(files);
+        let turn_id = summary.turn_id.clone();
+        let first_file_path = files.first().map(|file| file.path.clone());
+
+        div()
+            .id(SharedString::from(format!(
+                "assistant-changed-files-{}",
+                summary.turn_id
+            )))
+            .mt_2()
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(self.theme.border.opacity(0.80))
+            .bg(self.theme.card.opacity(0.45))
+            .p(px(10.0))
+            .child(
+                div()
+                    .mb_1p5()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .text_size(px(10.0))
+                            .font_weight(FontWeight(650.0))
+                            .text_color(self.theme.muted_foreground.opacity(0.65))
+                            .child(format!("Changed files ({})", files.len()).to_uppercase())
+                            .when(stat.additions > 0 || stat.deletions > 0, |label| {
+                                label
+                                    .child(
+                                        div()
+                                            .mx_1()
+                                            .text_color(self.theme.muted_foreground.opacity(0.70))
+                                            .child("•"),
+                                    )
+                                    .child(self.diff_stat_label(stat, false))
+                            }),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1p5()
+                            .child(self.changed_files_header_button("Collapse all", None, cx))
+                            .child(self.changed_files_header_button(
+                                "View diff",
+                                Some((turn_id, first_file_path)),
+                                cx,
+                            )),
+                    ),
+            )
+            .child(self.changed_files_tree_nodes(&tree, &summary.turn_id, 0, cx))
+    }
+
+    fn changed_files_header_button(
+        &self,
+        label: &'static str,
+        open_diff: Option<(String, Option<String>)>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id(SharedString::from(format!(
+                "changed-files-button-{}",
+                label.to_ascii_lowercase().replace(' ', "-")
+            )))
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.background)
+            .px_2()
+            .py_1()
+            .text_size(px(11.0))
+            .text_color(self.theme.foreground.opacity(0.90))
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if let Some((turn_id, file_path)) = open_diff.as_ref() {
+                    this.snapshot.diff_route = parse_diff_route_search(
+                        Some(DiffOpenValue::from("1")),
+                        Some(turn_id),
+                        file_path.as_deref(),
+                    );
+                    cx.notify();
+                }
+            }))
+            .child(label)
+    }
+
+    fn changed_files_tree_nodes(
+        &self,
+        nodes: &[TurnDiffTreeNode],
+        turn_id: &str,
+        depth: usize,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let mut list = div().flex().flex_col().gap(px(2.0));
+        for node in nodes {
+            list = list.child(self.changed_files_tree_node(node, turn_id, depth, cx));
+        }
+        list
+    }
+
+    fn changed_files_tree_node(
+        &self,
+        node: &TurnDiffTreeNode,
+        turn_id: &str,
+        depth: usize,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let left_padding = 8.0 + depth as f32 * 14.0;
+        match node {
+            TurnDiffTreeNode::Directory {
+                name,
+                path,
+                stat,
+                children,
+            } => div()
+                .id(SharedString::from(format!("changed-files-dir-{path}")))
+                .flex()
+                .flex_col()
+                .gap(px(2.0))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_1p5()
+                        .rounded(px(6.0))
+                        .py_1()
+                        .pr_2()
+                        .pl(px(left_padding))
+                        .text_size(px(11.0))
+                        .text_color(self.theme.muted_foreground.opacity(0.90))
+                        .child(
+                            svg()
+                                .path("icons/chevron-down.svg")
+                                .size_3()
+                                .text_color(self.theme.muted_foreground.opacity(0.70)),
+                        )
+                        .child(
+                            svg()
+                                .path("icons/folder.svg")
+                                .size_3()
+                                .text_color(self.theme.muted_foreground.opacity(0.75)),
+                        )
+                        .child(
+                            div()
+                                .min_w_0()
+                                .flex_1()
+                                .font_family(SharedString::from(MONO_FONT_FAMILY))
+                                .child(name.clone()),
+                        )
+                        .when(stat.additions > 0 || stat.deletions > 0, |row| {
+                            row.child(self.diff_stat_label(*stat, false))
+                        }),
+                )
+                .child(self.changed_files_tree_nodes(children, turn_id, depth + 1, cx))
+                .into_any_element(),
+            TurnDiffTreeNode::File { name, path, stat } => {
+                let turn_id_for_click = turn_id.to_string();
+                let path_for_click = path.clone();
+                div()
+                    .id(SharedString::from(format!("changed-files-file-{path}")))
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
+                    .rounded(px(6.0))
+                    .py_1()
+                    .pr_2()
+                    .pl(px(left_padding))
+                    .text_size(px(11.0))
+                    .text_color(self.theme.muted_foreground.opacity(0.82))
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.snapshot.diff_route = parse_diff_route_search(
+                            Some(DiffOpenValue::from("1")),
+                            Some(&turn_id_for_click),
+                            Some(&path_for_click),
+                        );
+                        cx.notify();
+                    }))
+                    .child(div().w(px(14.0)).h(px(14.0)).flex_shrink_0())
+                    .child(
+                        svg()
+                            .path("icons/file-json.svg")
+                            .size_3()
+                            .text_color(self.theme.muted_foreground.opacity(0.70)),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .font_family(SharedString::from(MONO_FONT_FAMILY))
+                            .child(name.clone()),
+                    )
+                    .when_some(*stat, |row, stat| {
+                        row.child(self.diff_stat_label(stat, false))
+                    })
+                    .into_any_element()
+            }
+        }
     }
 
     fn terminal_drawer(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -6728,7 +6957,7 @@ pub fn open_main_window(cx: &mut App) {
         move |window, cx| {
             let snapshot = match screen {
                 R3Screen::Draft => AppSnapshot::draft_reference_state(),
-                R3Screen::ActiveChat => AppSnapshot::mock_reference_state(),
+                R3Screen::ActiveChat => AppSnapshot::active_chat_reference_state(),
                 R3Screen::PendingApproval => AppSnapshot::pending_approval_reference_state(),
                 R3Screen::PendingUserInput => AppSnapshot::pending_user_input_reference_state(),
                 R3Screen::TerminalDrawer => AppSnapshot::terminal_drawer_reference_state(),

@@ -1870,6 +1870,12 @@ impl AppSnapshot {
         }
     }
 
+    pub fn active_chat_reference_state() -> Self {
+        let mut snapshot = Self::mock_reference_state();
+        snapshot.turn_diff_summaries = reference_turn_diff_summaries();
+        snapshot
+    }
+
     pub fn pending_approval_reference_state() -> Self {
         let mut snapshot = Self::mock_reference_state();
         if let Some(thread) = snapshot.threads.first_mut() {
@@ -2018,64 +2024,12 @@ impl AppSnapshot {
     }
 
     pub fn diff_panel_reference_state() -> Self {
-        let mut snapshot = Self::mock_reference_state();
+        let mut snapshot = Self::active_chat_reference_state();
         snapshot.diff_route = parse_diff_route_search(
             Some(DiffOpenValue::from("1")),
             Some("turn-r3code-ui-shell-2"),
             Some("crates/r3_ui/src/shell.rs"),
         );
-        snapshot.turn_diff_summaries = vec![
-            TurnDiffSummary {
-                turn_id: "turn-r3code-ui-shell-2".to_string(),
-                completed_at: "2026-03-04T12:05:18.000Z".to_string(),
-                status: Some("completed".to_string()),
-                files: vec![
-                    TurnDiffFileChange {
-                        path: "crates/r3_ui/src/shell.rs".to_string(),
-                        kind: Some("modified".to_string()),
-                        additions: Some(126),
-                        deletions: Some(18),
-                    },
-                    TurnDiffFileChange {
-                        path: "crates/r3_core/src/lib.rs".to_string(),
-                        kind: Some("modified".to_string()),
-                        additions: Some(74),
-                        deletions: Some(4),
-                    },
-                    TurnDiffFileChange {
-                        path: "docs/reference/PARITY_PLAN.md".to_string(),
-                        kind: Some("modified".to_string()),
-                        additions: Some(8),
-                        deletions: Some(0),
-                    },
-                ],
-                checkpoint_ref: Some("checkpoint-turn-2".to_string()),
-                assistant_message_id: Some("msg-assistant-r3code-ui-shell".to_string()),
-                checkpoint_turn_count: Some(2),
-            },
-            TurnDiffSummary {
-                turn_id: "turn-r3code-ui-shell-1".to_string(),
-                completed_at: "2026-03-04T12:01:42.000Z".to_string(),
-                status: Some("completed".to_string()),
-                files: vec![
-                    TurnDiffFileChange {
-                        path: "crates/r3_ui/assets/icons/diff.svg".to_string(),
-                        kind: Some("added".to_string()),
-                        additions: Some(1),
-                        deletions: Some(0),
-                    },
-                    TurnDiffFileChange {
-                        path: "crates/r3_ui/src/assets.rs".to_string(),
-                        kind: Some("modified".to_string()),
-                        additions: Some(6),
-                        deletions: Some(1),
-                    },
-                ],
-                checkpoint_ref: Some("checkpoint-turn-1".to_string()),
-                assistant_message_id: Some("msg-assistant-r3code-ui-shell".to_string()),
-                checkpoint_turn_count: Some(1),
-            },
-        ];
         snapshot
     }
 
@@ -2156,6 +2110,61 @@ impl AppSnapshot {
     }
 }
 
+fn reference_turn_diff_summaries() -> Vec<TurnDiffSummary> {
+    vec![
+        TurnDiffSummary {
+            turn_id: "turn-r3code-ui-shell-2".to_string(),
+            completed_at: "2026-03-04T12:05:18.000Z".to_string(),
+            status: Some("completed".to_string()),
+            files: vec![
+                TurnDiffFileChange {
+                    path: "crates/r3_ui/src/shell.rs".to_string(),
+                    kind: Some("modified".to_string()),
+                    additions: Some(126),
+                    deletions: Some(18),
+                },
+                TurnDiffFileChange {
+                    path: "crates/r3_core/src/lib.rs".to_string(),
+                    kind: Some("modified".to_string()),
+                    additions: Some(74),
+                    deletions: Some(4),
+                },
+                TurnDiffFileChange {
+                    path: "docs/reference/PARITY_PLAN.md".to_string(),
+                    kind: Some("modified".to_string()),
+                    additions: Some(8),
+                    deletions: Some(0),
+                },
+            ],
+            checkpoint_ref: Some("checkpoint-turn-2".to_string()),
+            assistant_message_id: Some("msg-assistant-r3code-ui-shell".to_string()),
+            checkpoint_turn_count: Some(2),
+        },
+        TurnDiffSummary {
+            turn_id: "turn-r3code-ui-shell-1".to_string(),
+            completed_at: "2026-03-04T12:01:42.000Z".to_string(),
+            status: Some("completed".to_string()),
+            files: vec![
+                TurnDiffFileChange {
+                    path: "crates/r3_ui/assets/icons/diff.svg".to_string(),
+                    kind: Some("added".to_string()),
+                    additions: Some(1),
+                    deletions: Some(0),
+                },
+                TurnDiffFileChange {
+                    path: "crates/r3_ui/src/assets.rs".to_string(),
+                    kind: Some("modified".to_string()),
+                    additions: Some(6),
+                    deletions: Some(1),
+                },
+            ],
+            checkpoint_ref: Some("checkpoint-turn-1".to_string()),
+            assistant_message_id: Some("msg-assistant-r3code-ui-shell".to_string()),
+            checkpoint_turn_count: Some(1),
+        },
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2206,6 +2215,26 @@ mod tests {
 
         assert_eq!(snapshot.active_thread_title(), "Port R3Code UI shell");
         assert_eq!(snapshot.active_project_name(), Some("r3code"));
+        assert!(snapshot.turn_diff_summaries.is_empty());
+    }
+
+    #[test]
+    fn active_chat_reference_state_links_diff_summary_to_assistant_message() {
+        let snapshot = AppSnapshot::active_chat_reference_state();
+        let assistant_message = snapshot
+            .messages
+            .iter()
+            .find(|message| message.role == MessageRole::Assistant)
+            .unwrap();
+
+        assert_eq!(snapshot.turn_diff_summaries.len(), 2);
+        assert!(
+            snapshot
+                .turn_diff_summaries
+                .iter()
+                .any(|summary| summary.assistant_message_id.as_deref()
+                    == Some(assistant_message.id.as_str()))
+        );
     }
 
     #[test]
