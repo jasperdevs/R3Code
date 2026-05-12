@@ -4,7 +4,7 @@ R3Code is still an early static Rust/GPUI shell, not a full Rust port of T3 Code
 
 Reference commit: `8fc317939f5c8bbef4afbe309ae897abbc221631`
 
-Current local baseline: R3Code `main` after the diff panel renderer parity slice.
+Current local baseline: R3Code `main` after the keybindings table and pending-user-input composer footer parity slices.
 
 ## Size Check
 
@@ -44,7 +44,7 @@ These screens have automated reference captures and native GPUI comparisons:
 | Composer inline mention/skill chips | 5% |
 | Provider/model picker | 6% |
 | Pending approval composer state | 5% |
-| Pending user input composer state | 5.5% |
+| Pending user input composer state | 5.1% |
 | Settings general | 6% |
 | Settings keybindings | 6.8% |
 | Settings providers | 5% |
@@ -57,7 +57,7 @@ These screens have automated reference captures and native GPUI comparisons:
 | Settings dark selection | 6% |
 | Empty/no active thread, dark theme | 2% |
 
-The strongest parity areas are the empty shell, draft chat chrome, archive empty state, and settings back path. The weakest implemented area is now the diff panel renderer, followed by Keybindings; the keybindings table still carries browser-vs-GPUI font and control rendering differences after the source-backed warning/table pass.
+The strongest parity areas are the empty shell, draft chat chrome, archive empty state, and settings back path. The weakest implemented area is now the diff panel renderer, followed by Keybindings; the keybindings table still carries browser-vs-GPUI font and control rendering differences after the source-backed warning/table pass. The pending-user-input composer now restores the upstream footer controls and tighter editor height, with the gate reduced to 5.1%.
 
 ## Major Missing Product Surfaces
 

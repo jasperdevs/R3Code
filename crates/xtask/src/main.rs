@@ -398,7 +398,7 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
             "reference/screenshots/upstream-pending-user-input-reference.png",
         ),
         actual: resolve_repo_path("reference/screenshots/r3code-pending-user-input-window.png"),
-        max_different_pixels_percent: 5.5,
+        max_different_pixels_percent: 5.1,
         channel_tolerance: 8,
         ignore_rects: vec![Rect {
             x: 0,

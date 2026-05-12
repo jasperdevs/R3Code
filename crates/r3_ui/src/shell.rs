@@ -199,7 +199,7 @@ impl R3Shell {
                 ModelPickerSelectedInstance::Favorites
             },
             composer_runtime_index: 2,
-            composer_plan_mode: false,
+            composer_plan_mode: screen == R3Screen::PendingUserInput,
             composer_submitted_count: 0,
             diff_render_split: false,
             diff_word_wrap: false,
@@ -3193,12 +3193,7 @@ impl R3Shell {
                     .gap_2()
                     .px_5()
                     .py_4()
-                    .child(
-                        div()
-                            .text_size(px(14.0))
-                            .text_color(self.theme.foreground)
-                            .child("P E N D I N G A P P R O V A L"),
-                    )
+                    .child(self.composer_pending_approval_label())
                     .child(
                         div()
                             .text_size(px(14.0))
@@ -3214,6 +3209,26 @@ impl R3Shell {
                         )
                     }),
             )
+    }
+
+    fn composer_pending_approval_label(&self) -> impl IntoElement {
+        let mut label = div()
+            .flex()
+            .items_center()
+            .gap(px(2.8))
+            .whitespace_nowrap()
+            .text_size(px(14.0))
+            .text_color(self.theme.foreground);
+
+        for character in "PENDING APPROVAL".chars() {
+            label = if character == ' ' {
+                label.child(div().w(px(1.2)).h(px(1.0)).flex_shrink_0())
+            } else {
+                label.child(div().child(character.to_string()))
+            };
+        }
+
+        label
     }
 
     fn composer_pending_user_input_panel(
@@ -3764,19 +3779,23 @@ impl R3Shell {
             && active_pending_user_input_progress.is_none();
         let input_min_height = if active_pending_approval.is_some() {
             79.0
+        } else if active_pending_user_input_progress.is_some() {
+            85.0
         } else {
             96.0
         };
-        let input_top_padding = if active_pending_approval.is_some() {
-            12.0
-        } else {
-            16.0
-        };
-        let input_bottom_padding = if active_pending_approval.is_some() {
-            8.0
-        } else {
-            12.0
-        };
+        let input_top_padding =
+            if active_pending_approval.is_some() || active_pending_user_input_progress.is_some() {
+                12.0
+            } else {
+                16.0
+            };
+        let input_bottom_padding =
+            if active_pending_approval.is_some() || active_pending_user_input_progress.is_some() {
+                8.0
+            } else {
+                12.0
+            };
 
         div()
             .id("chat-composer-input")
@@ -3893,7 +3912,32 @@ impl R3Shell {
             .gap_2()
             .px_3()
             .pb_3()
-            .child(div().flex_1())
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_1()
+                    .min_w_0()
+                    .child(self.composer_model_picker(cx))
+                    .child(self.composer_footer_separator())
+                    .child(self.composer_footer_control(
+                        "chat-composer-plan-toggle",
+                        "icons/bot.svg",
+                        if self.composer_plan_mode {
+                            "Plan"
+                        } else {
+                            "Build"
+                        },
+                        cx,
+                    ))
+                    .child(self.composer_footer_separator())
+                    .child(self.composer_footer_control(
+                        "chat-composer-runtime-mode",
+                        self.runtime_mode().icon,
+                        self.runtime_mode().label,
+                        cx,
+                    )),
+            )
             .child(
                 div()
                     .flex()

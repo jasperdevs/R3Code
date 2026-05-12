@@ -8216,6 +8216,7 @@ impl AppSnapshot {
 
     pub fn pending_user_input_reference_state() -> Self {
         let mut snapshot = Self::active_chat_reference_state();
+        snapshot.selected_model = DEFAULT_MODEL.to_string();
         if let Some(thread) = snapshot.threads.first_mut() {
             thread.status = ThreadStatus::Running;
             thread.has_pending_user_input = true;
@@ -10566,6 +10567,7 @@ mod tests {
             snapshot.active_work_started_at.as_deref(),
             Some("2026-03-04T12:00:10.000Z")
         );
+        assert_eq!(snapshot.selected_model, DEFAULT_MODEL);
         assert_eq!(snapshot.turn_diff_summaries.len(), 2);
         assert_eq!(progress.question_index, 0);
         assert_eq!(progress.active_question.unwrap().id, "scope");

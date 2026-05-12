@@ -261,12 +261,12 @@ Current measured diff:
 
 ```text
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen pending-user-input --output reference\screenshots\r3code-pending-user-input-window.png
-cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-pending-user-input-reference.png --actual reference\screenshots\r3code-pending-user-input-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 5.5
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-pending-user-input-reference.png --actual reference\screenshots\r3code-pending-user-input-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 5.1
 ```
 
-Last measured result: `5.288%`.
+Last measured result: `4.963%`.
 
-The upstream pending-user-input reference reuses the seeded active thread and injects the browser-test `user-input.requested` activity from `ChatView.browser.tsx`, then captures the real upstream composer question card. R3 now keeps the active-chat changed-files card and working indicator visible in the pending-user-input fixture before rendering the user-input composer.
+The upstream pending-user-input reference reuses the seeded active thread and injects the browser-test `user-input.requested` activity from `ChatView.browser.tsx`, then captures the real upstream composer question card. R3 now keeps the active-chat changed-files card and working indicator visible in the pending-user-input fixture before rendering the user-input composer. The Rust fixture also mirrors the upstream Plan + Full access pending footer, uses the same default `gpt-5.4` composer model for this capture, and uses a pending-input-specific editor height so the composer dividers align with the upstream reference.
 
 ## Current Composer Command Menu Baseline
 
