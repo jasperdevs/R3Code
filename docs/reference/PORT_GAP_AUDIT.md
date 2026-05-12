@@ -31,6 +31,7 @@ These screens have automated reference captures and native GPUI comparisons:
 | Command palette | 5% |
 | Draft empty chat | 2% |
 | Composer slash-command menu | 5% |
+| Composer inline mention/skill chips | 5% |
 | Settings general | 6% |
 | Settings keybindings | 9% |
 | Settings providers | 5% |
@@ -52,7 +53,7 @@ These T3 surfaces have no complete Rust implementation yet:
 | --- | --- | --- |
 | Active chat with real user/assistant turns | `apps/web/src/components/ChatView.tsx`, `MessagesTimeline.tsx` | Partial static GPUI smoke |
 | Running agent turn, work log, tool output | `apps/web/src/session-logic.ts`, `MessagesTimeline.tsx` | Partial static GPUI smoke |
-| Pending approval and pending user input panels | `ChatComposer.tsx`, `ComposerPendingApproval*`, `pendingUserInput.ts` | Partial static GPUI smoke plus pending-input, composer send-state, trigger/cursor, command-menu contracts, and slash-menu smoke capture |
+| Pending approval and pending user input panels | `ChatComposer.tsx`, `ComposerPendingApproval*`, `pendingUserInput.ts` | Partial static GPUI smoke plus pending-input, composer send-state, trigger/cursor, command-menu contracts, slash-menu gate, and inline-token gate |
 | Terminal drawer and xterm integration | `ThreadTerminalDrawer.tsx`, `terminalStateStore.ts`, `terminalContext.ts` | Partial static GPUI smoke plus terminal drawer, terminal-context, and composer inline-token contracts |
 | Diff panel and changed-file browsing | `DiffPanel.tsx`, `diffRouteSearch.ts`, `turnDiffTree.ts` | Partial static GPUI smoke |
 | Branch/worktree toolbar | `BranchToolbar.tsx`, `BranchToolbar.logic.ts`, `BranchToolbarBranchSelector.tsx` | Partial core logic + GPUI smoke |

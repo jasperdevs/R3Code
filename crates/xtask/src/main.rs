@@ -112,7 +112,7 @@ fn print_usage() {
         "Usage:
   cargo run -p xtask -- check-parity --allow-window-capture [--refresh-reference]
   cargo run -p xtask -- compare-screenshots --expected <png> --actual <png> [--channel-tolerance <n>] [--ignore-rect x,y,w,h] [--max-different-pixels-percent <n>]
-  cargo run -p xtask -- capture-r3code-window --allow-window-capture [--screen draft|composer-menu|active-chat|running-turn|pending-approval|pending-user-input|terminal-drawer|diff-panel|branch-toolbar|provider-model-picker|settings|settings-diagnostics|command-palette|settings-theme-menu|settings-dark|settings-back|settings-keybindings|settings-providers|settings-source-control|settings-connections|settings-archive] [--theme light|dark|system] [--output <png>]
+  cargo run -p xtask -- capture-r3code-window --allow-window-capture [--screen draft|composer-menu|composer-inline-tokens|active-chat|running-turn|pending-approval|pending-user-input|terminal-drawer|diff-panel|branch-toolbar|provider-model-picker|settings|settings-diagnostics|command-palette|settings-theme-menu|settings-dark|settings-back|settings-keybindings|settings-providers|settings-source-control|settings-connections|settings-archive] [--theme light|dark|system] [--output <png>]
   cargo run -p xtask -- capture-reference-browser"
     );
 }
@@ -256,6 +256,28 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
     compare_screenshots(CompareOptions {
         expected: resolve_repo_path("reference/screenshots/upstream-composer-menu-reference.png"),
         actual: resolve_repo_path("reference/screenshots/r3code-composer-menu-window.png"),
+        max_different_pixels_percent: 5.0,
+        channel_tolerance: 8,
+        ignore_rects: vec![Rect {
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 45,
+        }],
+    })?;
+
+    capture_r3code_window(CaptureR3CodeOptions {
+        screen: Some("composer-inline-tokens".to_string()),
+        theme: Some("light".to_string()),
+        output: resolve_repo_path("reference/screenshots/r3code-composer-inline-tokens-window.png"),
+        allow_window_capture: true,
+        ..CaptureR3CodeOptions::default()
+    })?;
+    compare_screenshots(CompareOptions {
+        expected: resolve_repo_path(
+            "reference/screenshots/upstream-composer-inline-tokens-reference.png",
+        ),
+        actual: resolve_repo_path("reference/screenshots/r3code-composer-inline-tokens-window.png"),
         max_different_pixels_percent: 5.0,
         channel_tolerance: 8,
         ignore_rects: vec![Rect {
@@ -1325,7 +1347,7 @@ fn capture_reference_browser(options: CaptureReferenceOptions) -> Result<()> {
         fs::write(
             options.output_dir.join("CAPTURE_MANIFEST.txt"),
             format!(
-                "Upstream reference repository: {}\nReference commit: {}\nIsolated reference home: {}\nOutput directory: {}\nCaptured:\n- upstream-empty-reference.png\n- upstream-command-palette-reference.png\n- upstream-draft-reference.png\n- upstream-composer-menu-reference.png\n- upstream-settings-reference.png\n- upstream-settings-keybindings-reference.png\n- upstream-settings-providers-reference.png\n- upstream-settings-source-control-reference.png\n- upstream-settings-connections-reference.png\n- upstream-settings-diagnostics-reference.png\n- upstream-settings-archive-reference.png\n- upstream-settings-theme-menu-reference.png\n- upstream-settings-dark-reference.png\n",
+                "Upstream reference repository: {}\nReference commit: {}\nIsolated reference home: {}\nOutput directory: {}\nCaptured:\n- upstream-empty-reference.png\n- upstream-command-palette-reference.png\n- upstream-draft-reference.png\n- upstream-composer-menu-reference.png\n- upstream-composer-inline-tokens-reference.png\n- upstream-settings-reference.png\n- upstream-settings-keybindings-reference.png\n- upstream-settings-providers-reference.png\n- upstream-settings-source-control-reference.png\n- upstream-settings-connections-reference.png\n- upstream-settings-diagnostics-reference.png\n- upstream-settings-archive-reference.png\n- upstream-settings-theme-menu-reference.png\n- upstream-settings-dark-reference.png\n",
                 options.repo.display(),
                 commit.trim(),
                 options.home.display(),
@@ -1422,6 +1444,27 @@ const path = require("path");
   await dismissUpdatesToast();
   await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-composer-menu-reference.png"), fullPage: true });
   await page.getByTestId("composer-editor").fill("");
+  await page.locator('[data-composer-item-id="slash:model"]').waitFor({ state: "detached", timeout: 15000 });
+  await page.evaluate(async () => {
+    const { useComposerDraftStore } = await import("/src/composerDraftStore.ts");
+    const draftId = window.location.pathname.split("/").filter(Boolean).pop();
+    if (!draftId) throw new Error("Unable to resolve current draft id.");
+    useComposerDraftStore.getState().setPrompt(draftId, "use @AGENTS.md and $agent-browser ");
+  });
+  await page.locator('[data-composer-mention-chip="true"]').waitFor({ timeout: 15000 });
+  await page.locator('[data-composer-skill-chip="true"]').waitFor({ timeout: 15000 });
+  await page.waitForFunction(() => {
+    const icon = document.querySelector('[data-composer-mention-chip="true"] img');
+    return !icon || icon.complete;
+  }, undefined, { timeout: 15000 });
+  await page.waitForTimeout(350);
+  await dismissUpdatesToast();
+  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-composer-inline-tokens-reference.png"), fullPage: true });
+  await page.evaluate(async () => {
+    const { useComposerDraftStore } = await import("/src/composerDraftStore.ts");
+    const draftId = window.location.pathname.split("/").filter(Boolean).pop();
+    if (draftId) useComposerDraftStore.getState().setPrompt(draftId, "");
+  });
   await page.goto(new URL("/settings", appOrigin).toString(), { waitUntil: "networkidle", timeout: 30000 });
   await page.getByLabel("Theme preference").waitFor({ timeout: 15000 });
   await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-settings-reference.png"), fullPage: true });

@@ -8,29 +8,31 @@ use gpui::{
 };
 use r3_core::{
     APP_NAME, ActivityTone, AppSnapshot, ChatMessage, CommandPaletteGroup, CommandPaletteItem,
-    CommandPaletteItemKind, ComposerCommandItem, ComposerMenuNudgeDirection, ComposerSlashCommand,
-    ComposerTrigger, DiagnosticsDescriptionInput, DiffOpenValue, DiffRouteSearch,
-    DraftThreadEnvMode, EditorOption, MAX_TERMINALS_PER_GROUP, MAX_VISIBLE_WORK_LOG_ENTRIES,
-    ModelPickerItem, ModelPickerSelectedInstance, ModelPickerState, PendingApproval,
-    PendingUserInputProgress, ProcessDiagnosticsEntry, ProcessDiagnosticsResult, ProjectEntry,
-    ProjectEntryKind, ProjectScript, ProjectScriptIcon, ProjectSummary, ProviderInstanceEntry,
-    RECENT_COMMAND_PALETTE_THREAD_LIMIT, ServerProviderModel, ServerProviderSkill,
-    ServerProviderSlashCommand, SidebarThreadSortOrder, TerminalEvent, ThreadStatus,
-    TraceDiagnosticsFailureSummary, TraceDiagnosticsLogEvent, TraceDiagnosticsRecentFailure,
-    TraceDiagnosticsResult, TraceDiagnosticsSpanOccurrence, TraceDiagnosticsSpanSummary,
-    TurnDiffFileChange, TurnDiffStat, TurnDiffSummary, TurnDiffTreeNode, WorkLogEntry,
-    build_composer_menu_items, build_project_action_items, build_root_command_palette_groups,
-    build_thread_action_items, build_turn_diff_tree, close_thread_terminal,
-    composer_menu_search_key, detect_composer_trigger, filter_command_palette_groups,
-    format_diagnostics_bytes, format_diagnostics_count, format_diagnostics_description,
-    format_diagnostics_duration_ms, get_display_model_name, get_provider_summary,
+    CommandPaletteItemKind, ComposerCommandItem, ComposerMenuNudgeDirection, ComposerPromptSegment,
+    ComposerSlashCommand, ComposerTrigger, DiagnosticsDescriptionInput, DiffOpenValue,
+    DiffRouteSearch, DraftThreadEnvMode, EditorOption, MAX_TERMINALS_PER_GROUP,
+    MAX_VISIBLE_WORK_LOG_ENTRIES, ModelPickerItem, ModelPickerSelectedInstance, ModelPickerState,
+    PendingApproval, PendingUserInputProgress, ProcessDiagnosticsEntry, ProcessDiagnosticsResult,
+    ProjectEntry, ProjectEntryKind, ProjectScript, ProjectScriptIcon, ProjectSummary,
+    ProviderInstanceEntry, RECENT_COMMAND_PALETTE_THREAD_LIMIT, ServerProviderModel,
+    ServerProviderSkill, ServerProviderSlashCommand, SidebarThreadSortOrder, TerminalEvent,
+    ThreadStatus, TraceDiagnosticsFailureSummary, TraceDiagnosticsLogEvent,
+    TraceDiagnosticsRecentFailure, TraceDiagnosticsResult, TraceDiagnosticsSpanOccurrence,
+    TraceDiagnosticsSpanSummary, TurnDiffFileChange, TurnDiffStat, TurnDiffSummary,
+    TurnDiffTreeNode, WorkLogEntry, build_composer_menu_items, build_project_action_items,
+    build_root_command_palette_groups, build_thread_action_items, build_turn_diff_tree,
+    close_thread_terminal, composer_menu_search_key, detect_composer_trigger,
+    filter_command_palette_groups, format_diagnostics_bytes, format_diagnostics_count,
+    format_diagnostics_description, format_diagnostics_duration_ms,
+    format_provider_skill_display_name, get_display_model_name, get_provider_summary,
     get_provider_version_advisory_presentation, get_provider_version_label,
     group_composer_command_items, new_thread_terminal, nudge_composer_menu_highlight,
     parse_diff_route_search, primary_project_script, provider_instance_initials,
     replace_text_range, resolve_composer_command_selection, resolve_composer_menu_active_item_id,
     resolve_model_picker_state, resolve_selectable_model, set_pending_user_input_custom_answer,
-    set_thread_active_terminal, set_thread_terminal_open, shorten_trace_id, split_thread_terminal,
-    summarize_turn_diff_stats, toggle_pending_user_input_option_selection,
+    set_thread_active_terminal, set_thread_terminal_open, shorten_trace_id,
+    split_prompt_into_composer_segments, split_thread_terminal, summarize_turn_diff_stats,
+    toggle_pending_user_input_option_selection,
 };
 
 use crate::theme::{FONT_FAMILY, MONO_FONT_FAMILY, SIDEBAR_MIN_WIDTH, Theme, ThemeMode};
@@ -144,12 +146,15 @@ impl R3Shell {
             connections_endpoint_copied: false,
             connections_refresh_requested: false,
             settings_theme_highlighted_index: 0,
-            composer_prompt: if screen == R3Screen::ComposerCommandMenu {
-                "/".to_string()
-            } else {
-                String::new()
+            composer_prompt: match screen {
+                R3Screen::ComposerCommandMenu => "/".to_string(),
+                R3Screen::ComposerInlineTokens => "use @AGENTS.md and $agent-browser ".to_string(),
+                _ => String::new(),
             },
-            composer_prompt_focused: screen == R3Screen::ComposerCommandMenu,
+            composer_prompt_focused: matches!(
+                screen,
+                R3Screen::ComposerCommandMenu | R3Screen::ComposerInlineTokens
+            ),
             composer_highlighted_item_id: None,
             composer_highlighted_search_key: None,
             model_picker_open: screen == R3Screen::ProviderModelPicker,
@@ -178,6 +183,7 @@ pub enum R3Screen {
     PendingApproval,
     PendingUserInput,
     ComposerCommandMenu,
+    ComposerInlineTokens,
     TerminalDrawer,
     DiffPanel,
     BranchToolbar,
@@ -446,6 +452,7 @@ impl Render for R3Shell {
             | R3Screen::PendingApproval
             | R3Screen::PendingUserInput
             | R3Screen::ComposerCommandMenu
+            | R3Screen::ComposerInlineTokens
             | R3Screen::TerminalDrawer
             | R3Screen::DiffPanel
             | R3Screen::BranchToolbar
@@ -3208,6 +3215,114 @@ impl R3Shell {
             )
     }
 
+    fn composer_path_basename<'a>(&self, path: &'a str) -> &'a str {
+        path.rsplit_once('/')
+            .map(|(_, basename)| basename)
+            .unwrap_or(path)
+    }
+
+    fn composer_inline_chip(&self, label: String, icon_path: &'static str) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .max_w_full()
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(self.theme.border.opacity(0.70))
+            .bg(self.theme.accent.opacity(0.40))
+            .px_1p5()
+            .py_0p5()
+            .text_size(px(12.0))
+            .font_weight(FontWeight(500.0))
+            .text_color(self.theme.foreground)
+            .child(
+                svg()
+                    .path(icon_path)
+                    .size_3p5()
+                    .flex_shrink_0()
+                    .text_color(self.theme.muted_foreground.opacity(0.85)),
+            )
+            .child(div().overflow_hidden().text_ellipsis().child(label))
+    }
+
+    fn composer_skill_chip(&self, label: String) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .max_w_full()
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(hsla(322.0 / 360.0, 0.72, 0.50, 0.25))
+            .bg(hsla(322.0 / 360.0, 0.72, 0.50, 0.12))
+            .px_1p5()
+            .py_0p5()
+            .text_size(px(12.0))
+            .font_weight(FontWeight(500.0))
+            .text_color(hsla(322.0 / 360.0, 0.72, 0.36, 1.0))
+            .child(
+                svg()
+                    .path("icons/skill-chip.svg")
+                    .size_3p5()
+                    .flex_shrink_0()
+                    .text_color(hsla(322.0 / 360.0, 0.72, 0.36, 0.85)),
+            )
+            .child(div().overflow_hidden().text_ellipsis().child(label))
+    }
+
+    fn composer_prompt_content(&self, text: &str, tokenize: bool) -> AnyElement {
+        if !tokenize {
+            return div().child(text.to_string()).into_any_element();
+        }
+
+        let segments = split_prompt_into_composer_segments(text);
+        if segments
+            .iter()
+            .all(|segment| matches!(segment, ComposerPromptSegment::Text { .. }))
+        {
+            return div().child(text.to_string()).into_any_element();
+        }
+
+        let mut content = div().flex().items_center().gap_1().min_w_0();
+        for segment in segments {
+            match segment {
+                ComposerPromptSegment::Text { text } => {
+                    if !text.is_empty() {
+                        content = content.child(div().child(text));
+                    }
+                }
+                ComposerPromptSegment::Mention { path } => {
+                    let label = self.composer_path_basename(&path).to_string();
+                    content = content.child(
+                        self.composer_inline_chip(label, "icons/file-type-light-agents.svg"),
+                    );
+                }
+                ComposerPromptSegment::Skill { name } => {
+                    let skill = ServerProviderSkill {
+                        name,
+                        description: None,
+                        path: String::new(),
+                        scope: None,
+                        enabled: true,
+                        display_name: None,
+                        short_description: None,
+                    };
+                    content = content.child(
+                        self.composer_skill_chip(format_provider_skill_display_name(&skill)),
+                    );
+                }
+                ComposerPromptSegment::TerminalContext { .. } => {
+                    content = content.child(self.composer_inline_chip(
+                        "Terminal context".to_string(),
+                        "icons/terminal.svg",
+                    ));
+                }
+            }
+        }
+        content.into_any_element()
+    }
+
     fn composer_prompt_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let active_pending_approval = self.snapshot.active_pending_approval();
         let active_pending_user_input_progress = self.snapshot.active_pending_user_input_progress();
@@ -3237,6 +3352,9 @@ impl R3Shell {
                 .as_ref()
                 .map(|progress| progress.custom_answer.trim().is_empty())
                 .unwrap_or(true);
+        let tokenize_prompt = !placeholder
+            && active_pending_approval.is_none()
+            && active_pending_user_input_progress.is_none();
 
         div()
             .id("chat-composer-input")
@@ -3273,7 +3391,7 @@ impl R3Shell {
                     } else {
                         self.theme.foreground
                     })
-                    .child(text),
+                    .child(self.composer_prompt_content(&text, tokenize_prompt)),
             )
     }
 
@@ -9137,6 +9255,9 @@ pub fn open_main_window(cx: &mut App) {
         Ok("command-palette") => (R3Screen::Empty, true),
         Ok("draft") | Ok("chat-composer") => (R3Screen::Draft, false),
         Ok("composer-menu") | Ok("slash-menu") => (R3Screen::ComposerCommandMenu, false),
+        Ok("composer-inline-tokens") | Ok("inline-tokens") => {
+            (R3Screen::ComposerInlineTokens, false)
+        }
         Ok("active-chat") | Ok("chat") => (R3Screen::ActiveChat, false),
         Ok("running-turn") | Ok("running") => (R3Screen::RunningTurn, false),
         Ok("pending-approval") | Ok("approval") => (R3Screen::PendingApproval, false),
@@ -9164,7 +9285,9 @@ pub fn open_main_window(cx: &mut App) {
                 R3Screen::RunningTurn => AppSnapshot::running_turn_reference_state(),
                 R3Screen::PendingApproval => AppSnapshot::pending_approval_reference_state(),
                 R3Screen::PendingUserInput => AppSnapshot::pending_user_input_reference_state(),
-                R3Screen::ComposerCommandMenu => AppSnapshot::draft_reference_state(),
+                R3Screen::ComposerCommandMenu | R3Screen::ComposerInlineTokens => {
+                    AppSnapshot::draft_reference_state()
+                }
                 R3Screen::TerminalDrawer => AppSnapshot::terminal_drawer_reference_state(),
                 R3Screen::DiffPanel => AppSnapshot::diff_panel_reference_state(),
                 R3Screen::BranchToolbar => AppSnapshot::branch_toolbar_reference_state(),

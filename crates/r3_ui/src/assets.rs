@@ -67,6 +67,10 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/file-json.svg"),
     ),
     (
+        "icons/file-type-light-agents.svg",
+        include_bytes!("../assets/icons/file-type-light-agents.svg"),
+    ),
+    (
         "icons/flask-conical.svg",
         include_bytes!("../assets/icons/flask-conical.svg"),
     ),
@@ -174,6 +178,10 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/settings-2.svg"),
     ),
     (
+        "icons/skill-chip.svg",
+        include_bytes!("../assets/icons/skill-chip.svg"),
+    ),
+    (
         "icons/sparkles.svg",
         include_bytes!("../assets/icons/sparkles.svg"),
     ),
@@ -278,6 +286,7 @@ mod tests {
             "columns-2.svg",
             "cursor.svg",
             "diff.svg",
+            "file-type-light-agents.svg",
             "flask-conical.svg",
             "folder-closed.svg",
             "folder-plus.svg",
@@ -297,6 +306,7 @@ mod tests {
             "play.svg",
             "rotate-ccw.svg",
             "rows-3.svg",
+            "skill-chip.svg",
             "square-pen.svg",
             "square-split-horizontal.svg",
             "square-terminal.svg",
