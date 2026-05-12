@@ -44,6 +44,7 @@ These screens have automated reference captures and native GPUI comparisons:
 | Settings back navigation | 2% |
 | Settings theme menu | 6% |
 | Settings dark selection | 6% |
+| Empty/no active thread, dark theme | 2% |
 
 The strongest parity areas are the empty shell, draft chat chrome, archive empty state, and settings back path. The weakest implemented area is still Keybindings because it is a dense editable table with browser-vs-GPUI font, border, and control rendering differences.
 

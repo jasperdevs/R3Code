@@ -28,9 +28,13 @@ cargo run -p xtask -- capture-reference-browser
 The task currently captures:
 
 - `reference/screenshots/upstream-empty-reference.png`
+- `reference/screenshots/upstream-empty-dark-reference.png`
 - `reference/screenshots/upstream-command-palette-reference.png`
 - `reference/screenshots/upstream-draft-reference.png`
+- `reference/screenshots/upstream-composer-focused-reference.png`
 - `reference/screenshots/upstream-composer-menu-reference.png`
+- `reference/screenshots/upstream-composer-inline-tokens-reference.png`
+- `reference/screenshots/upstream-provider-model-picker-reference.png`
 - `reference/screenshots/upstream-settings-reference.png`
 - `reference/screenshots/upstream-settings-keybindings-reference.png`
 - `reference/screenshots/upstream-settings-providers-reference.png`
@@ -62,7 +66,7 @@ Run the current implemented-screen gate:
 cargo run -p xtask -- check-parity --allow-window-capture
 ```
 
-The app defaults to `R3CODE_THEME=system`, which resolves from GPUI's OS window appearance. The parity gate forces `light` for screenshots that compare against the current light reference captures and also captures a dark R3Code smoke screenshot.
+The app defaults to `R3CODE_THEME=system`, which resolves from GPUI's OS window appearance. The parity gate forces `light` for screenshots that compare against the current light reference captures and forces `dark` for the dark empty-shell reference.
 Native R3Code captures move the GPUI window off-screen immediately, drive clickable controls with window messages, and capture the GPU surface through Windows Graphics Capture so parity runs do not steal the foreground cursor or cover the active desktop.
 The explicit `--allow-window-capture` flag is required so normal xtask usage cannot launch capture windows accidentally.
 
@@ -416,6 +420,23 @@ Last measured result: `5.275%`.
 The dark settings comparison uses a slightly higher channel tolerance because the Chromium reference and GPUI render the same dark text with different subpixel antialiasing, while the layout and pixel-percent gate remain unchanged.
 
 The R3Code capture opens settings from forced light mode, opens the native theme select with the settings keyboard path, moves from `Light` to `Dark` with one Down arrow press, selects it with `Enter`, and screenshots the dark settings surface.
+
+## Current Dark Empty-State Baseline
+
+Reference: `reference/screenshots/upstream-empty-dark-reference.png`
+
+R3Code capture: `reference/screenshots/r3code-dark-window.png`
+
+Allowed brand-copy difference: `--ignore-rect 0,0,120,45`
+
+Current measured diff:
+
+```text
+cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme dark --output reference\screenshots\r3code-dark-window.png
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-empty-dark-reference.png --actual reference\screenshots\r3code-dark-window.png --channel-tolerance 11 --ignore-rect 0,0,120,45 --max-different-pixels-percent 2
+```
+
+Last measured result: `1.313%`.
 
 ## Implementation Rule
 

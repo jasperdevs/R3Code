@@ -604,6 +604,18 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
         allow_window_capture: true,
         ..CaptureR3CodeOptions::default()
     })?;
+    compare_screenshots(CompareOptions {
+        expected: resolve_repo_path("reference/screenshots/upstream-empty-dark-reference.png"),
+        actual: resolve_repo_path("reference/screenshots/r3code-dark-window.png"),
+        max_different_pixels_percent: 2.0,
+        channel_tolerance: 11,
+        ignore_rects: vec![Rect {
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 45,
+        }],
+    })?;
 
     println!("R3Code parity checks passed.");
     Ok(())
@@ -1383,7 +1395,7 @@ fn capture_reference_browser(options: CaptureReferenceOptions) -> Result<()> {
         fs::write(
             options.output_dir.join("CAPTURE_MANIFEST.txt"),
             format!(
-                "Upstream reference repository: {}\nReference commit: {}\nIsolated reference home: {}\nOutput directory: {}\nCaptured:\n- upstream-empty-reference.png\n- upstream-command-palette-reference.png\n- upstream-draft-reference.png\n- upstream-composer-focused-reference.png\n- upstream-composer-menu-reference.png\n- upstream-composer-inline-tokens-reference.png\n- upstream-provider-model-picker-reference.png\n- upstream-settings-reference.png\n- upstream-settings-keybindings-reference.png\n- upstream-settings-providers-reference.png\n- upstream-settings-source-control-reference.png\n- upstream-settings-connections-reference.png\n- upstream-settings-diagnostics-reference.png\n- upstream-settings-archive-reference.png\n- upstream-settings-theme-menu-reference.png\n- upstream-settings-dark-reference.png\n",
+                "Upstream reference repository: {}\nReference commit: {}\nIsolated reference home: {}\nOutput directory: {}\nCaptured:\n- upstream-empty-reference.png\n- upstream-command-palette-reference.png\n- upstream-draft-reference.png\n- upstream-composer-focused-reference.png\n- upstream-composer-menu-reference.png\n- upstream-composer-inline-tokens-reference.png\n- upstream-provider-model-picker-reference.png\n- upstream-settings-reference.png\n- upstream-settings-keybindings-reference.png\n- upstream-settings-providers-reference.png\n- upstream-settings-source-control-reference.png\n- upstream-settings-connections-reference.png\n- upstream-settings-diagnostics-reference.png\n- upstream-settings-archive-reference.png\n- upstream-settings-theme-menu-reference.png\n- upstream-settings-dark-reference.png\n- upstream-empty-dark-reference.png\n",
                 options.repo.display(),
                 commit.trim(),
                 options.home.display(),
@@ -1551,6 +1563,10 @@ const path = require("path");
   await page.getByRole("option", { name: "Dark" }).click();
   await page.waitForFunction(() => document.documentElement.classList.contains("dark"), undefined, { timeout: 15000 });
   await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-settings-dark-reference.png"), fullPage: true });
+  await page.goto(appOrigin, { waitUntil: "networkidle", timeout: 30000 });
+  await page.getByText("Pick a thread to continue").waitFor({ timeout: 15000 });
+  await page.waitForFunction(() => document.documentElement.classList.contains("dark"), undefined, { timeout: 15000 });
+  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-empty-dark-reference.png"), fullPage: true });
   await browser.close();
 })().catch((error) => {
   console.error(error);
