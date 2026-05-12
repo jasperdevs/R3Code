@@ -49,7 +49,7 @@ These T3 surfaces have no complete Rust implementation yet:
 | Active chat with real user/assistant turns | `apps/web/src/components/ChatView.tsx`, `MessagesTimeline.tsx` | Mock-only |
 | Running agent turn, work log, tool output | `apps/web/src/session-logic.ts`, `MessagesTimeline.tsx` | Missing |
 | Pending approval and pending user input panels | `ChatComposer.tsx`, `ComposerPendingApproval*`, `pendingUserInput.ts` | Partial static GPUI smoke |
-| Terminal drawer and xterm integration | `ThreadTerminalDrawer.tsx`, `terminalStateStore.ts` | Missing |
+| Terminal drawer and xterm integration | `ThreadTerminalDrawer.tsx`, `terminalStateStore.ts` | Partial static GPUI smoke |
 | Diff panel and changed-file browsing | `DiffPanel.tsx`, `diffRouteSearch.ts` | Missing |
 | Branch/worktree toolbar | `BranchToolbar.tsx`, `BranchToolbar.logic.ts` | Missing |
 | Provider/model picker behavior | `ProviderModelPicker.tsx`, `ModelPickerContent.tsx`, `providerModels.ts` | Static footer only |
@@ -69,7 +69,7 @@ These upstream backend/runtime areas have no Rust equivalent yet:
 | Persistence and migrations | `apps/server/src/persistence` | Missing |
 | Project discovery/setup/scripts | `apps/server/src/project`, `workspace` | Missing |
 | Git/source control/PR workflow | `apps/server/src/sourceControl`, `git`, `vcs` | Missing |
-| Terminal process management | `apps/server/src/terminal`, `processRunner.ts` | Missing |
+| Terminal process management | `apps/server/src/terminal`, `processRunner.ts` | Missing runtime, UI state contracts only |
 | Auth/pairing/saved environments | `apps/server/src/auth`, `apps/web/src/environments` | Missing |
 | Desktop IPC/menu/bootstrap | `apps/desktop/src` | Missing |
 | Shared contracts and generated schemas | `packages/contracts`, `effect-codex-app-server` | Small hand-written subset only |

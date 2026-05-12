@@ -5,8 +5,10 @@ use gpui::{
     Window, div, hsla, point, px, svg,
 };
 use r3_core::{
-    APP_NAME, AppSnapshot, ChatMessage, PendingApproval, PendingUserInputProgress, ProjectSummary,
-    ThreadStatus, set_pending_user_input_custom_answer, toggle_pending_user_input_option_selection,
+    APP_NAME, AppSnapshot, ChatMessage, MAX_TERMINALS_PER_GROUP, PendingApproval,
+    PendingUserInputProgress, ProjectSummary, TerminalEvent, ThreadStatus, close_thread_terminal,
+    new_thread_terminal, set_pending_user_input_custom_answer, set_thread_active_terminal,
+    set_thread_terminal_open, split_thread_terminal, toggle_pending_user_input_option_selection,
 };
 
 use crate::theme::{FONT_FAMILY, MONO_FONT_FAMILY, SIDEBAR_MIN_WIDTH, Theme, ThemeMode};
@@ -126,6 +128,7 @@ pub enum R3Screen {
     ActiveChat,
     PendingApproval,
     PendingUserInput,
+    TerminalDrawer,
     Settings,
 }
 
@@ -427,7 +430,8 @@ impl Render for R3Shell {
             | R3Screen::Draft
             | R3Screen::ActiveChat
             | R3Screen::PendingApproval
-            | R3Screen::PendingUserInput => root.child(self.sidebar(cx)).child(self.main_panel(cx)),
+            | R3Screen::PendingUserInput
+            | R3Screen::TerminalDrawer => root.child(self.sidebar(cx)).child(self.main_panel(cx)),
             R3Screen::Settings => root
                 .child(self.settings_sidebar(cx))
                 .child(self.settings_panel(cx)),
@@ -642,8 +646,12 @@ impl R3Shell {
             .flex_col()
             .flex_1()
             .min_w_0()
-            .child(self.toolbar())
+            .child(self.toolbar(cx))
             .child(self.timeline());
+
+        if self.snapshot.terminal_open() {
+            panel = panel.child(self.terminal_drawer(cx));
+        }
 
         if self.snapshot.renders_chat_view() {
             panel = panel.child(self.composer(cx));
@@ -652,7 +660,7 @@ impl R3Shell {
         panel
     }
 
-    fn toolbar(&self) -> impl IntoElement {
+    fn toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let renders_chat_view = self.snapshot.renders_chat_view();
         let toolbar_title = if renders_chat_view {
             self.snapshot.active_thread_title().to_string()
@@ -711,8 +719,12 @@ impl R3Shell {
                     .flex()
                     .items_center()
                     .gap_2()
-                    .child(self.toolbar_icon_button("thread-terminal", "icons/square-terminal.svg"))
-                    .child(self.toolbar_icon_button("thread-diff", "icons/diff.svg")),
+                    .child(self.toolbar_icon_button(
+                        "thread-terminal",
+                        "icons/square-terminal.svg",
+                        cx,
+                    ))
+                    .child(self.toolbar_icon_button("thread-diff", "icons/diff.svg", cx)),
             );
         }
 
@@ -876,6 +888,459 @@ impl R3Shell {
                     .text_color(self.theme.muted_foreground.opacity(0.30))
                     .child("12:00 PM"),
             )
+    }
+
+    fn terminal_drawer(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let state = &self.snapshot.terminal_state;
+        let active_group = state
+            .terminal_groups
+            .iter()
+            .find(|group| group.id == state.active_terminal_group_id)
+            .or_else(|| {
+                state.terminal_groups.iter().find(|group| {
+                    group
+                        .terminal_ids
+                        .iter()
+                        .any(|terminal_id| terminal_id == &state.active_terminal_id)
+                })
+            })
+            .or_else(|| state.terminal_groups.first());
+        let visible_terminal_ids = active_group
+            .map(|group| group.terminal_ids.clone())
+            .unwrap_or_else(|| vec![state.active_terminal_id.clone()]);
+        let has_terminal_sidebar = state.terminal_ids.len() > 1;
+
+        div()
+            .id("thread-terminal-drawer")
+            .relative()
+            .flex()
+            .flex_col()
+            .min_w_0()
+            .flex_shrink_0()
+            .overflow_hidden()
+            .border_t_1()
+            .border_color(self.theme.border.opacity(0.80))
+            .bg(self.theme.background)
+            .h(px(state.terminal_height as f32))
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0()
+                    .h(px(6.0))
+                    .cursor(CursorStyle::ResizeUpDown),
+            )
+            .when(!has_terminal_sidebar, |drawer| {
+                drawer.child(self.terminal_floating_actions(cx))
+            })
+            .child(
+                div().min_h_0().w_full().flex_1().child(
+                    div()
+                        .flex()
+                        .h_full()
+                        .min_h_0()
+                        .w_full()
+                        .gap(if has_terminal_sidebar {
+                            px(6.0)
+                        } else {
+                            px(0.0)
+                        })
+                        .child(self.terminal_split_view(&visible_terminal_ids, cx))
+                        .when(has_terminal_sidebar, |row| {
+                            row.child(self.terminal_sidebar(cx))
+                        }),
+                ),
+            )
+    }
+
+    fn terminal_split_view(
+        &self,
+        visible_terminal_ids: &[String],
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let mut row = div().flex().h_full().min_w_0().flex_1().overflow_hidden();
+        for (index, terminal_id) in visible_terminal_ids.iter().enumerate() {
+            let terminal_id_for_click = terminal_id.clone();
+            row = row.child(
+                div()
+                    .id(SharedString::from(format!("terminal-pane-{index}")))
+                    .min_h_0()
+                    .min_w_0()
+                    .flex_1()
+                    .border_l_1()
+                    .border_color(
+                        if terminal_id == &self.snapshot.terminal_state.active_terminal_id {
+                            self.theme.border
+                        } else {
+                            self.theme.border.opacity(0.70)
+                        },
+                    )
+                    .when(index == 0, |pane| pane.border_l_0())
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.snapshot.terminal_state = set_thread_active_terminal(
+                            &this.snapshot.terminal_state,
+                            &terminal_id_for_click,
+                        );
+                        cx.notify();
+                    }))
+                    .child(
+                        div()
+                            .h_full()
+                            .p_1()
+                            .child(self.terminal_viewport(terminal_id, index)),
+                    ),
+            );
+        }
+        row
+    }
+
+    fn terminal_viewport(&self, terminal_id: &str, index: usize) -> impl IntoElement {
+        let active = terminal_id == self.snapshot.terminal_state.active_terminal_id;
+        let mut body = div()
+            .h_full()
+            .rounded(px(4.0))
+            .border_1()
+            .border_color(if active {
+                self.theme.border
+            } else {
+                self.theme.border.opacity(0.70)
+            })
+            .bg(self.theme.card)
+            .p_3()
+            .font_family(SharedString::from(MONO_FONT_FAMILY))
+            .text_size(px(12.0))
+            .text_color(self.theme.foreground)
+            .overflow_hidden()
+            .child(
+                div()
+                    .mb_2()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_size(px(11.0))
+                    .text_color(self.theme.muted_foreground)
+                    .child(
+                        svg()
+                            .path("icons/square-terminal.svg")
+                            .size_3()
+                            .text_color(self.theme.muted_foreground),
+                    )
+                    .child(format!("Terminal {}", index + 1)),
+            );
+
+        let lines = self.terminal_lines_for(terminal_id);
+        for line in lines {
+            body = body.child(div().mb_1().child(line));
+        }
+
+        body.child(
+            div()
+                .mt_1()
+                .flex()
+                .items_center()
+                .gap_1()
+                .child(">")
+                .child(div().w(px(7.0)).h(px(14.0)).bg(self.theme.foreground)),
+        )
+    }
+
+    fn terminal_lines_for(&self, terminal_id: &str) -> Vec<String> {
+        let mut lines = Vec::new();
+        if let Some(context) = self.snapshot.terminal_launch_context.as_ref() {
+            lines.push(format!("cwd {}", context.cwd));
+        }
+        for entry in &self.snapshot.terminal_event_entries {
+            if entry.event.terminal_id() != terminal_id {
+                continue;
+            }
+            match &entry.event {
+                TerminalEvent::Started { snapshot, .. }
+                | TerminalEvent::Restarted { snapshot, .. } => {
+                    lines.push(format!(
+                        "[terminal] started pid {}",
+                        snapshot.pid.unwrap_or(0)
+                    ));
+                }
+                TerminalEvent::Output { data, .. } => {
+                    for line in data.lines() {
+                        if !line.trim().is_empty() {
+                            lines.push(line.to_string());
+                        }
+                    }
+                }
+                TerminalEvent::Activity {
+                    has_running_subprocess,
+                    ..
+                } => {
+                    if *has_running_subprocess {
+                        lines.push("[terminal] process running".to_string());
+                    }
+                }
+                TerminalEvent::Error { message, .. } => {
+                    lines.push(format!("[terminal] {message}"));
+                }
+                TerminalEvent::Cleared { .. } => {
+                    lines.clear();
+                }
+                TerminalEvent::Exited {
+                    exit_code,
+                    exit_signal,
+                    ..
+                } => {
+                    lines.push(format!(
+                        "[terminal] exited {}",
+                        exit_signal
+                            .clone()
+                            .or_else(|| exit_code.map(|code| code.to_string()))
+                            .unwrap_or_else(|| "unknown".to_string())
+                    ));
+                }
+            }
+        }
+        if lines.is_empty() {
+            lines.push("Terminal ready.".to_string());
+        }
+        lines
+    }
+
+    fn terminal_floating_actions(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div().absolute().right_2().top_2().child(
+            div()
+                .flex()
+                .items_center()
+                .overflow_hidden()
+                .rounded(px(6.0))
+                .border_1()
+                .border_color(self.theme.border.opacity(0.80))
+                .bg(self.theme.background.opacity(0.70))
+                .child(self.terminal_action_button(
+                    "terminal-split",
+                    "icons/square-split-horizontal.svg",
+                    cx,
+                ))
+                .child(div().h(px(16.0)).w(px(1.0)).bg(self.theme.border))
+                .child(self.terminal_action_button("terminal-new", "icons/plus.svg", cx))
+                .child(div().h(px(16.0)).w(px(1.0)).bg(self.theme.border))
+                .child(self.terminal_action_button("terminal-close", "icons/trash-2.svg", cx)),
+        )
+    }
+
+    fn terminal_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut sidebar = div()
+            .flex()
+            .flex_col()
+            .w(px(144.0))
+            .min_w(px(144.0))
+            .border_1()
+            .border_color(self.theme.border.opacity(0.70))
+            .bg(self.theme.accent.opacity(0.10))
+            .child(
+                div()
+                    .flex()
+                    .h(px(22.0))
+                    .items_center()
+                    .justify_end()
+                    .border_b_1()
+                    .border_color(self.theme.border.opacity(0.70))
+                    .child(self.terminal_action_button(
+                        "terminal-sidebar-split",
+                        "icons/square-split-horizontal.svg",
+                        cx,
+                    ))
+                    .child(self.terminal_action_button(
+                        "terminal-sidebar-new",
+                        "icons/plus.svg",
+                        cx,
+                    ))
+                    .child(self.terminal_action_button(
+                        "terminal-sidebar-close",
+                        "icons/trash-2.svg",
+                        cx,
+                    )),
+            );
+
+        let show_group_headers = self.snapshot.terminal_state.terminal_groups.len() > 1
+            || self
+                .snapshot
+                .terminal_state
+                .terminal_groups
+                .iter()
+                .any(|group| group.terminal_ids.len() > 1);
+
+        let mut groups = div()
+            .id("terminal-sidebar-groups")
+            .flex()
+            .flex_col()
+            .min_h_0()
+            .flex_1()
+            .overflow_y_scroll()
+            .px_1()
+            .py_1();
+        for (group_index, group) in self
+            .snapshot
+            .terminal_state
+            .terminal_groups
+            .iter()
+            .enumerate()
+        {
+            let group_active = group
+                .terminal_ids
+                .iter()
+                .any(|id| id == &self.snapshot.terminal_state.active_terminal_id);
+            let group_active_terminal_id = if group_active {
+                self.snapshot.terminal_state.active_terminal_id.clone()
+            } else {
+                group.terminal_ids[0].clone()
+            };
+            let mut group_node = div().pb_0p5();
+            if show_group_headers {
+                let group_active_terminal_id = group_active_terminal_id.clone();
+                group_node = group_node.child(
+                    div()
+                        .id(SharedString::from(format!("terminal-group-{group_index}")))
+                        .flex()
+                        .w_full()
+                        .rounded(px(4.0))
+                        .px_1()
+                        .py_0p5()
+                        .text_size(px(10.0))
+                        .text_color(if group_active {
+                            self.theme.foreground
+                        } else {
+                            self.theme.muted_foreground
+                        })
+                        .bg(if group_active {
+                            self.theme.accent.opacity(0.70)
+                        } else {
+                            self.theme.background.alpha(0.0)
+                        })
+                        .cursor_pointer()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.snapshot.terminal_state = set_thread_active_terminal(
+                                &this.snapshot.terminal_state,
+                                &group_active_terminal_id,
+                            );
+                            cx.notify();
+                        }))
+                        .child(if group.terminal_ids.len() > 1 {
+                            format!("SPLIT {}", group_index + 1)
+                        } else {
+                            format!("TERMINAL {}", group_index + 1)
+                        }),
+                );
+            }
+
+            let mut terminals = div().ml_1().border_l_1().border_color(self.theme.border);
+            for terminal_id in &group.terminal_ids {
+                terminals = terminals.child(self.terminal_sidebar_row(terminal_id, cx));
+            }
+            groups = groups.child(group_node.child(terminals));
+        }
+        sidebar = sidebar.child(groups);
+        sidebar
+    }
+
+    fn terminal_sidebar_row(&self, terminal_id: &str, cx: &mut Context<Self>) -> impl IntoElement {
+        let terminal_id_for_click = terminal_id.to_string();
+        let active = terminal_id == self.snapshot.terminal_state.active_terminal_id;
+        let label = self.terminal_label(terminal_id);
+        div()
+            .id(SharedString::from(format!(
+                "terminal-sidebar-row-{terminal_id}"
+            )))
+            .group("terminal-sidebar-row")
+            .flex()
+            .items_center()
+            .gap_1()
+            .rounded(px(4.0))
+            .px_1()
+            .py_0p5()
+            .text_size(px(11.0))
+            .text_color(if active {
+                self.theme.foreground
+            } else {
+                self.theme.muted_foreground
+            })
+            .bg(if active {
+                self.theme.accent
+            } else {
+                self.theme.background.alpha(0.0)
+            })
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.snapshot.terminal_state = set_thread_active_terminal(
+                    &this.snapshot.terminal_state,
+                    &terminal_id_for_click,
+                );
+                cx.notify();
+            }))
+            .child(
+                svg()
+                    .path("icons/square-terminal.svg")
+                    .size_3()
+                    .flex_shrink_0()
+                    .text_color(if active {
+                        self.theme.foreground
+                    } else {
+                        self.theme.muted_foreground
+                    }),
+            )
+            .child(div().min_w_0().flex_1().overflow_hidden().child(label))
+    }
+
+    fn terminal_action_button(
+        &self,
+        id: &'static str,
+        icon_path: &'static str,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id(id)
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(24.0))
+            .h(px(22.0))
+            .text_color(self.theme.foreground.opacity(0.90))
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.handle_terminal_action(id, cx);
+            }))
+            .child(
+                svg()
+                    .path(icon_path)
+                    .size_3()
+                    .text_color(self.theme.foreground.opacity(0.90)),
+            )
+    }
+
+    fn terminal_label(&self, terminal_id: &str) -> String {
+        let index = self
+            .snapshot
+            .terminal_state
+            .terminal_ids
+            .iter()
+            .position(|id| id == terminal_id)
+            .unwrap_or(0);
+        format!("Terminal {}", index + 1)
+    }
+
+    fn next_terminal_id(&self) -> String {
+        let mut index = self.snapshot.terminal_state.terminal_ids.len() + 1;
+        loop {
+            let candidate = format!("terminal-{index}");
+            if !self
+                .snapshot
+                .terminal_state
+                .terminal_ids
+                .iter()
+                .any(|id| id == &candidate)
+            {
+                return candidate;
+            }
+            index += 1;
+        }
     }
 
     fn composer(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -4677,7 +5142,12 @@ impl R3Shell {
             )
     }
 
-    fn toolbar_icon_button(&self, id: &'static str, icon_path: &'static str) -> impl IntoElement {
+    fn toolbar_icon_button(
+        &self,
+        id: &'static str,
+        icon_path: &'static str,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         div()
             .id(id)
             .flex()
@@ -4690,6 +5160,15 @@ impl R3Shell {
             .border_color(self.theme.border)
             .bg(self.theme.background)
             .text_color(self.theme.muted_foreground)
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if id == "thread-terminal" {
+                    let open = !this.snapshot.terminal_open();
+                    this.snapshot.terminal_state =
+                        set_thread_terminal_open(&this.snapshot.terminal_state, open);
+                    cx.notify();
+                }
+            }))
             .child(
                 svg()
                     .path(icon_path)
@@ -5062,6 +5541,38 @@ impl R3Shell {
             .snapshot
             .active_pending_user_input_question_index
             .saturating_sub(1);
+        cx.notify();
+    }
+
+    fn handle_terminal_action(&mut self, id: &str, cx: &mut Context<Self>) {
+        match id {
+            "terminal-split" | "terminal-sidebar-split" => {
+                let active_group_size = self
+                    .snapshot
+                    .terminal_state
+                    .terminal_groups
+                    .iter()
+                    .find(|group| group.id == self.snapshot.terminal_state.active_terminal_group_id)
+                    .map(|group| group.terminal_ids.len())
+                    .unwrap_or(1);
+                if active_group_size < MAX_TERMINALS_PER_GROUP {
+                    let terminal_id = self.next_terminal_id();
+                    self.snapshot.terminal_state =
+                        split_thread_terminal(&self.snapshot.terminal_state, &terminal_id);
+                }
+            }
+            "terminal-new" | "terminal-sidebar-new" => {
+                let terminal_id = self.next_terminal_id();
+                self.snapshot.terminal_state =
+                    new_thread_terminal(&self.snapshot.terminal_state, &terminal_id);
+            }
+            "terminal-close" | "terminal-sidebar-close" => {
+                let terminal_id = self.snapshot.terminal_state.active_terminal_id.clone();
+                self.snapshot.terminal_state =
+                    close_thread_terminal(&self.snapshot.terminal_state, &terminal_id);
+            }
+            _ => {}
+        }
         cx.notify();
     }
 
@@ -5464,6 +5975,7 @@ pub fn open_main_window(cx: &mut App) {
         Ok("active-chat") | Ok("chat") => (R3Screen::ActiveChat, false),
         Ok("pending-approval") | Ok("approval") => (R3Screen::PendingApproval, false),
         Ok("pending-user-input") | Ok("user-input") => (R3Screen::PendingUserInput, false),
+        Ok("terminal-drawer") | Ok("terminal") => (R3Screen::TerminalDrawer, false),
         Ok("settings") => (R3Screen::Settings, false),
         _ => (R3Screen::Empty, false),
     };
@@ -5481,6 +5993,7 @@ pub fn open_main_window(cx: &mut App) {
                 R3Screen::ActiveChat => AppSnapshot::mock_reference_state(),
                 R3Screen::PendingApproval => AppSnapshot::pending_approval_reference_state(),
                 R3Screen::PendingUserInput => AppSnapshot::pending_user_input_reference_state(),
+                R3Screen::TerminalDrawer => AppSnapshot::terminal_drawer_reference_state(),
                 R3Screen::Empty | R3Screen::Settings => AppSnapshot::empty_reference_state(),
             };
             let shell = cx.new(|cx| {

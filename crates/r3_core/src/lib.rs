@@ -489,6 +489,634 @@ pub fn derive_pending_user_input_progress(
     }
 }
 
+pub const DEFAULT_THREAD_TERMINAL_HEIGHT: u32 = 280;
+pub const DEFAULT_THREAD_TERMINAL_ID: &str = "default";
+pub const MAX_TERMINALS_PER_GROUP: usize = 4;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadTerminalGroup {
+    pub id: String,
+    pub terminal_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadTerminalState {
+    pub terminal_open: bool,
+    pub terminal_height: u32,
+    pub terminal_ids: Vec<String>,
+    pub running_terminal_ids: Vec<String>,
+    pub active_terminal_id: String,
+    pub terminal_groups: Vec<ThreadTerminalGroup>,
+    pub active_terminal_group_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadTerminalLaunchContext {
+    pub cwd: String,
+    pub worktree_path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalSessionSnapshot {
+    pub thread_id: String,
+    pub terminal_id: String,
+    pub cwd: String,
+    pub worktree_path: Option<String>,
+    pub status: String,
+    pub pid: Option<u32>,
+    pub history: String,
+    pub exit_code: Option<i32>,
+    pub exit_signal: Option<String>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TerminalEvent {
+    Output {
+        thread_id: String,
+        terminal_id: String,
+        created_at: String,
+        data: String,
+    },
+    Activity {
+        thread_id: String,
+        terminal_id: String,
+        created_at: String,
+        has_running_subprocess: bool,
+    },
+    Error {
+        thread_id: String,
+        terminal_id: String,
+        created_at: String,
+        message: String,
+    },
+    Cleared {
+        thread_id: String,
+        terminal_id: String,
+        created_at: String,
+    },
+    Exited {
+        thread_id: String,
+        terminal_id: String,
+        created_at: String,
+        exit_code: Option<i32>,
+        exit_signal: Option<String>,
+    },
+    Started {
+        thread_id: String,
+        terminal_id: String,
+        created_at: String,
+        snapshot: TerminalSessionSnapshot,
+    },
+    Restarted {
+        thread_id: String,
+        terminal_id: String,
+        created_at: String,
+        snapshot: TerminalSessionSnapshot,
+    },
+}
+
+impl TerminalEvent {
+    pub fn terminal_id(&self) -> &str {
+        match self {
+            Self::Output { terminal_id, .. }
+            | Self::Activity { terminal_id, .. }
+            | Self::Error { terminal_id, .. }
+            | Self::Cleared { terminal_id, .. }
+            | Self::Exited { terminal_id, .. }
+            | Self::Started { terminal_id, .. }
+            | Self::Restarted { terminal_id, .. } => terminal_id,
+        }
+    }
+
+    pub fn created_at(&self) -> &str {
+        match self {
+            Self::Output { created_at, .. }
+            | Self::Activity { created_at, .. }
+            | Self::Error { created_at, .. }
+            | Self::Cleared { created_at, .. }
+            | Self::Exited { created_at, .. }
+            | Self::Started { created_at, .. }
+            | Self::Restarted { created_at, .. } => created_at,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalEventEntry {
+    pub id: u64,
+    pub event: TerminalEvent,
+}
+
+pub fn terminal_group_id(terminal_id: &str) -> String {
+    format!("group-{terminal_id}")
+}
+
+pub fn create_default_thread_terminal_state() -> ThreadTerminalState {
+    ThreadTerminalState {
+        terminal_open: false,
+        terminal_height: DEFAULT_THREAD_TERMINAL_HEIGHT,
+        terminal_ids: vec![DEFAULT_THREAD_TERMINAL_ID.to_string()],
+        running_terminal_ids: Vec::new(),
+        active_terminal_id: DEFAULT_THREAD_TERMINAL_ID.to_string(),
+        terminal_groups: vec![ThreadTerminalGroup {
+            id: terminal_group_id(DEFAULT_THREAD_TERMINAL_ID),
+            terminal_ids: vec![DEFAULT_THREAD_TERMINAL_ID.to_string()],
+        }],
+        active_terminal_group_id: terminal_group_id(DEFAULT_THREAD_TERMINAL_ID),
+    }
+}
+
+fn normalize_terminal_ids(terminal_ids: &[String]) -> Vec<String> {
+    let mut normalized = Vec::new();
+    for terminal_id in terminal_ids {
+        let trimmed = terminal_id.trim();
+        if trimmed.is_empty() || normalized.iter().any(|id| id == trimmed) {
+            continue;
+        }
+        normalized.push(trimmed.to_string());
+    }
+    if normalized.is_empty() {
+        normalized.push(DEFAULT_THREAD_TERMINAL_ID.to_string());
+    }
+    normalized
+}
+
+fn normalize_running_terminal_ids(
+    running_terminal_ids: &[String],
+    terminal_ids: &[String],
+) -> Vec<String> {
+    let mut normalized = Vec::new();
+    for terminal_id in running_terminal_ids {
+        let trimmed = terminal_id.trim();
+        if trimmed.is_empty()
+            || !terminal_ids.iter().any(|id| id == trimmed)
+            || normalized.iter().any(|id| id == trimmed)
+        {
+            continue;
+        }
+        normalized.push(trimmed.to_string());
+    }
+    normalized
+}
+
+fn assign_unique_terminal_group_id(base_id: &str, used_group_ids: &mut Vec<String>) -> String {
+    let base_id = if base_id.trim().is_empty() {
+        terminal_group_id(DEFAULT_THREAD_TERMINAL_ID)
+    } else {
+        base_id.trim().to_string()
+    };
+    let mut candidate = base_id.clone();
+    let mut index = 2;
+    while used_group_ids.iter().any(|id| id == &candidate) {
+        candidate = format!("{base_id}-{index}");
+        index += 1;
+    }
+    used_group_ids.push(candidate.clone());
+    candidate
+}
+
+fn normalize_terminal_group_ids(terminal_ids: &[String]) -> Vec<String> {
+    let mut normalized = Vec::new();
+    for terminal_id in terminal_ids {
+        let trimmed = terminal_id.trim();
+        if trimmed.is_empty() || normalized.iter().any(|id| id == trimmed) {
+            continue;
+        }
+        normalized.push(trimmed.to_string());
+    }
+    normalized
+}
+
+fn normalize_terminal_groups(
+    terminal_groups: &[ThreadTerminalGroup],
+    terminal_ids: &[String],
+) -> Vec<ThreadTerminalGroup> {
+    let mut assigned_terminal_ids = Vec::<String>::new();
+    let mut used_group_ids = Vec::<String>::new();
+    let mut next_groups = Vec::<ThreadTerminalGroup>::new();
+
+    for group in terminal_groups {
+        let mut group_terminal_ids = Vec::new();
+        for terminal_id in normalize_terminal_group_ids(&group.terminal_ids) {
+            if !terminal_ids.iter().any(|id| id == &terminal_id)
+                || assigned_terminal_ids.iter().any(|id| id == &terminal_id)
+            {
+                continue;
+            }
+            assigned_terminal_ids.push(terminal_id.clone());
+            group_terminal_ids.push(terminal_id);
+        }
+        if group_terminal_ids.is_empty() {
+            continue;
+        }
+        let base_group_id = if group.id.trim().is_empty() {
+            terminal_group_id(&group_terminal_ids[0])
+        } else {
+            group.id.trim().to_string()
+        };
+        next_groups.push(ThreadTerminalGroup {
+            id: assign_unique_terminal_group_id(&base_group_id, &mut used_group_ids),
+            terminal_ids: group_terminal_ids,
+        });
+    }
+
+    for terminal_id in terminal_ids {
+        if assigned_terminal_ids
+            .iter()
+            .any(|assigned| assigned == terminal_id)
+        {
+            continue;
+        }
+        next_groups.push(ThreadTerminalGroup {
+            id: assign_unique_terminal_group_id(
+                &terminal_group_id(terminal_id),
+                &mut used_group_ids,
+            ),
+            terminal_ids: vec![terminal_id.clone()],
+        });
+    }
+
+    if next_groups.is_empty() {
+        return vec![ThreadTerminalGroup {
+            id: terminal_group_id(DEFAULT_THREAD_TERMINAL_ID),
+            terminal_ids: vec![DEFAULT_THREAD_TERMINAL_ID.to_string()],
+        }];
+    }
+    next_groups
+}
+
+fn find_terminal_group_index_by_terminal_id(
+    terminal_groups: &[ThreadTerminalGroup],
+    terminal_id: &str,
+) -> Option<usize> {
+    terminal_groups
+        .iter()
+        .position(|group| group.terminal_ids.iter().any(|id| id == terminal_id))
+}
+
+pub fn normalize_thread_terminal_state(state: &ThreadTerminalState) -> ThreadTerminalState {
+    let terminal_ids = normalize_terminal_ids(&state.terminal_ids);
+    let running_terminal_ids =
+        normalize_running_terminal_ids(&state.running_terminal_ids, &terminal_ids);
+    let active_terminal_id = if terminal_ids
+        .iter()
+        .any(|terminal_id| terminal_id == &state.active_terminal_id)
+    {
+        state.active_terminal_id.clone()
+    } else {
+        terminal_ids[0].clone()
+    };
+    let terminal_groups = normalize_terminal_groups(&state.terminal_groups, &terminal_ids);
+    let active_group_id_from_state = terminal_groups
+        .iter()
+        .any(|group| group.id == state.active_terminal_group_id)
+        .then(|| state.active_terminal_group_id.clone());
+    let active_group_id_from_terminal = terminal_groups
+        .iter()
+        .find(|group| {
+            group
+                .terminal_ids
+                .iter()
+                .any(|id| id == &active_terminal_id)
+        })
+        .map(|group| group.id.clone());
+
+    ThreadTerminalState {
+        terminal_open: state.terminal_open,
+        terminal_height: if state.terminal_height > 0 {
+            state.terminal_height
+        } else {
+            DEFAULT_THREAD_TERMINAL_HEIGHT
+        },
+        terminal_ids,
+        running_terminal_ids,
+        active_terminal_id,
+        active_terminal_group_id: active_group_id_from_state
+            .or(active_group_id_from_terminal)
+            .unwrap_or_else(|| terminal_groups[0].id.clone()),
+        terminal_groups,
+    }
+}
+
+fn upsert_terminal_into_groups(
+    state: &ThreadTerminalState,
+    terminal_id: &str,
+    split: bool,
+) -> ThreadTerminalState {
+    let normalized = normalize_thread_terminal_state(state);
+    let terminal_id = terminal_id.trim();
+    if terminal_id.is_empty() {
+        return normalized;
+    }
+
+    let is_new_terminal = !normalized
+        .terminal_ids
+        .iter()
+        .any(|existing| existing == terminal_id);
+    let mut terminal_ids = normalized.terminal_ids.clone();
+    if is_new_terminal {
+        terminal_ids.push(terminal_id.to_string());
+    }
+    let mut terminal_groups = normalized.terminal_groups.clone();
+
+    if let Some(existing_group_index) =
+        find_terminal_group_index_by_terminal_id(&terminal_groups, terminal_id)
+    {
+        terminal_groups[existing_group_index]
+            .terminal_ids
+            .retain(|id| id != terminal_id);
+        if terminal_groups[existing_group_index]
+            .terminal_ids
+            .is_empty()
+        {
+            terminal_groups.remove(existing_group_index);
+        }
+    }
+
+    if !split {
+        let mut used_group_ids = terminal_groups
+            .iter()
+            .map(|group| group.id.clone())
+            .collect::<Vec<_>>();
+        let next_group_id =
+            assign_unique_terminal_group_id(&terminal_group_id(terminal_id), &mut used_group_ids);
+        terminal_groups.push(ThreadTerminalGroup {
+            id: next_group_id.clone(),
+            terminal_ids: vec![terminal_id.to_string()],
+        });
+        return normalize_thread_terminal_state(&ThreadTerminalState {
+            terminal_open: true,
+            terminal_ids,
+            active_terminal_id: terminal_id.to_string(),
+            terminal_groups,
+            active_terminal_group_id: next_group_id,
+            ..normalized
+        });
+    }
+
+    let mut active_group_index = terminal_groups
+        .iter()
+        .position(|group| group.id == normalized.active_terminal_group_id)
+        .or_else(|| {
+            find_terminal_group_index_by_terminal_id(
+                &terminal_groups,
+                &normalized.active_terminal_id,
+            )
+        });
+    if active_group_index.is_none() {
+        let mut used_group_ids = terminal_groups
+            .iter()
+            .map(|group| group.id.clone())
+            .collect::<Vec<_>>();
+        let group_id = assign_unique_terminal_group_id(
+            &terminal_group_id(&normalized.active_terminal_id),
+            &mut used_group_ids,
+        );
+        terminal_groups.push(ThreadTerminalGroup {
+            id: group_id,
+            terminal_ids: vec![normalized.active_terminal_id.clone()],
+        });
+        active_group_index = Some(terminal_groups.len() - 1);
+    }
+
+    let Some(active_group_index) = active_group_index else {
+        return normalized;
+    };
+    let destination_group = &mut terminal_groups[active_group_index];
+    if is_new_terminal
+        && !destination_group
+            .terminal_ids
+            .iter()
+            .any(|id| id == terminal_id)
+        && destination_group.terminal_ids.len() >= MAX_TERMINALS_PER_GROUP
+    {
+        return normalized;
+    }
+    if !destination_group
+        .terminal_ids
+        .iter()
+        .any(|id| id == terminal_id)
+    {
+        if let Some(anchor_index) = destination_group
+            .terminal_ids
+            .iter()
+            .position(|id| id == &normalized.active_terminal_id)
+        {
+            destination_group
+                .terminal_ids
+                .insert(anchor_index + 1, terminal_id.to_string());
+        } else {
+            destination_group.terminal_ids.push(terminal_id.to_string());
+        }
+    }
+    let active_terminal_group_id = destination_group.id.clone();
+
+    normalize_thread_terminal_state(&ThreadTerminalState {
+        terminal_open: true,
+        terminal_ids,
+        active_terminal_id: terminal_id.to_string(),
+        terminal_groups,
+        active_terminal_group_id,
+        ..normalized
+    })
+}
+
+pub fn set_thread_terminal_open(state: &ThreadTerminalState, open: bool) -> ThreadTerminalState {
+    let normalized = normalize_thread_terminal_state(state);
+    if normalized.terminal_open == open {
+        return normalized;
+    }
+    ThreadTerminalState {
+        terminal_open: open,
+        ..normalized
+    }
+}
+
+pub fn set_thread_terminal_height(state: &ThreadTerminalState, height: u32) -> ThreadTerminalState {
+    let normalized = normalize_thread_terminal_state(state);
+    if height == 0 || normalized.terminal_height == height {
+        return normalized;
+    }
+    ThreadTerminalState {
+        terminal_height: height,
+        ..normalized
+    }
+}
+
+pub fn split_thread_terminal(
+    state: &ThreadTerminalState,
+    terminal_id: &str,
+) -> ThreadTerminalState {
+    upsert_terminal_into_groups(state, terminal_id, true)
+}
+
+pub fn new_thread_terminal(state: &ThreadTerminalState, terminal_id: &str) -> ThreadTerminalState {
+    upsert_terminal_into_groups(state, terminal_id, false)
+}
+
+pub fn set_thread_active_terminal(
+    state: &ThreadTerminalState,
+    terminal_id: &str,
+) -> ThreadTerminalState {
+    let normalized = normalize_thread_terminal_state(state);
+    if !normalized.terminal_ids.iter().any(|id| id == terminal_id) {
+        return normalized;
+    }
+    let active_terminal_group_id = normalized
+        .terminal_groups
+        .iter()
+        .find(|group| group.terminal_ids.iter().any(|id| id == terminal_id))
+        .map(|group| group.id.clone())
+        .unwrap_or_else(|| normalized.active_terminal_group_id.clone());
+    if normalized.active_terminal_id == terminal_id
+        && normalized.active_terminal_group_id == active_terminal_group_id
+    {
+        return normalized;
+    }
+    ThreadTerminalState {
+        active_terminal_id: terminal_id.to_string(),
+        active_terminal_group_id,
+        ..normalized
+    }
+}
+
+pub fn close_thread_terminal(
+    state: &ThreadTerminalState,
+    terminal_id: &str,
+) -> ThreadTerminalState {
+    let normalized = normalize_thread_terminal_state(state);
+    if !normalized.terminal_ids.iter().any(|id| id == terminal_id) {
+        return normalized;
+    }
+    let remaining_terminal_ids = normalized
+        .terminal_ids
+        .iter()
+        .filter(|id| id.as_str() != terminal_id)
+        .cloned()
+        .collect::<Vec<_>>();
+    if remaining_terminal_ids.is_empty() {
+        return create_default_thread_terminal_state();
+    }
+    let closed_terminal_index = normalized
+        .terminal_ids
+        .iter()
+        .position(|id| id == terminal_id)
+        .unwrap_or(0);
+    let next_active_terminal_id = if normalized.active_terminal_id == terminal_id {
+        remaining_terminal_ids
+            .get(closed_terminal_index.min(remaining_terminal_ids.len() - 1))
+            .cloned()
+            .unwrap_or_else(|| remaining_terminal_ids[0].clone())
+    } else {
+        normalized.active_terminal_id.clone()
+    };
+    let terminal_groups = normalized
+        .terminal_groups
+        .iter()
+        .filter_map(|group| {
+            let terminal_ids = group
+                .terminal_ids
+                .iter()
+                .filter(|id| id.as_str() != terminal_id)
+                .cloned()
+                .collect::<Vec<_>>();
+            (!terminal_ids.is_empty()).then(|| ThreadTerminalGroup {
+                id: group.id.clone(),
+                terminal_ids,
+            })
+        })
+        .collect::<Vec<_>>();
+    let active_terminal_group_id = terminal_groups
+        .iter()
+        .find(|group| {
+            group
+                .terminal_ids
+                .iter()
+                .any(|id| id == &next_active_terminal_id)
+        })
+        .map(|group| group.id.clone())
+        .unwrap_or_else(|| terminal_group_id(&next_active_terminal_id));
+
+    normalize_thread_terminal_state(&ThreadTerminalState {
+        terminal_ids: remaining_terminal_ids,
+        running_terminal_ids: normalized
+            .running_terminal_ids
+            .into_iter()
+            .filter(|id| id != terminal_id)
+            .collect(),
+        active_terminal_id: next_active_terminal_id,
+        terminal_groups,
+        active_terminal_group_id,
+        ..normalized
+    })
+}
+
+pub fn set_thread_terminal_activity(
+    state: &ThreadTerminalState,
+    terminal_id: &str,
+    has_running_subprocess: bool,
+) -> ThreadTerminalState {
+    let normalized = normalize_thread_terminal_state(state);
+    if !normalized.terminal_ids.iter().any(|id| id == terminal_id) {
+        return normalized;
+    }
+    let already_running = normalized
+        .running_terminal_ids
+        .iter()
+        .any(|id| id == terminal_id);
+    if already_running == has_running_subprocess {
+        return normalized;
+    }
+    let mut running_terminal_ids = normalized.running_terminal_ids.clone();
+    if has_running_subprocess {
+        running_terminal_ids.push(terminal_id.to_string());
+    } else {
+        running_terminal_ids.retain(|id| id != terminal_id);
+    }
+    ThreadTerminalState {
+        running_terminal_ids,
+        ..normalized
+    }
+}
+
+pub fn terminal_running_subprocess_from_event(event: &TerminalEvent) -> Option<bool> {
+    match event {
+        TerminalEvent::Activity {
+            has_running_subprocess,
+            ..
+        } => Some(*has_running_subprocess),
+        TerminalEvent::Started { .. }
+        | TerminalEvent::Restarted { .. }
+        | TerminalEvent::Exited { .. } => Some(false),
+        TerminalEvent::Output { .. }
+        | TerminalEvent::Error { .. }
+        | TerminalEvent::Cleared { .. } => None,
+    }
+}
+
+pub fn select_terminal_event_entries_after_snapshot(
+    entries: &[TerminalEventEntry],
+    snapshot_updated_at: &str,
+) -> Vec<TerminalEventEntry> {
+    entries
+        .iter()
+        .filter(|entry| entry.event.created_at() > snapshot_updated_at)
+        .cloned()
+        .collect()
+}
+
+pub fn select_pending_terminal_event_entries(
+    entries: &[TerminalEventEntry],
+    last_applied_terminal_event_id: u64,
+) -> Vec<TerminalEventEntry> {
+    entries
+        .iter()
+        .filter(|entry| entry.id > last_applied_terminal_event_id)
+        .cloned()
+        .collect()
+}
+
 fn activity_lifecycle_rank(kind: &str) -> i32 {
     if kind.ends_with(".started") || kind == "tool.started" {
         return 0;
@@ -820,6 +1448,9 @@ pub struct AppSnapshot {
     pub pending_user_input_draft_answers: BTreeMap<String, PendingUserInputDraftAnswer>,
     pub active_pending_user_input_question_index: usize,
     pub responding_request_ids: Vec<String>,
+    pub terminal_state: ThreadTerminalState,
+    pub terminal_launch_context: Option<ThreadTerminalLaunchContext>,
+    pub terminal_event_entries: Vec<TerminalEventEntry>,
 }
 
 impl AppSnapshot {
@@ -835,6 +1466,9 @@ impl AppSnapshot {
             pending_user_input_draft_answers: BTreeMap::new(),
             active_pending_user_input_question_index: 0,
             responding_request_ids: Vec::new(),
+            terminal_state: create_default_thread_terminal_state(),
+            terminal_launch_context: None,
+            terminal_event_entries: Vec::new(),
         }
     }
 
@@ -871,6 +1505,9 @@ impl AppSnapshot {
             pending_user_input_draft_answers: BTreeMap::new(),
             active_pending_user_input_question_index: 0,
             responding_request_ids: Vec::new(),
+            terminal_state: create_default_thread_terminal_state(),
+            terminal_launch_context: None,
+            terminal_event_entries: Vec::new(),
         }
     }
 
@@ -921,6 +1558,9 @@ impl AppSnapshot {
             pending_user_input_draft_answers: BTreeMap::new(),
             active_pending_user_input_question_index: 0,
             responding_request_ids: Vec::new(),
+            terminal_state: create_default_thread_terminal_state(),
+            terminal_launch_context: None,
+            terminal_event_entries: Vec::new(),
         }
     }
 
@@ -1009,6 +1649,68 @@ impl AppSnapshot {
         snapshot
     }
 
+    pub fn terminal_drawer_reference_state() -> Self {
+        let mut snapshot = Self::mock_reference_state();
+        let thread_id = "thread-r3code-ui-shell".to_string();
+        snapshot.terminal_state =
+            split_thread_terminal(&create_default_thread_terminal_state(), "terminal-2");
+        snapshot.terminal_launch_context = Some(ThreadTerminalLaunchContext {
+            cwd: "C:\\Users\\bunny\\Downloads\\r3code".to_string(),
+            worktree_path: None,
+        });
+        snapshot.terminal_event_entries = vec![
+            TerminalEventEntry {
+                id: 1,
+                event: TerminalEvent::Started {
+                    thread_id: thread_id.clone(),
+                    terminal_id: "default".to_string(),
+                    created_at: "2026-03-04T12:00:14.000Z".to_string(),
+                    snapshot: TerminalSessionSnapshot {
+                        thread_id: thread_id.clone(),
+                        terminal_id: "default".to_string(),
+                        cwd: "C:\\Users\\bunny\\Downloads\\r3code".to_string(),
+                        worktree_path: None,
+                        status: "running".to_string(),
+                        pid: Some(24012),
+                        history: String::new(),
+                        exit_code: None,
+                        exit_signal: None,
+                        updated_at: "2026-03-04T12:00:14.000Z".to_string(),
+                    },
+                },
+            },
+            TerminalEventEntry {
+                id: 2,
+                event: TerminalEvent::Output {
+                    thread_id: thread_id.clone(),
+                    terminal_id: "default".to_string(),
+                    created_at: "2026-03-04T12:00:15.000Z".to_string(),
+                    data: "PS C:\\Users\\bunny\\Downloads\\r3code> cargo check --workspace\r\n"
+                        .to_string(),
+                },
+            },
+            TerminalEventEntry {
+                id: 3,
+                event: TerminalEvent::Activity {
+                    thread_id: thread_id.clone(),
+                    terminal_id: "terminal-2".to_string(),
+                    created_at: "2026-03-04T12:00:16.000Z".to_string(),
+                    has_running_subprocess: true,
+                },
+            },
+            TerminalEventEntry {
+                id: 4,
+                event: TerminalEvent::Output {
+                    thread_id,
+                    terminal_id: "terminal-2".to_string(),
+                    created_at: "2026-03-04T12:00:17.000Z".to_string(),
+                    data: "Running upstream capture fixture...\r\n".to_string(),
+                },
+            },
+        ];
+        snapshot
+    }
+
     pub fn renders_chat_view(&self) -> bool {
         self.route.renders_chat_view()
     }
@@ -1048,6 +1750,10 @@ impl AppSnapshot {
         self.responding_request_ids
             .iter()
             .any(|responding_id| responding_id == request_id)
+    }
+
+    pub fn terminal_open(&self) -> bool {
+        self.terminal_state.terminal_open
     }
 }
 
@@ -1131,6 +1837,176 @@ mod tests {
         );
         assert!(progress.can_advance);
         assert!(!progress.is_complete);
+    }
+
+    #[test]
+    fn terminal_drawer_reference_state_exposes_open_split_terminal() {
+        let snapshot = AppSnapshot::terminal_drawer_reference_state();
+
+        assert!(snapshot.terminal_open());
+        assert_eq!(
+            snapshot.terminal_state.terminal_ids,
+            vec!["default", "terminal-2"]
+        );
+        assert_eq!(snapshot.terminal_state.active_terminal_id, "terminal-2");
+        assert_eq!(
+            snapshot.terminal_state.terminal_groups,
+            vec![ThreadTerminalGroup {
+                id: "group-default".to_string(),
+                terminal_ids: vec!["default".to_string(), "terminal-2".to_string()],
+            }]
+        );
+        assert_eq!(snapshot.terminal_event_entries.len(), 4);
+    }
+
+    #[test]
+    fn default_terminal_state_matches_upstream_contract() {
+        assert_eq!(
+            create_default_thread_terminal_state(),
+            ThreadTerminalState {
+                terminal_open: false,
+                terminal_height: DEFAULT_THREAD_TERMINAL_HEIGHT,
+                terminal_ids: vec!["default".to_string()],
+                running_terminal_ids: Vec::new(),
+                active_terminal_id: "default".to_string(),
+                terminal_groups: vec![ThreadTerminalGroup {
+                    id: "group-default".to_string(),
+                    terminal_ids: vec!["default".to_string()],
+                }],
+                active_terminal_group_id: "group-default".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn terminal_split_and_new_group_behaviors_match_upstream_store() {
+        let state = create_default_thread_terminal_state();
+        let split = split_thread_terminal(&state, "terminal-2");
+
+        assert!(split.terminal_open);
+        assert_eq!(split.terminal_ids, vec!["default", "terminal-2"]);
+        assert_eq!(split.active_terminal_id, "terminal-2");
+        assert_eq!(
+            split.terminal_groups,
+            vec![ThreadTerminalGroup {
+                id: "group-default".to_string(),
+                terminal_ids: vec!["default".to_string(), "terminal-2".to_string()],
+            }]
+        );
+
+        let separate = new_thread_terminal(&state, "terminal-2");
+        assert_eq!(separate.active_terminal_id, "terminal-2");
+        assert_eq!(separate.active_terminal_group_id, "group-terminal-2");
+        assert_eq!(
+            separate.terminal_groups,
+            vec![
+                ThreadTerminalGroup {
+                    id: "group-default".to_string(),
+                    terminal_ids: vec!["default".to_string()],
+                },
+                ThreadTerminalGroup {
+                    id: "group-terminal-2".to_string(),
+                    terminal_ids: vec!["terminal-2".to_string()],
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn terminal_split_caps_at_four_per_group() {
+        let mut state = create_default_thread_terminal_state();
+        for terminal_id in ["terminal-2", "terminal-3", "terminal-4", "terminal-5"] {
+            state = split_thread_terminal(&state, terminal_id);
+        }
+
+        assert_eq!(
+            state.terminal_ids,
+            vec!["default", "terminal-2", "terminal-3", "terminal-4"]
+        );
+        assert_eq!(state.terminal_groups[0].terminal_ids.len(), 4);
+    }
+
+    #[test]
+    fn terminal_close_keeps_valid_active_terminal() {
+        let mut state = create_default_thread_terminal_state();
+        state = split_thread_terminal(&state, "terminal-2");
+        state = split_thread_terminal(&state, "terminal-3");
+        state = close_thread_terminal(&state, "terminal-3");
+
+        assert_eq!(state.active_terminal_id, "terminal-2");
+        assert_eq!(state.terminal_ids, vec!["default", "terminal-2"]);
+        assert_eq!(
+            state.terminal_groups,
+            vec![ThreadTerminalGroup {
+                id: "group-default".to_string(),
+                terminal_ids: vec!["default".to_string(), "terminal-2".to_string()],
+            }]
+        );
+    }
+
+    #[test]
+    fn terminal_activity_and_event_filters_match_upstream_helpers() {
+        let mut state =
+            split_thread_terminal(&create_default_thread_terminal_state(), "terminal-2");
+        state = set_thread_terminal_activity(&state, "terminal-2", true);
+        assert_eq!(state.running_terminal_ids, vec!["terminal-2"]);
+        state = set_thread_terminal_activity(&state, "terminal-2", false);
+        assert_eq!(state.running_terminal_ids, Vec::<String>::new());
+
+        let output = TerminalEvent::Output {
+            thread_id: "thread-1".to_string(),
+            terminal_id: "default".to_string(),
+            created_at: "2026-04-02T20:00:00.000Z".to_string(),
+            data: "before".to_string(),
+        };
+        let activity = TerminalEvent::Activity {
+            thread_id: "thread-1".to_string(),
+            terminal_id: "default".to_string(),
+            created_at: "2026-04-02T20:00:01.000Z".to_string(),
+            has_running_subprocess: true,
+        };
+        let exited = TerminalEvent::Exited {
+            thread_id: "thread-1".to_string(),
+            terminal_id: "default".to_string(),
+            created_at: "2026-04-02T20:00:02.000Z".to_string(),
+            exit_code: Some(0),
+            exit_signal: None,
+        };
+        assert_eq!(terminal_running_subprocess_from_event(&output), None);
+        assert_eq!(
+            terminal_running_subprocess_from_event(&activity),
+            Some(true)
+        );
+        assert_eq!(terminal_running_subprocess_from_event(&exited), Some(false));
+
+        let entries = vec![
+            TerminalEventEntry {
+                id: 1,
+                event: output,
+            },
+            TerminalEventEntry {
+                id: 2,
+                event: activity,
+            },
+            TerminalEventEntry {
+                id: 3,
+                event: exited,
+            },
+        ];
+        assert_eq!(
+            select_terminal_event_entries_after_snapshot(&entries, "2026-04-02T20:00:00.500Z")
+                .iter()
+                .map(|entry| entry.id)
+                .collect::<Vec<_>>(),
+            vec![2, 3]
+        );
+        assert_eq!(
+            select_pending_terminal_event_entries(&entries, 1)
+                .iter()
+                .map(|entry| entry.id)
+                .collect::<Vec<_>>(),
+            vec![2, 3]
+        );
     }
 
     #[test]

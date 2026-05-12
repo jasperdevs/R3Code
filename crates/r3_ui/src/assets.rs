@@ -96,12 +96,20 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/settings-2.svg"),
     ),
     (
+        "icons/square-split-horizontal.svg",
+        include_bytes!("../assets/icons/square-split-horizontal.svg"),
+    ),
+    (
         "icons/square-terminal.svg",
         include_bytes!("../assets/icons/square-terminal.svg"),
     ),
     (
         "icons/terminal.svg",
         include_bytes!("../assets/icons/terminal.svg"),
+    ),
+    (
+        "icons/trash-2.svg",
+        include_bytes!("../assets/icons/trash-2.svg"),
     ),
     (
         "icons/triangle-alert.svg",
@@ -173,8 +181,10 @@ mod tests {
             "lock-open.svg",
             "pen-line.svg",
             "rotate-ccw.svg",
+            "square-split-horizontal.svg",
             "square-terminal.svg",
             "triangle-alert.svg",
+            "trash-2.svg",
         ] {
             assert!(icons.iter().any(|listed| listed == icon), "{icon}");
         }
