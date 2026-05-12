@@ -112,7 +112,7 @@ fn print_usage() {
         "Usage:
   cargo run -p xtask -- check-parity --allow-window-capture [--refresh-reference]
   cargo run -p xtask -- compare-screenshots --expected <png> --actual <png> [--channel-tolerance <n>] [--ignore-rect x,y,w,h] [--max-different-pixels-percent <n>]
-  cargo run -p xtask -- capture-r3code-window --allow-window-capture [--screen draft|active-chat|settings|command-palette|settings-theme-menu|settings-dark|settings-back|settings-keybindings|settings-source-control|settings-archive] [--theme light|dark|system] [--output <png>]
+  cargo run -p xtask -- capture-r3code-window --allow-window-capture [--screen draft|active-chat|pending-approval|pending-user-input|settings|command-palette|settings-theme-menu|settings-dark|settings-back|settings-keybindings|settings-source-control|settings-archive] [--theme light|dark|system] [--output <png>]
   cargo run -p xtask -- capture-reference-browser"
     );
 }
@@ -242,6 +242,22 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
         screen: Some("active-chat".to_string()),
         theme: Some("light".to_string()),
         output: resolve_repo_path("reference/screenshots/r3code-active-chat-window.png"),
+        allow_window_capture: true,
+        ..CaptureR3CodeOptions::default()
+    })?;
+
+    capture_r3code_window(CaptureR3CodeOptions {
+        screen: Some("pending-approval".to_string()),
+        theme: Some("light".to_string()),
+        output: resolve_repo_path("reference/screenshots/r3code-pending-approval-window.png"),
+        allow_window_capture: true,
+        ..CaptureR3CodeOptions::default()
+    })?;
+
+    capture_r3code_window(CaptureR3CodeOptions {
+        screen: Some("pending-user-input".to_string()),
+        theme: Some("light".to_string()),
+        output: resolve_repo_path("reference/screenshots/r3code-pending-user-input-window.png"),
         allow_window_capture: true,
         ..CaptureR3CodeOptions::default()
     })?;

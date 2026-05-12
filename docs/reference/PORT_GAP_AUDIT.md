@@ -48,7 +48,7 @@ These T3 surfaces have no complete Rust implementation yet:
 | --- | --- | --- |
 | Active chat with real user/assistant turns | `apps/web/src/components/ChatView.tsx`, `MessagesTimeline.tsx` | Mock-only |
 | Running agent turn, work log, tool output | `apps/web/src/session-logic.ts`, `MessagesTimeline.tsx` | Missing |
-| Pending approval and pending user input panels | `ChatComposer.tsx`, `ComposerPendingApproval*`, `pendingUserInput.ts` | Missing |
+| Pending approval and pending user input panels | `ChatComposer.tsx`, `ComposerPendingApproval*`, `pendingUserInput.ts` | Partial static GPUI smoke |
 | Terminal drawer and xterm integration | `ThreadTerminalDrawer.tsx`, `terminalStateStore.ts` | Missing |
 | Diff panel and changed-file browsing | `DiffPanel.tsx`, `diffRouteSearch.ts` | Missing |
 | Branch/worktree toolbar | `BranchToolbar.tsx`, `BranchToolbar.logic.ts` | Missing |

@@ -126,14 +126,19 @@ The upstream draft reference is produced by the real T3 command-palette add-proj
 ## Current Active Chat Smoke Baseline
 
 R3Code capture: `reference/screenshots/r3code-active-chat-window.png`
+R3Code pending approval capture: `reference/screenshots/r3code-pending-approval-window.png`
+R3Code pending user input capture: `reference/screenshots/r3code-pending-user-input-window.png`
 
 Command:
 
 ```text
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen active-chat --output reference\screenshots\r3code-active-chat-window.png
+cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen pending-approval --output reference\screenshots\r3code-pending-approval-window.png
+cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen pending-user-input --output reference\screenshots\r3code-pending-user-input-window.png
 ```
 
 This is a native Rust/GPUI smoke capture for the first server-thread state: active header title/project badge, sidebar thread row, user/assistant timeline rows, and composer chrome. It is intentionally not a parity comparison yet because the current upstream reference harness has deterministic captures for empty/draft/settings, but not a full active server-thread route with persisted messages. The next parity step is to add a source-backed upstream fixture capture for the same `ChatView.browser.tsx` message state.
+The pending approval and pending user input captures use the same active-thread shell with upstream-shaped `ChatComposer` state: approval summary/actions, user-input question progress, option shortcut chips, selected `CheckIcon`, and pending primary actions. They are also smoke captures until the upstream browser harness can seed the matching server-thread pending request fixtures.
 
 ## Current Settings Baseline
 

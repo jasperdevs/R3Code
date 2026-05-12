@@ -815,6 +815,11 @@ pub struct AppSnapshot {
     pub threads: Vec<ThreadSummary>,
     pub messages: Vec<ChatMessage>,
     pub draft_sessions: Vec<DraftSessionState>,
+    pub pending_approvals: Vec<PendingApproval>,
+    pub pending_user_inputs: Vec<PendingUserInput>,
+    pub pending_user_input_draft_answers: BTreeMap<String, PendingUserInputDraftAnswer>,
+    pub active_pending_user_input_question_index: usize,
+    pub responding_request_ids: Vec<String>,
 }
 
 impl AppSnapshot {
@@ -825,6 +830,11 @@ impl AppSnapshot {
             threads: Vec::new(),
             messages: Vec::new(),
             draft_sessions: Vec::new(),
+            pending_approvals: Vec::new(),
+            pending_user_inputs: Vec::new(),
+            pending_user_input_draft_answers: BTreeMap::new(),
+            active_pending_user_input_question_index: 0,
+            responding_request_ids: Vec::new(),
         }
     }
 
@@ -856,6 +866,11 @@ impl AppSnapshot {
                 env_mode: DraftThreadEnvMode::Local,
                 promoted_to: None,
             }],
+            pending_approvals: Vec::new(),
+            pending_user_inputs: Vec::new(),
+            pending_user_input_draft_answers: BTreeMap::new(),
+            active_pending_user_input_question_index: 0,
+            responding_request_ids: Vec::new(),
         }
     }
 
@@ -901,7 +916,97 @@ impl AppSnapshot {
                 ),
             ],
             draft_sessions: Vec::new(),
+            pending_approvals: Vec::new(),
+            pending_user_inputs: Vec::new(),
+            pending_user_input_draft_answers: BTreeMap::new(),
+            active_pending_user_input_question_index: 0,
+            responding_request_ids: Vec::new(),
         }
+    }
+
+    pub fn pending_approval_reference_state() -> Self {
+        let mut snapshot = Self::mock_reference_state();
+        if let Some(thread) = snapshot.threads.first_mut() {
+            thread.status = ThreadStatus::NeedsInput;
+            thread.has_pending_approvals = true;
+        }
+        snapshot.pending_approvals = vec![
+            PendingApproval {
+                request_id: "approval-command-run-tests".to_string(),
+                request_kind: ApprovalRequestKind::Command,
+                created_at: "2026-03-04T12:00:20.000Z".to_string(),
+                detail: Some("cargo test --workspace".to_string()),
+            },
+            PendingApproval {
+                request_id: "approval-file-change".to_string(),
+                request_kind: ApprovalRequestKind::FileChange,
+                created_at: "2026-03-04T12:00:23.000Z".to_string(),
+                detail: Some("Allow editing crates/r3_ui/src/shell.rs".to_string()),
+            },
+        ];
+        snapshot
+    }
+
+    pub fn pending_user_input_reference_state() -> Self {
+        let mut snapshot = Self::mock_reference_state();
+        if let Some(thread) = snapshot.threads.first_mut() {
+            thread.status = ThreadStatus::NeedsInput;
+            thread.has_pending_user_input = true;
+        }
+        snapshot.pending_user_inputs = vec![PendingUserInput {
+            request_id: "user-input-port-scope".to_string(),
+            created_at: "2026-03-04T12:00:24.000Z".to_string(),
+            questions: vec![
+                UserInputQuestion {
+                    id: "surface".to_string(),
+                    header: "Surface".to_string(),
+                    question: "Which surface should the Rust port match first?".to_string(),
+                    options: vec![
+                        UserInputQuestionOption {
+                            label: "Composer".to_string(),
+                            description: "Pending approval and user input states".to_string(),
+                        },
+                        UserInputQuestionOption {
+                            label: "Terminal".to_string(),
+                            description: "Drawer and command session state".to_string(),
+                        },
+                        UserInputQuestionOption {
+                            label: "Diff".to_string(),
+                            description: "Changed files and line review".to_string(),
+                        },
+                    ],
+                    multi_select: false,
+                },
+                UserInputQuestion {
+                    id: "coverage".to_string(),
+                    header: "Coverage".to_string(),
+                    question: "Select every state this parity pass should capture.".to_string(),
+                    options: vec![
+                        UserInputQuestionOption {
+                            label: "Light".to_string(),
+                            description: "Light theme".to_string(),
+                        },
+                        UserInputQuestionOption {
+                            label: "Dark".to_string(),
+                            description: "Dark theme".to_string(),
+                        },
+                        UserInputQuestionOption {
+                            label: "Focused".to_string(),
+                            description: "Composer focus state".to_string(),
+                        },
+                    ],
+                    multi_select: true,
+                },
+            ],
+        }];
+        snapshot.pending_user_input_draft_answers = BTreeMap::from([(
+            "surface".to_string(),
+            PendingUserInputDraftAnswer {
+                selected_option_labels: vec!["Composer".to_string()],
+                custom_answer: Some(String::new()),
+            },
+        )]);
+        snapshot
     }
 
     pub fn renders_chat_view(&self) -> bool {
@@ -920,6 +1025,29 @@ impl AppSnapshot {
 
     pub fn active_project_name(&self) -> Option<&str> {
         self.projects.first().map(|project| project.name.as_str())
+    }
+
+    pub fn active_pending_approval(&self) -> Option<&PendingApproval> {
+        self.pending_approvals.first()
+    }
+
+    pub fn active_pending_user_input(&self) -> Option<&PendingUserInput> {
+        self.pending_user_inputs.first()
+    }
+
+    pub fn active_pending_user_input_progress(&self) -> Option<PendingUserInputProgress> {
+        let prompt = self.active_pending_user_input()?;
+        Some(derive_pending_user_input_progress(
+            &prompt.questions,
+            &self.pending_user_input_draft_answers,
+            self.active_pending_user_input_question_index,
+        ))
+    }
+
+    pub fn is_responding_to_request(&self, request_id: &str) -> bool {
+        self.responding_request_ids
+            .iter()
+            .any(|responding_id| responding_id == request_id)
     }
 }
 
@@ -973,6 +1101,36 @@ mod tests {
 
         assert_eq!(snapshot.active_thread_title(), "Port R3Code UI shell");
         assert_eq!(snapshot.active_project_name(), Some("r3code"));
+    }
+
+    #[test]
+    fn pending_approval_reference_state_exposes_first_approval() {
+        let snapshot = AppSnapshot::pending_approval_reference_state();
+        let approval = snapshot.active_pending_approval().unwrap();
+
+        assert_eq!(snapshot.threads[0].status, ThreadStatus::NeedsInput);
+        assert!(snapshot.threads[0].has_pending_approvals);
+        assert_eq!(approval.request_kind, ApprovalRequestKind::Command);
+        assert_eq!(approval.request_id, "approval-command-run-tests");
+        assert!(!snapshot.is_responding_to_request(&approval.request_id));
+    }
+
+    #[test]
+    fn pending_user_input_reference_state_exposes_active_progress() {
+        let snapshot = AppSnapshot::pending_user_input_reference_state();
+        let progress = snapshot.active_pending_user_input_progress().unwrap();
+
+        assert_eq!(snapshot.threads[0].status, ThreadStatus::NeedsInput);
+        assert!(snapshot.threads[0].has_pending_user_input);
+        assert_eq!(progress.question_index, 0);
+        assert_eq!(progress.active_question.unwrap().id, "surface");
+        assert_eq!(progress.selected_option_labels, vec!["Composer"]);
+        assert_eq!(
+            progress.resolved_answer,
+            Some(PendingUserInputAnswer::Text("Composer".to_string()))
+        );
+        assert!(progress.can_advance);
+        assert!(!progress.is_complete);
     }
 
     #[test]

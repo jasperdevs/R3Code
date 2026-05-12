@@ -1,10 +1,13 @@
 use gpui::prelude::{FluentBuilder, InteractiveElement, StatefulInteractiveElement};
 use gpui::{
-    App, AppContext, BoxShadow, Context, CursorStyle, FocusHandle, Focusable, FontWeight,
-    IntoElement, KeyDownEvent, ParentElement, Render, SharedString, Styled, TextAlign, Window, div,
-    hsla, point, px, svg,
+    AnyElement, App, AppContext, BoxShadow, Context, CursorStyle, FocusHandle, Focusable,
+    FontWeight, IntoElement, KeyDownEvent, ParentElement, Render, SharedString, Styled, TextAlign,
+    Window, div, hsla, point, px, svg,
 };
-use r3_core::{APP_NAME, AppSnapshot, ChatMessage, ProjectSummary, ThreadStatus};
+use r3_core::{
+    APP_NAME, AppSnapshot, ChatMessage, PendingApproval, PendingUserInputProgress, ProjectSummary,
+    ThreadStatus, set_pending_user_input_custom_answer, toggle_pending_user_input_option_selection,
+};
 
 use crate::theme::{FONT_FAMILY, MONO_FONT_FAMILY, SIDEBAR_MIN_WIDTH, Theme, ThemeMode};
 
@@ -121,6 +124,8 @@ pub enum R3Screen {
     Empty,
     Draft,
     ActiveChat,
+    PendingApproval,
+    PendingUserInput,
     Settings,
 }
 
@@ -241,6 +246,25 @@ enum SourceControlFetchAction {
     Decrease,
     Increase,
     Reset,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingApprovalActionKind {
+    Cancel,
+    Decline,
+    AcceptForSession,
+    Accept,
+}
+
+impl PendingApprovalActionKind {
+    fn id(self) -> &'static str {
+        match self {
+            Self::Cancel => "chat-composer-pending-approval-cancel",
+            Self::Decline => "chat-composer-pending-approval-decline",
+            Self::AcceptForSession => "chat-composer-pending-approval-accept-session",
+            Self::Accept => "chat-composer-pending-approval-accept",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -399,9 +423,11 @@ impl Render for R3Shell {
             .font_family(SharedString::from(FONT_FAMILY));
 
         root = match self.screen {
-            R3Screen::Empty | R3Screen::Draft | R3Screen::ActiveChat => {
-                root.child(self.sidebar(cx)).child(self.main_panel(cx))
-            }
+            R3Screen::Empty
+            | R3Screen::Draft
+            | R3Screen::ActiveChat
+            | R3Screen::PendingApproval
+            | R3Screen::PendingUserInput => root.child(self.sidebar(cx)).child(self.main_panel(cx)),
             R3Screen::Settings => root
                 .child(self.settings_sidebar(cx))
                 .child(self.settings_panel(cx)),
@@ -853,6 +879,32 @@ impl R3Shell {
     }
 
     fn composer(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let active_pending_approval = self.snapshot.active_pending_approval();
+        let active_pending_user_input_progress = self.snapshot.active_pending_user_input_progress();
+        let mut surface = div()
+            .rounded(px(20.0))
+            .border_1()
+            .border_color(if self.composer_prompt_focused {
+                self.theme.primary.opacity(0.45)
+            } else {
+                self.theme.border
+            })
+            .bg(self.theme.card);
+
+        if let Some(approval) = active_pending_approval {
+            surface = surface.child(self.composer_pending_approval_panel(approval));
+        } else if let Some(progress) = active_pending_user_input_progress.as_ref() {
+            surface = surface.child(self.composer_pending_user_input_panel(progress, cx));
+        }
+
+        surface = surface.child(self.composer_prompt_editor(cx));
+
+        surface = if let Some(approval) = active_pending_approval {
+            surface.child(self.composer_pending_approval_actions(approval, cx))
+        } else {
+            surface.child(self.composer_footer(cx))
+        };
+
         div()
             .flex()
             .items_center()
@@ -866,24 +918,240 @@ impl R3Shell {
                     .rounded(px(22.0))
                     .bg(self.theme.primary.opacity(0.10))
                     .p(px(1.0))
-                    .child(
-                        div()
-                            .rounded(px(20.0))
-                            .border_1()
-                            .border_color(if self.composer_prompt_focused {
-                                self.theme.primary.opacity(0.45)
-                            } else {
-                                self.theme.border
-                            })
-                            .bg(self.theme.card)
-                            .child(self.composer_prompt_editor(cx))
-                            .child(self.composer_footer(cx)),
-                    ),
+                    .child(surface),
             )
     }
 
+    fn composer_pending_approval_panel(&self, approval: &PendingApproval) -> impl IntoElement {
+        let pending_count = self.snapshot.pending_approvals.len();
+        div()
+            .rounded_t(px(19.0))
+            .border_b_1()
+            .border_color(self.theme.border.opacity(0.65))
+            .bg(self.theme.accent.opacity(0.20))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .px_4()
+                    .py_3()
+                    .child(
+                        div()
+                            .text_size(px(14.0))
+                            .text_color(self.theme.foreground)
+                            .child("PENDING APPROVAL"),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(14.0))
+                            .font_weight(FontWeight(500.0))
+                            .child(approval.request_kind.summary()),
+                    )
+                    .when(pending_count > 1, |panel| {
+                        panel.child(
+                            div()
+                                .text_size(px(12.0))
+                                .text_color(self.theme.muted_foreground)
+                                .child(format!("1/{pending_count}")),
+                        )
+                    }),
+            )
+    }
+
+    fn composer_pending_user_input_panel(
+        &self,
+        progress: &PendingUserInputProgress,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let Some(active_question) = progress.active_question.as_ref() else {
+            return div().into_any_element();
+        };
+        let question_count = self
+            .snapshot
+            .active_pending_user_input()
+            .map(|prompt| prompt.questions.len())
+            .unwrap_or(0);
+
+        let mut options = div().mt_3().flex().flex_col().gap_1();
+        for (index, option) in active_question.options.iter().enumerate() {
+            let is_selected = progress
+                .selected_option_labels
+                .iter()
+                .any(|label| label == &option.label);
+            let question_id = active_question.id.clone();
+            let option_label = option.label.clone();
+            let shortcut_key = (index < 9).then_some(index + 1);
+            let description =
+                if !option.description.is_empty() && option.description != option.label {
+                    Some(option.description.clone())
+                } else {
+                    None
+                };
+            options = options.child(
+                div()
+                    .id(SharedString::from(format!(
+                        "chat-composer-pending-user-input-option-{index}"
+                    )))
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .rounded(px(8.0))
+                    .border_1()
+                    .border_color(if is_selected {
+                        pending_blue().opacity(0.40)
+                    } else {
+                        self.theme.background.alpha(0.0)
+                    })
+                    .bg(if is_selected {
+                        pending_blue().opacity(0.08)
+                    } else {
+                        self.theme.accent.opacity(0.20)
+                    })
+                    .px_3()
+                    .py_2()
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.select_pending_user_input_option(&question_id, &option_label, cx);
+                    }))
+                    .when_some(shortcut_key, |row, key| {
+                        row.child(self.pending_input_shortcut_key(key, is_selected))
+                    })
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .flex()
+                            .items_center()
+                            .child(
+                                div()
+                                    .text_size(px(14.0))
+                                    .font_weight(FontWeight(500.0))
+                                    .child(option.label.clone()),
+                            )
+                            .when_some(description, |row, description| {
+                                row.child(
+                                    div()
+                                        .ml_2()
+                                        .text_size(px(12.0))
+                                        .text_color(self.theme.muted_foreground.opacity(0.50))
+                                        .child(description),
+                                )
+                            }),
+                    )
+                    .when(is_selected, |row| {
+                        row.child(
+                            svg()
+                                .path("icons/check.svg")
+                                .w(px(14.0))
+                                .h(px(14.0))
+                                .flex_shrink_0()
+                                .text_color(pending_blue_icon()),
+                        )
+                    }),
+            );
+        }
+
+        div()
+            .rounded_t(px(19.0))
+            .border_b_1()
+            .border_color(self.theme.border.opacity(0.65))
+            .bg(self.theme.accent.opacity(0.20))
+            .child(
+                div()
+                    .px_4()
+                    .py_3()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_3()
+                            .child(if question_count > 1 {
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .rounded(px(6.0))
+                                    .bg(self.theme.accent.opacity(0.60))
+                                    .px_1p5()
+                                    .text_size(px(10.0))
+                                    .font_weight(FontWeight(500.0))
+                                    .text_color(self.theme.muted_foreground.opacity(0.60))
+                                    .child(format!(
+                                        "{}/{}",
+                                        progress.question_index + 1,
+                                        question_count
+                                    ))
+                            } else {
+                                div()
+                            })
+                            .child(
+                                div()
+                                    .text_size(px(11.0))
+                                    .font_weight(FontWeight(650.0))
+                                    .text_color(self.theme.muted_foreground.opacity(0.50))
+                                    .child(active_question.header.to_ascii_uppercase()),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .mt_1p5()
+                            .text_size(px(14.0))
+                            .text_color(self.theme.foreground.opacity(0.90))
+                            .child(active_question.question.clone()),
+                    )
+                    .when(active_question.multi_select, |panel| {
+                        panel.child(
+                            div()
+                                .mt_1()
+                                .text_size(px(12.0))
+                                .text_color(self.theme.muted_foreground.opacity(0.65))
+                                .child("Select one or more options."),
+                        )
+                    })
+                    .child(options),
+            )
+            .into_any_element()
+    }
+
+    fn pending_input_shortcut_key(&self, key: usize, selected: bool) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(20.0))
+            .h(px(20.0))
+            .flex_shrink_0()
+            .rounded(px(4.0))
+            .text_size(px(11.0))
+            .font_weight(FontWeight(500.0))
+            .text_color(if selected {
+                pending_blue_icon()
+            } else {
+                self.theme.muted_foreground.opacity(0.50)
+            })
+            .bg(if selected {
+                pending_blue().opacity(0.20)
+            } else {
+                self.theme.accent.opacity(0.40)
+            })
+            .child(key.to_string())
+    }
+
     fn composer_prompt_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let text = if self.composer_prompt.is_empty() {
+        let active_pending_approval = self.snapshot.active_pending_approval();
+        let active_pending_user_input_progress = self.snapshot.active_pending_user_input_progress();
+        let text = if let Some(approval) = active_pending_approval {
+            approval
+                .detail
+                .clone()
+                .unwrap_or_else(|| "Resolve this approval request to continue".to_string())
+        } else if let Some(progress) = active_pending_user_input_progress.as_ref() {
+            if progress.custom_answer.trim().is_empty() {
+                "Type your own answer, or leave this blank to use the selected option".to_string()
+            } else {
+                progress.custom_answer.clone()
+            }
+        } else if self.composer_prompt.is_empty() {
             if self.composer_submitted_count > 0 {
                 "Message queued. Type another prompt.".to_string()
             } else {
@@ -892,6 +1160,12 @@ impl R3Shell {
         } else {
             self.composer_prompt.clone()
         };
+        let placeholder = self.composer_prompt.is_empty()
+            && active_pending_approval.is_none()
+            && active_pending_user_input_progress
+                .as_ref()
+                .map(|progress| progress.custom_answer.trim().is_empty())
+                .unwrap_or(true);
 
         div()
             .id("chat-composer-input")
@@ -906,14 +1180,18 @@ impl R3Shell {
             .pt_4()
             .pb_3()
             .on_click(cx.listener(|this, _, window, cx| {
-                this.composer_prompt_focused = true;
-                window.focus(&this.composer_focus_handle);
+                if this.snapshot.active_pending_approval().is_none() {
+                    this.composer_prompt_focused = true;
+                    window.focus(&this.composer_focus_handle);
+                }
                 cx.notify();
             }))
             .child(
                 div()
                     .text_size(px(14.0))
-                    .text_color(if self.composer_prompt.is_empty() {
+                    .text_color(if active_pending_approval.is_some() {
+                        self.theme.muted_foreground.opacity(0.72)
+                    } else if placeholder {
                         self.theme
                             .muted_foreground
                             .opacity(if self.composer_prompt_focused {
@@ -928,7 +1206,13 @@ impl R3Shell {
             )
     }
 
-    fn composer_footer(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn composer_footer(&self, cx: &mut Context<Self>) -> AnyElement {
+        if let Some(progress) = self.snapshot.active_pending_user_input_progress() {
+            return self
+                .composer_pending_user_input_footer(&progress, cx)
+                .into_any_element();
+        }
+
         div()
             .id("chat-composer-footer")
             .flex()
@@ -970,6 +1254,204 @@ impl R3Shell {
                     )),
             )
             .child(self.composer_send_button(cx))
+            .into_any_element()
+    }
+
+    fn composer_pending_user_input_footer(
+        &self,
+        progress: &PendingUserInputProgress,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id("chat-composer-pending-user-input-footer")
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .px_3()
+            .pb_3()
+            .child(div().flex_1())
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .gap_2()
+                    .when(progress.question_index > 0, |actions| {
+                        actions.child(self.composer_pending_user_input_previous_button(cx))
+                    })
+                    .child(self.composer_pending_user_input_submit_button(progress, cx)),
+            )
+    }
+
+    fn composer_pending_user_input_previous_button(
+        &self,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id("chat-composer-pending-user-input-previous")
+            .rounded(px(999.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.background)
+            .px_4()
+            .py_1p5()
+            .text_size(px(13.0))
+            .text_color(self.theme.foreground)
+            .cursor_pointer()
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.previous_pending_user_input_question(cx);
+            }))
+            .child("Previous")
+    }
+
+    fn composer_pending_user_input_submit_button(
+        &self,
+        progress: &PendingUserInputProgress,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let disabled = if progress.is_last_question {
+            !progress.is_complete
+        } else {
+            !progress.can_advance
+        };
+        let is_responding = self
+            .snapshot
+            .active_pending_user_input()
+            .map(|prompt| self.snapshot.is_responding_to_request(&prompt.request_id))
+            .unwrap_or(false);
+        let label = if is_responding {
+            "Submitting..."
+        } else if !progress.is_last_question {
+            "Next question"
+        } else if progress.question_index > 0 {
+            "Submit answers"
+        } else {
+            "Submit answer"
+        };
+
+        div()
+            .id("chat-composer-pending-user-input-submit")
+            .rounded(px(999.0))
+            .bg(if disabled || is_responding {
+                self.theme.primary.opacity(0.30)
+            } else {
+                self.theme.primary.opacity(0.92)
+            })
+            .px_4()
+            .py_1p5()
+            .text_size(px(13.0))
+            .text_color(hsla(0.0, 0.0, 1.0, 1.0))
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if !disabled && !is_responding {
+                    this.advance_pending_user_input(cx);
+                }
+            }))
+            .child(label)
+    }
+
+    fn composer_pending_approval_actions(
+        &self,
+        approval: &PendingApproval,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let is_responding = self.snapshot.is_responding_to_request(&approval.request_id);
+
+        div()
+            .id("chat-composer-pending-approval-actions")
+            .flex()
+            .items_center()
+            .justify_end()
+            .gap_2()
+            .px_3()
+            .pb_3()
+            .child(self.composer_pending_approval_action_button(
+                "Cancel turn",
+                PendingApprovalActionKind::Cancel,
+                approval,
+                is_responding,
+                cx,
+            ))
+            .child(self.composer_pending_approval_action_button(
+                "Decline",
+                PendingApprovalActionKind::Decline,
+                approval,
+                is_responding,
+                cx,
+            ))
+            .child(self.composer_pending_approval_action_button(
+                "Always allow this session",
+                PendingApprovalActionKind::AcceptForSession,
+                approval,
+                is_responding,
+                cx,
+            ))
+            .child(self.composer_pending_approval_action_button(
+                "Approve once",
+                PendingApprovalActionKind::Accept,
+                approval,
+                is_responding,
+                cx,
+            ))
+    }
+
+    fn composer_pending_approval_action_button(
+        &self,
+        label: &'static str,
+        action: PendingApprovalActionKind,
+        approval: &PendingApproval,
+        is_responding: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let request_id = approval.request_id.clone();
+        let (border, background, foreground) = match action {
+            PendingApprovalActionKind::Decline => (
+                hsla(0.0, 0.72, 0.48, 0.32),
+                hsla(0.0, 0.72, 0.48, 0.05),
+                hsla(0.0, 0.72, 0.48, 1.0),
+            ),
+            PendingApprovalActionKind::Accept => (
+                self.theme.primary.opacity(0.92),
+                self.theme.primary.opacity(0.92),
+                hsla(0.0, 0.0, 1.0, 1.0),
+            ),
+            PendingApprovalActionKind::Cancel | PendingApprovalActionKind::AcceptForSession => (
+                self.theme.border,
+                self.theme.background,
+                self.theme.foreground,
+            ),
+        };
+
+        div()
+            .id(action.id())
+            .rounded(px(7.0))
+            .border_1()
+            .border_color(if is_responding {
+                border.opacity(0.50)
+            } else {
+                border
+            })
+            .bg(if is_responding {
+                background.opacity(0.50)
+            } else {
+                background
+            })
+            .px_3()
+            .py_1p5()
+            .text_size(px(13.0))
+            .text_color(if is_responding {
+                foreground.opacity(0.50)
+            } else {
+                foreground
+            })
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if !is_responding {
+                    this.respond_to_pending_approval(&request_id, cx);
+                }
+            }))
+            .child(label)
     }
 
     fn composer_model_picker(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -4481,7 +4963,116 @@ impl R3Shell {
         cx.notify();
     }
 
+    fn respond_to_pending_approval(&mut self, request_id: &str, cx: &mut Context<Self>) {
+        if !self.snapshot.is_responding_to_request(request_id) {
+            self.snapshot
+                .responding_request_ids
+                .push(request_id.to_string());
+        }
+        cx.notify();
+    }
+
+    fn select_pending_user_input_option(
+        &mut self,
+        question_id: &str,
+        option_label: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(question) = self
+            .snapshot
+            .active_pending_user_input()
+            .and_then(|prompt| {
+                prompt
+                    .questions
+                    .iter()
+                    .find(|question| question.id == question_id)
+            })
+            .cloned()
+        else {
+            return;
+        };
+        let draft = self
+            .snapshot
+            .pending_user_input_draft_answers
+            .get(question_id)
+            .cloned();
+        let next_draft =
+            toggle_pending_user_input_option_selection(&question, draft.as_ref(), option_label);
+        self.snapshot
+            .pending_user_input_draft_answers
+            .insert(question_id.to_string(), next_draft);
+
+        if !question.multi_select {
+            self.advance_pending_user_input(cx);
+        } else {
+            cx.notify();
+        }
+    }
+
+    fn set_active_pending_user_input_custom_answer(
+        &mut self,
+        custom_answer: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(question_id) = self
+            .snapshot
+            .active_pending_user_input_progress()
+            .and_then(|progress| progress.active_question.map(|question| question.id))
+        else {
+            return;
+        };
+        let draft = self
+            .snapshot
+            .pending_user_input_draft_answers
+            .get(&question_id)
+            .cloned();
+        let next_draft = set_pending_user_input_custom_answer(draft.as_ref(), custom_answer);
+        self.snapshot
+            .pending_user_input_draft_answers
+            .insert(question_id, next_draft);
+        cx.notify();
+    }
+
+    fn advance_pending_user_input(&mut self, cx: &mut Context<Self>) {
+        let Some(progress) = self.snapshot.active_pending_user_input_progress() else {
+            return;
+        };
+        if progress.is_last_question {
+            if !progress.is_complete {
+                return;
+            }
+            let request_id = self
+                .snapshot
+                .active_pending_user_input()
+                .map(|prompt| prompt.request_id.clone());
+            if let Some(request_id) = request_id {
+                if !self.snapshot.is_responding_to_request(&request_id) {
+                    self.snapshot.responding_request_ids.push(request_id);
+                }
+            }
+        } else if progress.can_advance {
+            self.snapshot.active_pending_user_input_question_index =
+                progress.question_index.saturating_add(1);
+        }
+        cx.notify();
+    }
+
+    fn previous_pending_user_input_question(&mut self, cx: &mut Context<Self>) {
+        self.snapshot.active_pending_user_input_question_index = self
+            .snapshot
+            .active_pending_user_input_question_index
+            .saturating_sub(1);
+        cx.notify();
+    }
+
     fn submit_composer(&mut self, cx: &mut Context<Self>) {
+        if self.snapshot.active_pending_approval().is_some() {
+            return;
+        }
+        if self.snapshot.active_pending_user_input().is_some() {
+            self.advance_pending_user_input(cx);
+            return;
+        }
         if self.composer_prompt.trim().is_empty() {
             return;
         }
@@ -4504,8 +5095,16 @@ impl R3Shell {
                 true
             }
             "backspace" => {
-                self.composer_prompt.pop();
-                cx.notify();
+                if self.snapshot.active_pending_approval().is_none() {
+                    if let Some(progress) = self.snapshot.active_pending_user_input_progress() {
+                        let mut custom_answer = progress.custom_answer;
+                        custom_answer.pop();
+                        self.set_active_pending_user_input_custom_answer(custom_answer, cx);
+                    } else {
+                        self.composer_prompt.pop();
+                        cx.notify();
+                    }
+                }
                 true
             }
             "escape" => {
@@ -4519,9 +5118,19 @@ impl R3Shell {
                     false
                 } else if let Some(text) = event.keystroke.key_char.as_deref() {
                     if text != "\n" && text != "\t" {
-                        self.composer_prompt.push_str(text);
-                        self.composer_prompt_focused = true;
-                        cx.notify();
+                        if self.snapshot.active_pending_approval().is_none() {
+                            if let Some(progress) =
+                                self.snapshot.active_pending_user_input_progress()
+                            {
+                                let mut custom_answer = progress.custom_answer;
+                                custom_answer.push_str(text);
+                                self.set_active_pending_user_input_custom_answer(custom_answer, cx);
+                            } else {
+                                self.composer_prompt.push_str(text);
+                                self.composer_prompt_focused = true;
+                                cx.notify();
+                            }
+                        }
                         true
                     } else {
                         false
@@ -4635,6 +5244,14 @@ fn theme_mode_for_index(index: usize) -> ThemeMode {
         2 => ThemeMode::Dark,
         _ => ThemeMode::System,
     }
+}
+
+fn pending_blue() -> gpui::Hsla {
+    hsla(217.0 / 360.0, 0.91, 0.60, 1.0)
+}
+
+fn pending_blue_icon() -> gpui::Hsla {
+    hsla(213.0 / 360.0, 0.94, 0.68, 1.0)
 }
 
 fn provider_instance_rows() -> &'static [ProviderInstanceRow] {
@@ -4845,6 +5462,8 @@ pub fn open_main_window(cx: &mut App) {
         Ok("command-palette") => (R3Screen::Empty, true),
         Ok("draft") | Ok("chat-composer") => (R3Screen::Draft, false),
         Ok("active-chat") | Ok("chat") => (R3Screen::ActiveChat, false),
+        Ok("pending-approval") | Ok("approval") => (R3Screen::PendingApproval, false),
+        Ok("pending-user-input") | Ok("user-input") => (R3Screen::PendingUserInput, false),
         Ok("settings") => (R3Screen::Settings, false),
         _ => (R3Screen::Empty, false),
     };
@@ -4860,6 +5479,8 @@ pub fn open_main_window(cx: &mut App) {
             let snapshot = match screen {
                 R3Screen::Draft => AppSnapshot::draft_reference_state(),
                 R3Screen::ActiveChat => AppSnapshot::mock_reference_state(),
+                R3Screen::PendingApproval => AppSnapshot::pending_approval_reference_state(),
+                R3Screen::PendingUserInput => AppSnapshot::pending_user_input_reference_state(),
                 R3Screen::Empty | R3Screen::Settings => AppSnapshot::empty_reference_state(),
             };
             let shell = cx.new(|cx| {

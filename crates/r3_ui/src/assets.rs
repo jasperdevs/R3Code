@@ -24,6 +24,10 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
     ),
     ("icons/bot.svg", include_bytes!("../assets/icons/bot.svg")),
     (
+        "icons/check.svg",
+        include_bytes!("../assets/icons/check.svg"),
+    ),
+    (
         "icons/chevron-down.svg",
         include_bytes!("../assets/icons/chevron-down.svg"),
     ),
@@ -163,6 +167,7 @@ mod tests {
         let icons = assets_list();
         for icon in [
             "diff.svg",
+            "check.svg",
             "folder.svg",
             "lock.svg",
             "lock-open.svg",
