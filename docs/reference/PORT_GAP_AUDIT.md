@@ -55,7 +55,7 @@ These T3 surfaces have no complete Rust implementation yet:
 | Provider/model picker behavior | `ProviderModelPicker.tsx`, `ModelPickerContent.tsx`, `providerModels.ts` | Partial core logic + GPUI picker smoke |
 | Project scripts and open-in-editor picker | `ProjectScriptsControl.tsx`, `projectScripts.ts`, `OpenInPicker.tsx` | Partial core logic + header smoke |
 | Settings providers/connections diagnostics depth | `settings/*`, `Provider*`, `ConnectionsSettings.tsx` | Partial static |
-| Command palette real actions/search | `CommandPalette.tsx`, `CommandPaletteResults.tsx` | Visual shell only |
+| Command palette real actions/search | `CommandPalette.tsx`, `CommandPaletteResults.tsx`, `CommandPalette.logic.ts` | Partial core logic + dynamic GPUI groups |
 | Sidebar real grouping, selection, archival actions | `Sidebar.tsx`, `uiStateStore.ts`, `threadSelectionStore.ts` | Partial static |
 
 ## Major Missing Runtime/Backend Layers

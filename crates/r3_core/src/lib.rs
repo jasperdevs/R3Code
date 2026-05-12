@@ -412,6 +412,8 @@ pub struct DraftSessionState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectSummary {
+    pub id: String,
+    pub environment_id: String,
     pub name: String,
     pub path: String,
     pub scripts: Vec<ProjectScript>,
@@ -1601,9 +1603,15 @@ fn editor_options(platform: &str) -> Vec<EditorOption> {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ThreadSummary {
+    pub id: String,
+    pub environment_id: String,
+    pub project_id: String,
     pub title: String,
     pub project_name: String,
     pub status: ThreadStatus,
+    pub created_at: String,
+    pub updated_at: String,
+    pub archived_at: Option<String>,
     pub latest_user_message_at: Option<String>,
     pub has_pending_approvals: bool,
     pub has_pending_user_input: bool,
@@ -1618,6 +1626,450 @@ pub enum ThreadStatus {
     Running,
     NeedsInput,
     Failed,
+}
+
+pub const RECENT_COMMAND_PALETTE_THREAD_LIMIT: usize = 12;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidebarThreadSortOrder {
+    UpdatedAt,
+    CreatedAt,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandPaletteItemKind {
+    Action,
+    Submenu,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandPaletteItem {
+    pub kind: CommandPaletteItemKind,
+    pub value: String,
+    pub search_terms: Vec<String>,
+    pub title: String,
+    pub description: Option<String>,
+    pub timestamp: Option<String>,
+    pub disabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandPaletteGroup {
+    pub value: String,
+    pub label: String,
+    pub items: Vec<CommandPaletteItem>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandPaletteMode {
+    Root,
+    RootBrowse,
+    Submenu,
+    SubmenuBrowse,
+}
+
+impl CommandPaletteItem {
+    pub fn action(
+        value: impl Into<String>,
+        search_terms: Vec<String>,
+        title: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind: CommandPaletteItemKind::Action,
+            value: value.into(),
+            search_terms,
+            title: title.into(),
+            description: None,
+            timestamp: None,
+            disabled: false,
+        }
+    }
+
+    pub fn submenu(
+        value: impl Into<String>,
+        search_terms: Vec<String>,
+        title: impl Into<String>,
+    ) -> Self {
+        Self {
+            kind: CommandPaletteItemKind::Submenu,
+            value: value.into(),
+            search_terms,
+            title: title.into(),
+            description: None,
+            timestamp: None,
+            disabled: false,
+        }
+    }
+
+    pub fn with_description(mut self, description: impl Into<String>) -> Self {
+        let description = description.into();
+        if !description.is_empty() {
+            self.description = Some(description);
+        }
+        self
+    }
+
+    pub fn with_timestamp(mut self, timestamp: impl Into<String>) -> Self {
+        let timestamp = timestamp.into();
+        if !timestamp.is_empty() {
+            self.timestamp = Some(timestamp);
+        }
+        self
+    }
+}
+
+pub fn normalize_command_palette_search_text(value: &str) -> String {
+    value
+        .trim()
+        .to_ascii_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn rank_command_palette_search_field(field: &str, normalized_query: &str) -> Option<i32> {
+    let normalized_field = normalize_command_palette_search_text(field);
+    if normalized_field.is_empty() || !normalized_field.contains(normalized_query) {
+        return None;
+    }
+    if normalized_field == normalized_query {
+        return Some(3);
+    }
+    if normalized_field.starts_with(normalized_query) {
+        return Some(2);
+    }
+    Some(1)
+}
+
+fn rank_command_palette_item_match(item: &CommandPaletteItem, normalized_query: &str) -> i32 {
+    let terms = item
+        .search_terms
+        .iter()
+        .filter(|term| !term.is_empty())
+        .collect::<Vec<_>>();
+    if terms.is_empty() {
+        return 0;
+    }
+
+    for (index, field) in terms.iter().enumerate() {
+        if let Some(field_rank) = rank_command_palette_search_field(field, normalized_query) {
+            return 1_000 - (index as i32 * 100) + field_rank;
+        }
+    }
+
+    0
+}
+
+pub fn filter_command_palette_groups(
+    active_groups: &[CommandPaletteGroup],
+    query: &str,
+    is_in_submenu: bool,
+    project_search_items: &[CommandPaletteItem],
+    thread_search_items: &[CommandPaletteItem],
+) -> Vec<CommandPaletteGroup> {
+    let is_actions_filter = query.starts_with('>');
+    let search_query = if is_actions_filter {
+        &query[1..]
+    } else {
+        query
+    };
+    let normalized_query = normalize_command_palette_search_text(search_query);
+
+    if normalized_query.is_empty() {
+        if is_actions_filter {
+            return active_groups
+                .iter()
+                .filter(|group| group.value == "actions")
+                .cloned()
+                .collect();
+        }
+        return active_groups.to_vec();
+    }
+
+    let mut searchable_groups = active_groups
+        .iter()
+        .filter(|group| {
+            if is_actions_filter {
+                group.value == "actions"
+            } else {
+                is_in_submenu || group.value != "recent-threads"
+            }
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+
+    if !is_in_submenu && !is_actions_filter {
+        if !project_search_items.is_empty() {
+            searchable_groups.push(CommandPaletteGroup {
+                value: "projects-search".to_string(),
+                label: "Projects".to_string(),
+                items: project_search_items.to_vec(),
+            });
+        }
+        if !thread_search_items.is_empty() {
+            searchable_groups.push(CommandPaletteGroup {
+                value: "threads-search".to_string(),
+                label: "Threads".to_string(),
+                items: thread_search_items.to_vec(),
+            });
+        }
+    }
+
+    searchable_groups
+        .into_iter()
+        .filter_map(|group| {
+            let mut ranked_items = group
+                .items
+                .iter()
+                .enumerate()
+                .filter_map(|(index, item)| {
+                    let haystack =
+                        normalize_command_palette_search_text(&item.search_terms.join(" "));
+                    if !haystack.contains(&normalized_query) {
+                        return None;
+                    }
+                    Some((
+                        index,
+                        rank_command_palette_item_match(item, &normalized_query),
+                        item.clone(),
+                    ))
+                })
+                .collect::<Vec<_>>();
+
+            ranked_items.sort_by(|left, right| right.1.cmp(&left.1).then(left.0.cmp(&right.0)));
+            let items = ranked_items
+                .into_iter()
+                .map(|(_, _, item)| item)
+                .collect::<Vec<_>>();
+            if items.is_empty() {
+                None
+            } else {
+                Some(CommandPaletteGroup { items, ..group })
+            }
+        })
+        .collect()
+}
+
+pub fn build_project_action_items(
+    projects: &[ProjectSummary],
+    value_prefix: &str,
+) -> Vec<CommandPaletteItem> {
+    projects
+        .iter()
+        .map(|project| {
+            CommandPaletteItem::action(
+                format!("{}:{}:{}", value_prefix, project.environment_id, project.id),
+                vec![project.name.clone(), project.path.clone()],
+                project.name.clone(),
+            )
+            .with_description(project.path.clone())
+        })
+        .collect()
+}
+
+pub fn build_thread_action_items(
+    threads: &[ThreadSummary],
+    active_thread_id: Option<&str>,
+    projects: &[ProjectSummary],
+    sort_order: SidebarThreadSortOrder,
+    now_iso: &str,
+    limit: Option<usize>,
+) -> Vec<CommandPaletteItem> {
+    let project_title_by_id = projects
+        .iter()
+        .map(|project| (project.id.as_str(), project.name.as_str()))
+        .collect::<BTreeMap<_, _>>();
+    let mut sorted_threads = threads
+        .iter()
+        .filter(|thread| thread.archived_at.is_none())
+        .collect::<Vec<_>>();
+    sorted_threads.sort_by(|left, right| {
+        let left_timestamp = get_thread_sort_timestamp(left, sort_order);
+        let right_timestamp = get_thread_sort_timestamp(right, sort_order);
+        right_timestamp
+            .cmp(&left_timestamp)
+            .then(right.id.cmp(&left.id))
+    });
+
+    let visible_threads: Box<dyn Iterator<Item = &ThreadSummary> + '_> = if let Some(limit) = limit
+    {
+        Box::new(sorted_threads.into_iter().take(limit))
+    } else {
+        Box::new(sorted_threads.into_iter())
+    };
+
+    visible_threads
+        .map(|thread| {
+            let project_title = project_title_by_id
+                .get(thread.project_id.as_str())
+                .copied()
+                .or_else(|| {
+                    if thread.project_name.is_empty() {
+                        None
+                    } else {
+                        Some(thread.project_name.as_str())
+                    }
+                });
+            let mut description_parts = Vec::new();
+            if let Some(project_title) = project_title {
+                description_parts.push(project_title.to_string());
+            }
+            if let Some(branch) = &thread.branch {
+                description_parts.push(format!("#{branch}"));
+            }
+            if active_thread_id == Some(thread.id.as_str()) {
+                description_parts.push("Current thread".to_string());
+            }
+
+            let display_timestamp = thread
+                .latest_user_message_at
+                .as_deref()
+                .unwrap_or(thread.updated_at.as_str());
+
+            CommandPaletteItem::action(
+                format!("thread:{}", thread.id),
+                vec![
+                    thread.title.clone(),
+                    project_title.unwrap_or_default().to_string(),
+                    thread.branch.clone().unwrap_or_default(),
+                ],
+                thread.title.clone(),
+            )
+            .with_description(description_parts.join(" · "))
+            .with_timestamp(format_relative_time_label_at(display_timestamp, now_iso))
+        })
+        .collect()
+}
+
+pub fn build_root_command_palette_groups(
+    action_items: Vec<CommandPaletteItem>,
+    recent_thread_items: Vec<CommandPaletteItem>,
+) -> Vec<CommandPaletteGroup> {
+    let mut groups = Vec::new();
+    if !action_items.is_empty() {
+        groups.push(CommandPaletteGroup {
+            value: "actions".to_string(),
+            label: "Actions".to_string(),
+            items: action_items,
+        });
+    }
+    if !recent_thread_items.is_empty() {
+        groups.push(CommandPaletteGroup {
+            value: "recent-threads".to_string(),
+            label: "Recent Threads".to_string(),
+            items: recent_thread_items,
+        });
+    }
+    groups
+}
+
+pub fn get_command_palette_mode(
+    current_view_present: bool,
+    is_browsing: bool,
+) -> CommandPaletteMode {
+    match (current_view_present, is_browsing) {
+        (true, true) => CommandPaletteMode::SubmenuBrowse,
+        (true, false) => CommandPaletteMode::Submenu,
+        (false, true) => CommandPaletteMode::RootBrowse,
+        (false, false) => CommandPaletteMode::Root,
+    }
+}
+
+pub fn get_command_palette_input_placeholder(mode: CommandPaletteMode) -> &'static str {
+    match mode {
+        CommandPaletteMode::Root => "Search commands, projects, and threads...",
+        CommandPaletteMode::RootBrowse => "Enter project path (e.g. ~/projects/my-app)",
+        CommandPaletteMode::Submenu => "Search...",
+        CommandPaletteMode::SubmenuBrowse => "Enter path (e.g. ~/projects/my-app)",
+    }
+}
+
+fn get_thread_sort_timestamp(thread: &ThreadSummary, sort_order: SidebarThreadSortOrder) -> i64 {
+    if sort_order == SidebarThreadSortOrder::CreatedAt {
+        return iso_utc_timestamp_seconds(&thread.created_at).unwrap_or(i64::MIN);
+    }
+
+    thread
+        .latest_user_message_at
+        .as_deref()
+        .and_then(iso_utc_timestamp_seconds)
+        .or_else(|| iso_utc_timestamp_seconds(&thread.updated_at))
+        .or_else(|| iso_utc_timestamp_seconds(&thread.created_at))
+        .unwrap_or(i64::MIN)
+}
+
+pub fn format_relative_time_label_at(iso_date: &str, now_iso: &str) -> String {
+    let Some(now_seconds) = iso_utc_timestamp_seconds(now_iso) else {
+        return "just now".to_string();
+    };
+    let Some(date_seconds) = iso_utc_timestamp_seconds(iso_date) else {
+        return "just now".to_string();
+    };
+    let diff = now_seconds.saturating_sub(date_seconds);
+    if date_seconds > now_seconds || diff < 60 {
+        return "just now".to_string();
+    }
+    let minutes = diff / 60;
+    if minutes < 60 {
+        return format!("{minutes}m ago");
+    }
+    let hours = minutes / 60;
+    if hours < 24 {
+        return format!("{hours}h ago");
+    }
+    format!("{}d ago", hours / 24)
+}
+
+fn iso_utc_timestamp_seconds(iso: &str) -> Option<i64> {
+    let date_time = iso.strip_suffix('Z').unwrap_or(iso);
+    let year = date_time.get(0..4)?.parse::<i32>().ok()?;
+    let month = date_time.get(5..7)?.parse::<u32>().ok()?;
+    let day = date_time.get(8..10)?.parse::<u32>().ok()?;
+    let hour = date_time.get(11..13)?.parse::<u32>().ok()?;
+    let minute = date_time.get(14..16)?.parse::<u32>().ok()?;
+    let second = date_time.get(17..19)?.parse::<u32>().ok()?;
+
+    if date_time.get(4..5) != Some("-")
+        || date_time.get(7..8) != Some("-")
+        || date_time.get(10..11) != Some("T")
+        || date_time.get(13..14) != Some(":")
+        || date_time.get(16..17) != Some(":")
+        || !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hour > 23
+        || minute > 59
+        || second > 59
+    {
+        return None;
+    }
+
+    let days = days_from_civil(year, month, day)?;
+    Some(days * 86_400 + hour as i64 * 3_600 + minute as i64 * 60 + second as i64)
+}
+
+fn days_from_civil(year: i32, month: u32, day: u32) -> Option<i64> {
+    let month_days = [31_u32, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    let max_day = if month == 2 && is_leap_year(year) {
+        29
+    } else {
+        *month_days.get(month.checked_sub(1)? as usize)?
+    };
+    if day > max_day {
+        return None;
+    }
+
+    let year = year - (month <= 2) as i32;
+    let era = if year >= 0 { year } else { year - 399 } / 400;
+    let year_of_era = year - era * 400;
+    let month = month as i32;
+    let day = day as i32;
+    let day_of_year = (153 * (month + if month > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+    Some((era * 146_097 + day_of_era - 719_468) as i64)
+}
+
+fn is_leap_year(year: i32) -> bool {
+    (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3692,6 +4144,8 @@ impl AppSnapshot {
                 draft_id: draft_id.clone(),
             }),
             projects: vec![ProjectSummary {
+                id: "project-r3code".to_string(),
+                environment_id: "local".to_string(),
                 name: "server".to_string(),
                 path: "C:\\Users\\bunny\\Downloads\\r3code".to_string(),
                 scripts: Vec::new(),
@@ -3742,6 +4196,8 @@ impl AppSnapshot {
                 thread_ref: ScopedThreadRef::new("local", "thread-r3code-ui-shell"),
             }),
             projects: vec![ProjectSummary {
+                id: "project-r3code".to_string(),
+                environment_id: "local".to_string(),
                 name: "r3code".to_string(),
                 path: "C:\\Users\\bunny\\Downloads\\r3code".to_string(),
                 scripts: Self::reference_project_scripts(),
@@ -3759,9 +4215,15 @@ impl AppSnapshot {
             model_favorites: Self::reference_model_favorites(),
             threads: vec![
                 ThreadSummary {
+                    id: "thread-r3code-ui-shell".to_string(),
+                    environment_id: "local".to_string(),
+                    project_id: "project-r3code".to_string(),
                     title: "Port R3Code UI shell".to_string(),
                     project_name: "r3code".to_string(),
                     status: ThreadStatus::Running,
+                    created_at: "2026-03-04T11:59:00.000Z".to_string(),
+                    updated_at: "2026-03-04T12:00:12.000Z".to_string(),
+                    archived_at: None,
                     latest_user_message_at: Some("2026-03-04T12:00:09.000Z".to_string()),
                     has_pending_approvals: false,
                     has_pending_user_input: false,
@@ -3770,9 +4232,15 @@ impl AppSnapshot {
                     worktree_path: None,
                 },
                 ThreadSummary {
+                    id: "thread-visual-references".to_string(),
+                    environment_id: "local".to_string(),
+                    project_id: "project-r3code".to_string(),
                     title: "Capture visual references".to_string(),
                     project_name: "r3code".to_string(),
                     status: ThreadStatus::Idle,
+                    created_at: "2026-03-03T14:12:00.000Z".to_string(),
+                    updated_at: "2026-03-03T14:32:00.000Z".to_string(),
+                    archived_at: None,
                     latest_user_message_at: None,
                     has_pending_approvals: false,
                     has_pending_user_input: false,
@@ -4373,6 +4841,41 @@ fn reference_turn_diff_summaries() -> Vec<TurnDiffSummary> {
 mod tests {
     use super::*;
 
+    fn make_command_palette_project() -> ProjectSummary {
+        ProjectSummary {
+            id: "project-1".to_string(),
+            environment_id: "environment-local".to_string(),
+            name: "Project".to_string(),
+            path: "/repo/project".to_string(),
+            scripts: Vec::new(),
+        }
+    }
+
+    fn make_command_palette_thread(
+        id: &str,
+        title: &str,
+        created_at: &str,
+        updated_at: &str,
+    ) -> ThreadSummary {
+        ThreadSummary {
+            id: id.to_string(),
+            environment_id: "environment-local".to_string(),
+            project_id: "project-1".to_string(),
+            title: title.to_string(),
+            project_name: "Project".to_string(),
+            status: ThreadStatus::Idle,
+            created_at: created_at.to_string(),
+            updated_at: updated_at.to_string(),
+            archived_at: None,
+            latest_user_message_at: None,
+            has_pending_approvals: false,
+            has_pending_user_input: false,
+            has_actionable_proposed_plan: false,
+            branch: None,
+            worktree_path: None,
+        }
+    }
+
     #[test]
     fn resolves_server_route_before_draft_route() {
         let target = resolve_thread_route_target(Some("env-1"), Some("thread-1"), Some("draft-1"));
@@ -4420,6 +4923,148 @@ mod tests {
         assert_eq!(snapshot.active_thread_title(), "Port R3Code UI shell");
         assert_eq!(snapshot.active_project_name(), Some("r3code"));
         assert!(snapshot.turn_diff_summaries.is_empty());
+    }
+
+    #[test]
+    fn command_palette_builds_recent_threads_with_upstream_sort_and_timestamp_rules() {
+        let projects = vec![make_command_palette_project()];
+        let threads = vec![
+            make_command_palette_thread(
+                "thread-older",
+                "Older thread",
+                "2026-03-23T12:00:00.000Z",
+                "2026-03-24T12:00:00.000Z",
+            ),
+            make_command_palette_thread(
+                "thread-newer",
+                "Newer thread",
+                "2026-03-20T00:00:00.000Z",
+                "2026-03-20T00:00:00.000Z",
+            ),
+        ];
+
+        let items = build_thread_action_items(
+            &threads,
+            None,
+            &projects,
+            SidebarThreadSortOrder::UpdatedAt,
+            "2026-03-25T12:00:00.000Z",
+            None,
+        );
+
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| item.value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["thread:thread-older", "thread:thread-newer"]
+        );
+        assert_eq!(items[0].timestamp.as_deref(), Some("1d ago"));
+        assert_eq!(items[1].timestamp.as_deref(), Some("5d ago"));
+    }
+
+    #[test]
+    fn command_palette_search_ranks_titles_over_context_and_filters_archived_threads() {
+        let projects = vec![make_command_palette_project()];
+        let mut context_match = make_command_palette_thread(
+            "thread-context-match",
+            "Fix navbar spacing",
+            "2026-03-02T00:00:00.000Z",
+            "2026-03-20T00:00:00.000Z",
+        );
+        context_match.project_name = "Project".to_string();
+        let title_match = make_command_palette_thread(
+            "thread-title-match",
+            "Project kickoff notes",
+            "2026-03-02T00:00:00.000Z",
+            "2026-03-19T00:00:00.000Z",
+        );
+        let mut archived_match = make_command_palette_thread(
+            "thread-archived",
+            "Archived project thread",
+            "2026-03-02T00:00:00.000Z",
+            "2026-03-21T00:00:00.000Z",
+        );
+        archived_match.archived_at = Some("2026-03-22T00:00:00.000Z".to_string());
+        let thread_items = build_thread_action_items(
+            &[context_match, title_match, archived_match],
+            None,
+            &projects,
+            SidebarThreadSortOrder::UpdatedAt,
+            "2026-03-25T12:00:00.000Z",
+            None,
+        );
+
+        let groups = filter_command_palette_groups(&[], "project", false, &[], &thread_items);
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].value, "threads-search");
+        assert_eq!(
+            groups[0]
+                .items
+                .iter()
+                .map(|item| item.value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["thread:thread-title-match", "thread:thread-context-match"]
+        );
+    }
+
+    #[test]
+    fn command_palette_filters_action_only_queries_and_injects_projects_and_threads() {
+        let action_items = vec![
+            CommandPaletteItem::action(
+                "action:add-project",
+                vec!["add project".to_string(), "folder".to_string()],
+                "Add project",
+            ),
+            CommandPaletteItem::action(
+                "action:settings",
+                vec!["settings".to_string(), "preferences".to_string()],
+                "Open settings",
+            ),
+        ];
+        let root_groups = build_root_command_palette_groups(action_items, Vec::new());
+        let projects = vec![make_command_palette_project()];
+        let project_items = build_project_action_items(&projects, "project");
+        let thread_items = build_thread_action_items(
+            &[make_command_palette_thread(
+                "thread-1",
+                "Project kickoff notes",
+                "2026-03-02T00:00:00.000Z",
+                "2026-03-19T00:00:00.000Z",
+            )],
+            None,
+            &projects,
+            SidebarThreadSortOrder::UpdatedAt,
+            "2026-03-25T12:00:00.000Z",
+            None,
+        );
+
+        let action_groups = filter_command_palette_groups(
+            &root_groups,
+            ">settings",
+            false,
+            &project_items,
+            &thread_items,
+        );
+        assert_eq!(action_groups.len(), 1);
+        assert_eq!(action_groups[0].value, "actions");
+        assert_eq!(action_groups[0].items[0].value, "action:settings");
+
+        let search_groups = filter_command_palette_groups(
+            &root_groups,
+            "project",
+            false,
+            &project_items,
+            &thread_items,
+        );
+        assert_eq!(
+            search_groups
+                .iter()
+                .map(|group| group.value.as_str())
+                .collect::<Vec<_>>(),
+            vec!["actions", "projects-search", "threads-search"]
+        );
     }
 
     #[test]

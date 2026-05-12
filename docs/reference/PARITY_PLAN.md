@@ -100,9 +100,9 @@ cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-command-palette-reference.png --actual reference\screenshots\r3code-command-palette-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 5
 ```
 
-Last measured result: `3.272%`.
+Last measured result: `3.247%`.
 
-The R3Code command palette capture launches the normal empty shell and opens the palette through the native sidebar click target before taking the screenshot.
+The R3Code command palette capture launches the normal empty shell and opens the palette through the native sidebar click target before taking the screenshot. The Rust palette now ports the upstream `CommandPalette.logic.ts` search ranking, `>` action filter, root action groups, project/thread search item injection, recent-thread limit, archived-thread filtering, and the FolderPlus/Settings/SquarePen/MessageSquare icon set. Add-project source selection, filesystem browsing, remote clone flow, and full submenu chrome are still incomplete.
 
 ## Current Draft Chat Baseline
 

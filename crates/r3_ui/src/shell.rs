@@ -5,20 +5,25 @@ use gpui::{
     TextAlign, Window, div, hsla, point, px, svg,
 };
 use r3_core::{
-    APP_NAME, ActivityTone, AppSnapshot, ChatMessage, DiffOpenValue, DiffRouteSearch,
-    DraftThreadEnvMode, EditorOption, MAX_TERMINALS_PER_GROUP, MAX_VISIBLE_WORK_LOG_ENTRIES,
-    ModelPickerItem, ModelPickerSelectedInstance, ModelPickerState, PendingApproval,
-    PendingUserInputProgress, ProjectScript, ProjectScriptIcon, ProjectSummary,
-    ProviderInstanceEntry, ServerProviderModel, TerminalEvent, ThreadStatus, TurnDiffFileChange,
-    TurnDiffStat, TurnDiffSummary, TurnDiffTreeNode, WorkLogEntry, build_turn_diff_tree,
-    close_thread_terminal, get_display_model_name, new_thread_terminal, parse_diff_route_search,
-    primary_project_script, provider_instance_initials, resolve_model_picker_state,
-    resolve_selectable_model, set_pending_user_input_custom_answer, set_thread_active_terminal,
-    set_thread_terminal_open, split_thread_terminal, summarize_turn_diff_stats,
-    toggle_pending_user_input_option_selection,
+    APP_NAME, ActivityTone, AppSnapshot, ChatMessage, CommandPaletteGroup, CommandPaletteItem,
+    CommandPaletteItemKind, DiffOpenValue, DiffRouteSearch, DraftThreadEnvMode, EditorOption,
+    MAX_TERMINALS_PER_GROUP, MAX_VISIBLE_WORK_LOG_ENTRIES, ModelPickerItem,
+    ModelPickerSelectedInstance, ModelPickerState, PendingApproval, PendingUserInputProgress,
+    ProjectScript, ProjectScriptIcon, ProjectSummary, ProviderInstanceEntry,
+    RECENT_COMMAND_PALETTE_THREAD_LIMIT, ServerProviderModel, SidebarThreadSortOrder,
+    TerminalEvent, ThreadStatus, TurnDiffFileChange, TurnDiffStat, TurnDiffSummary,
+    TurnDiffTreeNode, WorkLogEntry, build_project_action_items, build_root_command_palette_groups,
+    build_thread_action_items, build_turn_diff_tree, close_thread_terminal,
+    filter_command_palette_groups, get_display_model_name, new_thread_terminal,
+    parse_diff_route_search, primary_project_script, provider_instance_initials,
+    resolve_model_picker_state, resolve_selectable_model, set_pending_user_input_custom_answer,
+    set_thread_active_terminal, set_thread_terminal_open, split_thread_terminal,
+    summarize_turn_diff_stats, toggle_pending_user_input_option_selection,
 };
 
 use crate::theme::{FONT_FAMILY, MONO_FONT_FAMILY, SIDEBAR_MIN_WIDTH, Theme, ThemeMode};
+
+const COMMAND_PALETTE_REFERENCE_NOW_ISO: &str = "2026-03-25T12:00:00.000Z";
 
 pub struct R3Shell {
     snapshot: AppSnapshot,
@@ -29,6 +34,7 @@ pub struct R3Shell {
     command_palette_open: bool,
     command_palette_query: String,
     command_palette_highlighted_index: usize,
+    command_palette_submenu: Option<CommandPaletteSubmenu>,
     keybindings_search_open: bool,
     keybindings_add_dialog_open: bool,
     keybindings_file_opened: bool,
@@ -93,6 +99,7 @@ impl R3Shell {
             command_palette_open,
             command_palette_query: String::new(),
             command_palette_highlighted_index: 0,
+            command_palette_submenu: None,
             keybindings_search_open: false,
             keybindings_add_dialog_open: false,
             keybindings_file_opened: false,
@@ -159,8 +166,17 @@ pub enum R3Screen {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CommandPaletteAction {
+    NewThread,
+    NewThreadInProject,
     AddProject,
     OpenSettings,
+    OpenProject,
+    OpenThread,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommandPaletteSubmenu {
+    NewThreadInProject,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -301,36 +317,6 @@ enum KeybindingsHeaderAction {
     ToggleAdd,
     MarkFileOpened,
 }
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct CommandPaletteCommand {
-    title: &'static str,
-    search_terms: &'static [&'static str],
-    action: CommandPaletteAction,
-}
-
-const COMMAND_PALETTE_COMMANDS: &[CommandPaletteCommand] = &[
-    CommandPaletteCommand {
-        title: "Add project",
-        search_terms: &[
-            "add project",
-            "folder",
-            "directory",
-            "browse",
-            "clone",
-            "repository",
-            "repo",
-            "git",
-            "github",
-        ],
-        action: CommandPaletteAction::AddProject,
-    },
-    CommandPaletteCommand {
-        title: "Open settings",
-        search_terms: &["settings", "preferences", "configuration", "keybindings"],
-        action: CommandPaletteAction::OpenSettings,
-    },
-];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SettingsControl {
@@ -6752,6 +6738,128 @@ impl R3Shell {
             .child(self.theme_mode_label_for(mode))
     }
 
+    fn command_palette_action_items(&self) -> Vec<CommandPaletteItem> {
+        let mut items = Vec::new();
+
+        if let Some(project) = self.snapshot.active_project() {
+            items.push(CommandPaletteItem::action(
+                "action:new-thread",
+                vec![
+                    "new thread".to_string(),
+                    "chat".to_string(),
+                    "create".to_string(),
+                    "draft".to_string(),
+                ],
+                format!("New thread in {}", project.name),
+            ));
+            items.push(CommandPaletteItem::submenu(
+                "action:new-thread-in",
+                vec![
+                    "new thread".to_string(),
+                    "project".to_string(),
+                    "pick".to_string(),
+                    "choose".to_string(),
+                    "select".to_string(),
+                ],
+                "New thread in...",
+            ));
+        }
+
+        items.push(CommandPaletteItem::action(
+            "action:add-project",
+            vec![
+                "add project".to_string(),
+                "folder".to_string(),
+                "directory".to_string(),
+                "browse".to_string(),
+                "clone".to_string(),
+                "remote".to_string(),
+                "repository".to_string(),
+                "repo".to_string(),
+                "git".to_string(),
+                "github".to_string(),
+                "gitlab".to_string(),
+                "bitbucket".to_string(),
+                "azure".to_string(),
+                "devops".to_string(),
+                "url".to_string(),
+                "environment".to_string(),
+            ],
+            "Add project",
+        ));
+        items.push(CommandPaletteItem::action(
+            "action:settings",
+            vec![
+                "settings".to_string(),
+                "preferences".to_string(),
+                "configuration".to_string(),
+                "keybindings".to_string(),
+            ],
+            "Open settings",
+        ));
+
+        items
+    }
+
+    fn command_palette_groups(&self) -> Vec<CommandPaletteGroup> {
+        let project_search_items = build_project_action_items(&self.snapshot.projects, "project");
+        let all_thread_items = build_thread_action_items(
+            &self.snapshot.threads,
+            self.snapshot
+                .active_thread_summary()
+                .map(|thread| thread.id.as_str()),
+            &self.snapshot.projects,
+            SidebarThreadSortOrder::UpdatedAt,
+            COMMAND_PALETTE_REFERENCE_NOW_ISO,
+            None,
+        );
+
+        if self.command_palette_submenu == Some(CommandPaletteSubmenu::NewThreadInProject) {
+            let active_groups = vec![CommandPaletteGroup {
+                value: "projects".to_string(),
+                label: "Projects".to_string(),
+                items: build_project_action_items(&self.snapshot.projects, "new-thread-in"),
+            }];
+            return filter_command_palette_groups(
+                &active_groups,
+                &self.command_palette_query,
+                true,
+                &[],
+                &[],
+            );
+        }
+
+        let recent_thread_items = build_thread_action_items(
+            &self.snapshot.threads,
+            self.snapshot
+                .active_thread_summary()
+                .map(|thread| thread.id.as_str()),
+            &self.snapshot.projects,
+            SidebarThreadSortOrder::UpdatedAt,
+            COMMAND_PALETTE_REFERENCE_NOW_ISO,
+            Some(RECENT_COMMAND_PALETTE_THREAD_LIMIT),
+        );
+        let active_groups = build_root_command_palette_groups(
+            self.command_palette_action_items(),
+            recent_thread_items,
+        );
+
+        filter_command_palette_groups(
+            &active_groups,
+            &self.command_palette_query,
+            false,
+            &project_search_items,
+            &all_thread_items,
+        )
+    }
+
+    fn flattened_command_palette_items(&self) -> Vec<CommandPaletteItem> {
+        self.command_palette_groups()
+            .into_iter()
+            .flat_map(|group| group.items)
+            .collect()
+    }
+
     fn command_palette_overlay(&self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .absolute()
@@ -6790,8 +6898,13 @@ impl R3Shell {
     }
 
     fn command_palette_input(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let placeholder = if self.command_palette_submenu.is_some() {
+            "Search..."
+        } else {
+            "Search commands, projects, and threads..."
+        };
         let input_text = if self.command_palette_query.is_empty() {
-            "Search commands, projects, and threads...".to_string()
+            placeholder.to_string()
         } else {
             self.command_palette_query.clone()
         };
@@ -6831,7 +6944,7 @@ impl R3Shell {
     }
 
     fn command_palette_results(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let commands = self.filtered_command_items();
+        let groups = self.command_palette_groups();
         let mut panel = div()
             .flex()
             .flex_col()
@@ -6840,10 +6953,14 @@ impl R3Shell {
             .border_b_0()
             .border_color(self.theme.border)
             .bg(self.theme.background)
-            .p_2()
-            .child(self.command_group_label("Actions"));
+            .p_2();
 
-        if commands.is_empty() {
+        if groups.is_empty() {
+            let empty_message = if self.command_palette_query.starts_with('>') {
+                "No matching actions."
+            } else {
+                "No matching commands, projects, or threads."
+            };
             return panel
                 .child(
                     div()
@@ -6851,45 +6968,87 @@ impl R3Shell {
                         .text_align(TextAlign::Center)
                         .text_size(px(14.0))
                         .text_color(self.theme.muted_foreground)
-                        .child("No matching commands, projects, or threads."),
+                        .child(empty_message),
                 )
                 .into_any_element();
         }
 
-        for (index, command) in commands.into_iter().enumerate() {
-            panel = panel.child(self.command_palette_row(
-                command,
-                index == self.command_palette_highlighted_index,
-                cx,
-            ));
+        let mut item_index = 0usize;
+        for group in groups {
+            panel = panel.child(self.command_group_label(group.label.as_str()));
+            for item in group.items {
+                let active = item_index == self.command_palette_highlighted_index;
+                panel = panel.child(self.command_palette_row(item, active, cx));
+                item_index = item_index.saturating_add(1);
+            }
         }
 
         panel.into_any_element()
     }
 
-    fn command_group_label(&self, label: &'static str) -> impl IntoElement {
+    fn command_group_label(&self, label: &str) -> impl IntoElement {
         div()
             .px_2()
             .py_1p5()
             .text_size(px(12.0))
             .font_weight(FontWeight(600.0))
             .text_color(self.theme.muted_foreground)
-            .child(label)
+            .child(label.to_string())
     }
 
     fn command_palette_row(
         &self,
-        command: &'static CommandPaletteCommand,
+        item: CommandPaletteItem,
         active: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let row_id = match command.action {
-            CommandPaletteAction::AddProject => "command-palette-row-add-project",
-            CommandPaletteAction::OpenSettings => "command-palette-row-open-settings",
+        let item_value = item.value.clone();
+        let row_id = match item.value.as_str() {
+            "action:add-project" => "command-palette-row-add-project".to_string(),
+            "action:settings" => "command-palette-row-open-settings".to_string(),
+            "action:new-thread" => "command-palette-row-new-thread".to_string(),
+            "action:new-thread-in" => "command-palette-row-new-thread-in".to_string(),
+            value => format!(
+                "command-palette-row-{}",
+                value
+                    .chars()
+                    .map(|character| {
+                        if character.is_ascii_alphanumeric() {
+                            character
+                        } else {
+                            '-'
+                        }
+                    })
+                    .collect::<String>()
+            ),
         };
+        let icon_path = self.command_palette_item_icon_path(&item);
+        let mut title = div()
+            .flex()
+            .min_w_0()
+            .items_center()
+            .gap_1p5()
+            .text_size(px(14.0))
+            .text_color(self.theme.foreground)
+            .child(
+                div()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .child(item.title.clone()),
+            );
+        if let Some(description) = item.description.clone() {
+            title = div().flex().min_w_0().flex_col().child(title).child(
+                div()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .text_size(px(12.0))
+                    .text_color(self.theme.muted_foreground.opacity(0.70))
+                    .child(description),
+            );
+        }
 
-        div()
-            .id(row_id)
+        let mut row = div()
+            .id(SharedString::from(row_id))
             .flex()
             .items_center()
             .gap_2()
@@ -6904,17 +7063,32 @@ impl R3Shell {
                 self.theme.background.alpha(0.0)
             })
             .on_click(cx.listener(move |this, _, window, cx| {
-                this.execute_palette_action(command.action, window, cx);
+                this.execute_palette_item_value(&item_value, window, cx);
             }))
-            .child(self.palette_item_icon(active))
-            .child(
+            .child(self.command_palette_item_icon(icon_path, active))
+            .child(div().flex_1().min_w_0().child(title));
+
+        if let Some(timestamp) = item.timestamp.clone() {
+            row = row.child(
                 div()
-                    .flex_1()
-                    .min_w_0()
-                    .text_size(px(14.0))
-                    .text_color(self.theme.foreground)
-                    .child(command.title),
-            )
+                    .min_w(px(48.0))
+                    .text_align(TextAlign::Right)
+                    .text_size(px(10.0))
+                    .text_color(self.theme.muted_foreground.opacity(0.70))
+                    .child(timestamp),
+            );
+        }
+
+        if item.kind == CommandPaletteItemKind::Submenu {
+            row = row.child(
+                svg()
+                    .path("icons/chevron-right.svg")
+                    .size_4()
+                    .text_color(self.theme.muted_foreground.opacity(0.50)),
+            );
+        }
+
+        row.into_any_element()
     }
 
     fn command_palette_footer(&self) -> impl IntoElement {
@@ -7120,21 +7294,41 @@ impl R3Shell {
             )
     }
 
-    fn palette_item_icon(&self, active: bool) -> impl IntoElement {
+    fn command_palette_item_icon(&self, icon_path: &'static str, active: bool) -> impl IntoElement {
         div()
             .flex()
             .items_center()
             .justify_center()
             .w(px(16.0))
             .h(px(16.0))
-            .rounded(px(4.0))
-            .border_1()
-            .border_color(self.theme.muted_foreground.opacity(0.32))
-            .bg(if active {
-                self.theme.background.alpha(0.40)
+            .text_color(if active {
+                self.theme.foreground
             } else {
-                self.theme.accent
+                self.theme.muted_foreground.opacity(0.80)
             })
+            .child(svg().path(icon_path).size_4())
+    }
+
+    fn command_palette_item_icon_path(&self, item: &CommandPaletteItem) -> &'static str {
+        if item.value == "action:add-project" {
+            return "icons/folder-plus.svg";
+        }
+        if item.value == "action:settings" {
+            return "icons/settings-2.svg";
+        }
+        if item.value == "action:new-thread"
+            || item.value == "action:new-thread-in"
+            || item.value.starts_with("new-thread-in:")
+        {
+            return "icons/square-pen.svg";
+        }
+        if item.value.starts_with("project:") {
+            return "icons/folder.svg";
+        }
+        if item.value.starts_with("thread:") {
+            return "icons/message-square.svg";
+        }
+        "icons/pilcrow.svg"
     }
 
     fn theme_mode_label(&self) -> &'static str {
@@ -7287,7 +7481,11 @@ impl R3Shell {
             "down" => self.move_palette_highlight(1, cx),
             "enter" => self.execute_highlighted_palette_action(window, cx),
             "backspace" => {
-                self.command_palette_query.pop();
+                if self.command_palette_query.is_empty() && self.command_palette_submenu.is_some() {
+                    self.command_palette_submenu = None;
+                } else {
+                    self.command_palette_query.pop();
+                }
                 self.command_palette_highlighted_index = 0;
                 cx.notify();
             }
@@ -7313,6 +7511,7 @@ impl R3Shell {
     fn open_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.command_palette_open = true;
         self.command_palette_highlighted_index = 0;
+        self.command_palette_submenu = None;
         self.settings_select_open = None;
         window.focus(&self.command_palette_focus_handle);
         cx.notify();
@@ -7322,6 +7521,7 @@ impl R3Shell {
         self.command_palette_open = false;
         self.command_palette_query.clear();
         self.command_palette_highlighted_index = 0;
+        self.command_palette_submenu = None;
         window.focus(&self.shell_focus_handle);
         cx.notify();
     }
@@ -7332,6 +7532,7 @@ impl R3Shell {
         self.command_palette_open = false;
         self.command_palette_query.clear();
         self.command_palette_highlighted_index = 0;
+        self.command_palette_submenu = None;
         window.focus(&self.shell_focus_handle);
         cx.notify();
     }
@@ -7632,26 +7833,8 @@ impl R3Shell {
             && event.keystroke.key.eq_ignore_ascii_case("t")
     }
 
-    fn filtered_command_items(&self) -> Vec<&'static CommandPaletteCommand> {
-        let query = self.command_palette_query.trim().to_ascii_lowercase();
-        if query.is_empty() {
-            return COMMAND_PALETTE_COMMANDS.iter().collect();
-        }
-
-        COMMAND_PALETTE_COMMANDS
-            .iter()
-            .filter(|command| {
-                command.title.to_ascii_lowercase().contains(&query)
-                    || command
-                        .search_terms
-                        .iter()
-                        .any(|term| term.contains(query.as_str()))
-            })
-            .collect()
-    }
-
     fn move_palette_highlight(&mut self, direction: isize, cx: &mut Context<Self>) {
-        let item_count = self.filtered_command_items().len();
+        let item_count = self.flattened_command_palette_items().len();
         if item_count == 0 {
             self.command_palette_highlighted_index = 0;
             cx.notify();
@@ -7669,11 +7852,34 @@ impl R3Shell {
     }
 
     fn execute_highlighted_palette_action(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let commands = self.filtered_command_items();
-        let Some(command) = commands.get(self.command_palette_highlighted_index) else {
+        let items = self.flattened_command_palette_items();
+        let Some(item) = items.get(self.command_palette_highlighted_index) else {
             return;
         };
-        self.execute_palette_action(command.action, window, cx);
+        self.execute_palette_item_value(&item.value, window, cx);
+    }
+
+    fn execute_palette_item_value(
+        &mut self,
+        value: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if value == "action:new-thread" {
+            self.execute_palette_action(CommandPaletteAction::NewThread, window, cx);
+        } else if value == "action:new-thread-in" {
+            self.execute_palette_action(CommandPaletteAction::NewThreadInProject, window, cx);
+        } else if value == "action:add-project" {
+            self.execute_palette_action(CommandPaletteAction::AddProject, window, cx);
+        } else if value == "action:settings" {
+            self.execute_palette_action(CommandPaletteAction::OpenSettings, window, cx);
+        } else if value.starts_with("project:") {
+            self.execute_palette_action(CommandPaletteAction::OpenProject, window, cx);
+        } else if value.starts_with("new-thread-in:") {
+            self.execute_palette_action(CommandPaletteAction::NewThread, window, cx);
+        } else if value.starts_with("thread:") {
+            self.execute_palette_action(CommandPaletteAction::OpenThread, window, cx);
+        }
     }
 
     fn execute_palette_action(
@@ -7683,7 +7889,20 @@ impl R3Shell {
         cx: &mut Context<Self>,
     ) {
         match action {
+            CommandPaletteAction::NewThread => {
+                self.snapshot = AppSnapshot::draft_reference_state();
+                self.screen = R3Screen::Draft;
+                self.close_command_palette(window, cx);
+            }
+            CommandPaletteAction::NewThreadInProject => {
+                self.command_palette_submenu = Some(CommandPaletteSubmenu::NewThreadInProject);
+                self.command_palette_query.clear();
+                self.command_palette_highlighted_index = 0;
+                window.focus(&self.command_palette_focus_handle);
+                cx.notify();
+            }
             CommandPaletteAction::AddProject => {
+                self.command_palette_submenu = None;
                 self.command_palette_query = "~/".to_string();
                 self.command_palette_highlighted_index = 0;
                 window.focus(&self.command_palette_focus_handle);
@@ -7692,6 +7911,10 @@ impl R3Shell {
             CommandPaletteAction::OpenSettings => {
                 self.screen = R3Screen::Settings;
                 self.settings_section = SettingsSection::General;
+                self.close_command_palette(window, cx);
+            }
+            CommandPaletteAction::OpenProject | CommandPaletteAction::OpenThread => {
+                self.screen = R3Screen::ActiveChat;
                 self.close_command_palette(window, cx);
             }
         }

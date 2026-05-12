@@ -83,6 +83,10 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/folder-git.svg"),
     ),
     (
+        "icons/folder-plus.svg",
+        include_bytes!("../assets/icons/folder-plus.svg"),
+    ),
+    (
         "icons/folder.svg",
         include_bytes!("../assets/icons/folder.svg"),
     ),
@@ -115,6 +119,10 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/lock-open.svg"),
     ),
     ("icons/lock.svg", include_bytes!("../assets/icons/lock.svg")),
+    (
+        "icons/message-square.svg",
+        include_bytes!("../assets/icons/message-square.svg"),
+    ),
     (
         "icons/minus.svg",
         include_bytes!("../assets/icons/minus.svg"),
@@ -168,6 +176,10 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
     (
         "icons/sparkles.svg",
         include_bytes!("../assets/icons/sparkles.svg"),
+    ),
+    (
+        "icons/square-pen.svg",
+        include_bytes!("../assets/icons/square-pen.svg"),
     ),
     (
         "icons/square-split-horizontal.svg",
@@ -268,6 +280,7 @@ mod tests {
             "diff.svg",
             "flask-conical.svg",
             "folder-closed.svg",
+            "folder-plus.svg",
             "folder.svg",
             "folder-git-2.svg",
             "folder-git.svg",
@@ -275,6 +288,7 @@ mod tests {
             "list-checks.svg",
             "lock.svg",
             "lock-open.svg",
+            "message-square.svg",
             "monitor.svg",
             "openai.svg",
             "opencode.svg",
@@ -283,6 +297,7 @@ mod tests {
             "play.svg",
             "rotate-ccw.svg",
             "rows-3.svg",
+            "square-pen.svg",
             "square-split-horizontal.svg",
             "square-terminal.svg",
             "sparkles.svg",
