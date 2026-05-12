@@ -1813,7 +1813,7 @@ impl R3Shell {
             .flex_col()
             .h_full()
             .min_w(px(360.0))
-            .w(px(424.0))
+            .w(px(435.0))
             .flex_shrink_0()
             .border_l_1()
             .border_color(self.theme.border)
@@ -2123,22 +2123,13 @@ impl R3Shell {
             additions: file.additions.unwrap_or(0),
             deletions: file.deletions.unwrap_or(0),
         };
-        let selected = self.snapshot.selected_diff_file_path() == Some(file.path.as_str());
-        let header_icon_color = if selected {
-            diff_success_color()
-        } else {
-            self.diff_kind_color(file.kind.as_deref())
-        };
+        let header_icon_color = self.diff_kind_color(file.kind.as_deref());
         let file_path_for_selection = file.path.clone();
         let mut card = div()
             .id(SharedString::from(format!("diff-render-file-{index}")))
             .rounded(px(6.0))
             .border_1()
-            .border_color(if selected {
-                self.theme.border
-            } else {
-                self.theme.border.opacity(0.60)
-            })
+            .border_color(self.theme.border.opacity(0.60))
             .bg(self.theme.card.opacity(0.90))
             .overflow_hidden()
             .cursor_pointer()
@@ -2152,39 +2143,40 @@ impl R3Shell {
                     .flex()
                     .items_center()
                     .gap_2()
+                    .h(px(44.0))
                     .border_b_1()
                     .border_color(self.theme.border.opacity(0.70))
                     .bg(self.theme.card.opacity(0.94))
-                    .px_3()
-                    .py_2()
-                    .text_size(px(11.0))
+                    .px_4()
+                    .text_size(px(13.0))
                     .child(
                         svg()
                             .path("icons/chevron-down.svg")
-                            .size_3p5()
+                            .size_4()
                             .text_color(header_icon_color),
                     )
                     .child(
                         svg()
                             .path("icons/square-pen.svg")
-                            .size_3p5()
+                            .size_4()
                             .text_color(header_icon_color),
                     )
                     .child(
                         div()
                             .min_w_0()
                             .flex_1()
-                            .font_family(SharedString::from(MONO_FONT_FAMILY))
-                            .font_weight(FontWeight(600.0))
+                            .font_weight(FontWeight(700.0))
                             .text_color(self.theme.foreground.opacity(0.90))
                             .child(file.path.clone()),
                     )
-                    .child(self.diff_stat_label(stat, false)),
+                    .child(self.diff_panel_file_stat_label(stat)),
             );
 
         for row in self.diff_file_rows(file.path.as_str()) {
             card = card.child(self.diff_patch_row(row));
         }
+
+        card = card.child(div().h(px(10.0)).bg(self.theme.background));
 
         card
     }
@@ -2268,11 +2260,26 @@ impl R3Shell {
         }
     }
 
-    fn diff_patch_row(&self, row: DiffPatchRow) -> impl IntoElement {
+    fn diff_patch_row(&self, row: DiffPatchRow) -> AnyElement {
+        if matches!(row.kind, DiffPatchRowKind::Meta) {
+            return div()
+                .flex()
+                .items_center()
+                .min_h(px(32.0))
+                .bg(self.theme.accent.opacity(0.46))
+                .px_4()
+                .font_family(SharedString::from(MONO_FONT_FAMILY))
+                .text_size(px(13.0))
+                .line_height(px(20.0))
+                .text_color(self.theme.foreground.opacity(0.74))
+                .child(row.text)
+                .into_any_element();
+        }
+
         let background = match row.kind {
-            DiffPatchRowKind::Addition => diff_success_color().opacity(0.10),
-            DiffPatchRowKind::Deletion => diff_destructive_color().opacity(0.10),
-            DiffPatchRowKind::Meta => self.theme.accent.opacity(0.42),
+            DiffPatchRowKind::Addition => diff_success_color().opacity(0.08),
+            DiffPatchRowKind::Deletion => diff_destructive_color().opacity(0.08),
+            DiffPatchRowKind::Meta => self.theme.accent.opacity(0.46),
             DiffPatchRowKind::Context => self.theme.background,
         };
         let marker_color = match row.kind {
@@ -2283,65 +2290,87 @@ impl R3Shell {
             }
         };
         let text_color = match row.kind {
-            DiffPatchRowKind::Addition => diff_success_color(),
-            DiffPatchRowKind::Deletion => diff_destructive_color(),
+            DiffPatchRowKind::Addition | DiffPatchRowKind::Deletion => {
+                self.theme.foreground.opacity(0.80)
+            }
             DiffPatchRowKind::Meta => self.theme.foreground.opacity(0.74),
             DiffPatchRowKind::Context => self.theme.foreground.opacity(0.78),
+        };
+        let line_number = match row.kind {
+            DiffPatchRowKind::Deletion => row.old_line,
+            _ => row.new_line.or(row.old_line),
+        };
+        let row_height = if matches!(row.kind, DiffPatchRowKind::Meta) {
+            32.0
+        } else {
+            20.0
         };
 
         div()
             .flex()
             .items_center()
-            .min_h(px(24.0))
+            .min_h(px(row_height))
             .bg(background)
             .font_family(SharedString::from(MONO_FONT_FAMILY))
-            .text_size(px(12.0))
+            .text_size(px(13.0))
+            .line_height(px(20.0))
             .child(
                 div()
                     .w(px(34.0))
                     .flex_shrink_0()
-                    .text_align(TextAlign::Center)
+                    .text_align(TextAlign::Right)
+                    .pr_2()
                     .text_color(self.theme.muted_foreground.opacity(0.60))
-                    .child(
-                        row.old_line
-                            .map(|line| line.to_string())
-                            .unwrap_or_default(),
-                    ),
+                    .child(line_number.map(|line| line.to_string()).unwrap_or_default()),
             )
             .child(
                 div()
-                    .w(px(34.0))
-                    .flex_shrink_0()
-                    .text_align(TextAlign::Center)
-                    .text_color(self.theme.muted_foreground.opacity(0.60))
-                    .child(
-                        row.new_line
-                            .map(|line| line.to_string())
-                            .unwrap_or_default(),
-                    ),
-            )
-            .child(
-                div()
-                    .w(px(18.0))
+                    .w(px(16.0))
                     .flex_shrink_0()
                     .text_color(marker_color)
                     .child(row.marker),
             )
-            .child(
-                div()
-                    .min_w_0()
-                    .flex_1()
-                    .text_color(text_color)
-                    .child(row.text),
-            )
+            .child(self.diff_patch_text(row.text, text_color))
+            .into_any_element()
+    }
+
+    fn diff_patch_text(&self, text: &'static str, default_color: gpui::Hsla) -> impl IntoElement {
+        let mut line = div().min_w_0().flex().flex_1().text_color(default_color);
+        for (segment, color) in diff_patch_text_segments(text, default_color) {
+            line = line.child(div().text_color(color).child(segment));
+        }
+        line
     }
 
     fn diff_kind_color(&self, kind: Option<&str>) -> gpui::Hsla {
         match kind {
             Some("added") | Some("new") => diff_success_color(),
             Some("deleted") => diff_destructive_color(),
+            Some("modified") | Some("change") | Some("rename-pure") | Some("rename-changed") => {
+                diff_modified_color()
+            }
             _ => self.theme.muted_foreground.opacity(0.80),
         }
+    }
+
+    fn diff_panel_file_stat_label(&self, stat: TurnDiffStat) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .flex_shrink_0()
+            .font_family(SharedString::from(MONO_FONT_FAMILY))
+            .text_size(px(13.0))
+            .child(
+                div()
+                    .text_color(diff_success_color())
+                    .child(format!("+{}", stat.additions)),
+            )
+            .child(
+                div()
+                    .text_color(diff_destructive_color())
+                    .child(format!("-{}", stat.deletions)),
+            )
     }
 
     fn diff_stat_label(&self, stat: TurnDiffStat, show_parentheses: bool) -> impl IntoElement {
@@ -9668,8 +9697,91 @@ fn pending_blue_icon() -> gpui::Hsla {
     hsla(213.0 / 360.0, 0.94, 0.68, 1.0)
 }
 
+fn diff_patch_text_segments(
+    text: &'static str,
+    default_color: gpui::Hsla,
+) -> Vec<(&'static str, gpui::Hsla)> {
+    let mut segments = Vec::new();
+    let mut index = 0;
+    while index < text.len() {
+        let next_char = text[index..].chars().next().unwrap();
+        if next_char.is_ascii_alphanumeric() || next_char == '_' {
+            let start = index;
+            index += next_char.len_utf8();
+            while index < text.len() {
+                let current = text[index..].chars().next().unwrap();
+                if current.is_ascii_alphanumeric() || current == '_' {
+                    index += current.len_utf8();
+                } else {
+                    break;
+                }
+            }
+            let word = &text[start..index];
+            segments.push((
+                word,
+                diff_patch_word_color(text, index, word, default_color),
+            ));
+        } else {
+            let start = index;
+            index += next_char.len_utf8();
+            while index < text.len() {
+                let current = text[index..].chars().next().unwrap();
+                if current.is_ascii_alphanumeric() || current == '_' {
+                    break;
+                }
+                index += current.len_utf8();
+            }
+            segments.push((&text[start..index], default_color));
+        }
+    }
+    segments
+}
+
+fn diff_patch_word_color(
+    text: &str,
+    word_end: usize,
+    word: &str,
+    default_color: gpui::Hsla,
+) -> gpui::Hsla {
+    if matches!(
+        word,
+        "pub" | "fn" | "struct" | "impl" | "let" | "mut" | "match" | "return"
+    ) {
+        return diff_syntax_keyword_color();
+    }
+    if matches!(
+        word,
+        "bool" | "String" | "usize" | "u32" | "i32" | "Option" | "Vec"
+    ) {
+        return diff_syntax_type_color();
+    }
+    let next_non_space = text[word_end..]
+        .chars()
+        .find(|character| !character.is_whitespace());
+    if next_non_space == Some('(') {
+        return diff_syntax_function_color();
+    }
+    default_color
+}
+
+fn diff_syntax_keyword_color() -> gpui::Hsla {
+    rgb_to_hsla(85.0 / 255.0, 134.0 / 255.0, 193.0 / 255.0)
+}
+
+fn diff_syntax_type_color() -> gpui::Hsla {
+    rgb_to_hsla(193.0 / 255.0, 134.0 / 255.0, 85.0 / 255.0)
+}
+
+fn diff_syntax_function_color() -> gpui::Hsla {
+    rgb_to_hsla(212.0 / 255.0, 118.0 / 255.0, 40.0 / 255.0)
+}
+
 fn diff_success_color() -> gpui::Hsla {
     hsla(142.0 / 360.0, 0.71, 0.38, 1.0)
+}
+
+fn diff_modified_color() -> gpui::Hsla {
+    hsla(203.0 / 360.0, 1.0, 0.50, 1.0)
 }
 
 fn diff_destructive_color() -> gpui::Hsla {

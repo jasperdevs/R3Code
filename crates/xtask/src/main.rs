@@ -438,7 +438,7 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
     compare_screenshots(CompareOptions {
         expected: resolve_repo_path("reference/screenshots/upstream-diff-panel-reference.png"),
         actual: resolve_repo_path("reference/screenshots/r3code-diff-panel-window.png"),
-        max_different_pixels_percent: 12.0,
+        max_different_pixels_percent: 9.3,
         channel_tolerance: 8,
         ignore_rects: vec![Rect {
             x: 0,

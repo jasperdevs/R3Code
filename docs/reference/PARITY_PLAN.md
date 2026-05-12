@@ -332,12 +332,12 @@ Current measured diff:
 
 ```text
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen diff-panel --output reference\screenshots\r3code-diff-panel-window.png
-cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-diff-panel-reference.png --actual reference\screenshots\r3code-diff-panel-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 12
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-diff-panel-reference.png --actual reference\screenshots\r3code-diff-panel-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 9.3
 ```
 
-Last measured result: `11.192%`.
+Last measured result: `8.915%`.
 
-The diff panel capture ports the upstream diff route parser, turn-diff summary ordering, changed-file tree/stat contracts, inline `DiffPanelShell` header controls, selected-turn/selected-file route state, path-normalized file ordering, and a deterministic parsed-patch-style panel surface. It is now compared against a seeded upstream `DiffPanel` reference, but the Rust side still lacks the real checkpoint-diff query and the full `@pierre/diffs` renderer. The 12% threshold is a provisional gate for the simplified Rust patch renderer and should tighten after the renderer is replaced with a closer `@pierre/diffs` equivalent.
+The diff panel capture ports the upstream diff route parser, turn-diff summary ordering, changed-file tree/stat contracts, inline `DiffPanelShell` header controls, selected-turn/selected-file route state, path-normalized file ordering, `@pierre/diffs`-style panel width, file header height, modified-file icon color, metadata stat shape, hunk separator rows, unified single-gutter patch rows, and a deterministic parsed-patch-style panel surface. It is now compared against a seeded upstream `DiffPanel` reference, but the Rust side still lacks the real checkpoint-diff query and the full `@pierre/diffs` renderer. The 9.3% threshold is a provisional gate for the simplified Rust patch renderer and should tighten after the renderer is replaced with a closer `@pierre/diffs` equivalent.
 ## Current Branch Toolbar Baseline
 
 Reference: `reference/screenshots/upstream-branch-toolbar-reference.png`

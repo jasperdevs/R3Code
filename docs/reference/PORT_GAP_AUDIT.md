@@ -4,7 +4,7 @@ R3Code is still an early static Rust/GPUI shell, not a full Rust port of T3 Code
 
 Reference commit: `8fc317939f5c8bbef4afbe309ae897abbc221631`
 
-Current local baseline: R3Code `main` after the timeline working-state parity slice.
+Current local baseline: R3Code `main` after the diff panel renderer parity slice.
 
 ## Size Check
 
@@ -34,7 +34,7 @@ These screens have automated reference captures and native GPUI comparisons:
 | Active chat with user and assistant messages | 4.2% |
 | Running turn with work-log rows | 4% |
 | Terminal drawer split view | 6% |
-| Diff panel selected turn patch view | 12% |
+| Diff panel selected turn patch view | 9.3% |
 | Branch toolbar draft worktree state | 3% |
 | Sidebar options menu | 3.7% |
 | Project scripts action menu | 4.2% |
@@ -69,7 +69,7 @@ These T3 surfaces have no complete Rust implementation yet:
 | Running agent turn, work log, tool output | `apps/web/src/session-logic.ts`, `MessagesTimeline.tsx` | Seeded upstream reference gate for running session/work-log shell plus deterministic working indicator; live provider stream and tool output runtime still missing |
 | Pending approval and pending user input panels | `ChatComposer.tsx`, `ComposerPendingApproval*`, `pendingUserInput.ts` | Seeded upstream reference gates for approval and user-input composer states with active-thread changed-files and working indicator carried through. Core pending-input, composer send-state, trigger/cursor, command-menu, slash-menu, and inline-token contracts are partial |
 | Terminal drawer and xterm integration | `ThreadTerminalDrawer.tsx`, `terminalStateStore.ts`, `terminalContext.ts` | Seeded upstream reference gate for the split drawer shell plus terminal state, event replay, terminal-context, and composer inline-token contracts; live terminal runtime/xterm backend still missing |
-| Diff panel and changed-file browsing | `DiffPanel.tsx`, `DiffPanelShell.tsx`, `diffRouteSearch.ts`, `turnDiffTree.ts` | Seeded upstream reference gate for selected-turn patch view; route/tree/header contracts are partial and real checkpoint-diff query plus full `@pierre/diffs` rendering are still missing |
+| Diff panel and changed-file browsing | `DiffPanel.tsx`, `DiffPanelShell.tsx`, `diffRouteSearch.ts`, `turnDiffTree.ts` | Seeded upstream reference gate for selected-turn patch view with source-backed shell width, file header, stat, separator, and unified-row renderer parity; route/tree/header contracts are partial and real checkpoint-diff query plus full `@pierre/diffs` rendering are still missing |
 | Branch/worktree toolbar | `BranchToolbar.tsx`, `BranchToolbar.logic.ts`, `BranchToolbarEnvModeSelector.tsx`, `BranchToolbarBranchSelector.tsx` | Seeded upstream reference gate for draft worktree toolbar state; full combobox, async git ref query, create-ref, PR checkout, and real environment switching paths remain missing |
 | Provider/model picker behavior | `ProviderModelPicker.tsx`, `ModelPickerContent.tsx`, `providerModels.ts` | Partial core logic + GPUI picker comparison gate |
 | Project scripts, open-in-editor picker, and Git header actions | `ProjectScriptsControl.tsx`, `projectScripts.ts`, `OpenInPicker.tsx`, `GitActionsControl.tsx`, `GitActionsControl.logic.ts` | Seeded upstream menu gates plus partial core/header logic; dialogs, keybinding capture, disabled-reason tooltips, full editor/icon set, real process/editor execution, and live git mutations are still missing |
