@@ -6,7 +6,7 @@ use gpui::{
 };
 use r3_core::{APP_NAME, AppSnapshot, MessageAuthor, ProjectSummary, ThreadStatus};
 
-use crate::theme::{FONT_FAMILY, SIDEBAR_MIN_WIDTH, Theme, ThemeMode};
+use crate::theme::{FONT_FAMILY, MONO_FONT_FAMILY, SIDEBAR_MIN_WIDTH, Theme, ThemeMode};
 
 pub struct R3Shell {
     snapshot: AppSnapshot,
@@ -1188,44 +1188,57 @@ impl R3Shell {
     }
 
     fn settings_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut header = div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .h(px(41.0))
+            .px_5()
+            .border_b_1()
+            .border_color(self.theme.border)
+            .child(div().text_size(px(14.0)).child("Settings"));
+
+        if self.settings_section == SettingsSection::General {
+            header = header.child(
+                div()
+                    .id("settings-restore-defaults")
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
+                    .rounded(px(7.0))
+                    .border_1()
+                    .border_color(self.theme.border)
+                    .px_2()
+                    .py_1()
+                    .text_size(px(13.0))
+                    .text_color(self.theme.muted_foreground)
+                    .cursor_pointer()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.settings_defaults_restored = true;
+                        this.settings_select_open = None;
+                        cx.notify();
+                    }))
+                    .child(
+                        svg()
+                            .path("icons/rotate-ccw.svg")
+                            .w(px(14.0))
+                            .h(px(14.0))
+                            .text_color(self.theme.muted_foreground),
+                    )
+                    .child(if self.settings_defaults_restored {
+                        "Defaults restored"
+                    } else {
+                        "Restore defaults"
+                    }),
+            );
+        }
+
         div()
             .flex()
             .flex_col()
             .flex_1()
             .min_w_0()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .h(px(41.0))
-                    .px_5()
-                    .border_b_1()
-                    .border_color(self.theme.border)
-                    .child(div().text_size(px(14.0)).child("Settings"))
-                    .child(
-                        div()
-                            .id("settings-restore-defaults")
-                            .rounded(px(7.0))
-                            .border_1()
-                            .border_color(self.theme.border)
-                            .px_2()
-                            .py_1()
-                            .text_size(px(13.0))
-                            .text_color(self.theme.muted_foreground)
-                            .cursor_pointer()
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.settings_defaults_restored = true;
-                                this.settings_select_open = None;
-                                cx.notify();
-                            }))
-                            .child(if self.settings_defaults_restored {
-                                "Defaults restored"
-                            } else {
-                                "Restore defaults"
-                            }),
-                    ),
-            )
+            .child(header)
             .child(match self.settings_section {
                 SettingsSection::General => self.settings_general_panel(cx).into_any_element(),
                 SettingsSection::Keybindings => {
@@ -1881,6 +1894,7 @@ impl R3Shell {
             .bg(self.theme.background)
             .px_2p5()
             .text_size(px(12.0))
+            .font_family(SharedString::from(MONO_FONT_FAMILY))
             .text_color(if value.is_empty() {
                 self.theme.muted_foreground
             } else {
@@ -1888,18 +1902,19 @@ impl R3Shell {
             })
             .child(if value.is_empty() { "Always" } else { value })
             .child(
-                div()
-                    .text_size(px(11.0))
-                    .text_color(self.theme.muted_foreground)
-                    .child("v"),
+                svg()
+                    .path("icons/chevron-down.svg")
+                    .size_3()
+                    .text_color(self.theme.muted_foreground),
             )
     }
 
     fn keybinding_warning_mark(&self) -> impl IntoElement {
-        div()
-            .text_size(px(13.0))
+        svg()
+            .path("icons/triangle-alert.svg")
+            .w(px(14.0))
+            .h(px(14.0))
             .text_color(hsla(36.0 / 360.0, 1.0, 0.50, 1.0))
-            .child("!")
     }
 
     fn keybindings_header_actions(&self, count: usize, cx: &mut Context<Self>) -> impl IntoElement {

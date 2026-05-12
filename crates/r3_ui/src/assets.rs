@@ -80,6 +80,10 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/refresh-cw.svg"),
     ),
     (
+        "icons/rotate-ccw.svg",
+        include_bytes!("../assets/icons/rotate-ccw.svg"),
+    ),
+    (
         "icons/search.svg",
         include_bytes!("../assets/icons/search.svg"),
     ),
@@ -94,6 +98,10 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
     (
         "icons/terminal.svg",
         include_bytes!("../assets/icons/terminal.svg"),
+    ),
+    (
+        "icons/triangle-alert.svg",
+        include_bytes!("../assets/icons/triangle-alert.svg"),
     ),
 ];
 
@@ -151,7 +159,7 @@ mod tests {
     }
 
     #[test]
-    fn upstream_lucide_icons_used_by_chat_are_listed() {
+    fn upstream_lucide_icons_used_by_native_surfaces_are_listed() {
         let icons = assets_list();
         for icon in [
             "diff.svg",
@@ -159,7 +167,9 @@ mod tests {
             "lock.svg",
             "lock-open.svg",
             "pen-line.svg",
+            "rotate-ccw.svg",
             "square-terminal.svg",
+            "triangle-alert.svg",
         ] {
             assert!(icons.iter().any(|listed| listed == icon), "{icon}");
         }

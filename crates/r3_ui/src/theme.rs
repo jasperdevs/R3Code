@@ -6,7 +6,7 @@ pub const RADIUS: f32 = 10.0;
 pub const SCROLLBAR_WIDTH: f32 = 6.0;
 
 pub const FONT_FAMILY: &str = "Segoe UI";
-pub const MONO_FONT_FAMILY: &str = "SF Mono";
+pub const MONO_FONT_FAMILY: &str = "Consolas";
 
 #[derive(Debug, Clone, Copy)]
 pub struct Theme {

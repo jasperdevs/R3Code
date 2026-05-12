@@ -138,7 +138,7 @@ cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-reference.png --actual reference\screenshots\r3code-settings-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
 ```
 
-Last measured result: `5.781%`.
+Last measured result: `5.792%`.
 
 The settings sidebar renders the upstream settings nav icon set through GPUI SVG assets:
 `Settings2`, `Keyboard`, `Bot`, `GitBranch`, `Link2`, `Archive`, and the footer `ArrowLeft`.
@@ -157,10 +157,10 @@ Current measured diff:
 
 ```text
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen settings-keybindings --output reference\screenshots\r3code-settings-keybindings-window.png
-cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-keybindings-reference.png --actual reference\screenshots\r3code-settings-keybindings-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 10
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-keybindings-reference.png --actual reference\screenshots\r3code-settings-keybindings-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 9
 ```
 
-Last measured result: `8.794%`.
+Last measured result: `8.739%`.
 
 ## Current Settings Source Control Baseline
 
@@ -177,7 +177,7 @@ cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-source-control-reference.png --actual reference\screenshots\r3code-settings-source-control-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
 ```
 
-Last measured result: `3.507%`.
+Last measured result: `3.441%`.
 
 ## Current Settings Archive Baseline
 
@@ -194,7 +194,7 @@ cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-archive-reference.png --actual reference\screenshots\r3code-settings-archive-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
 ```
 
-Last measured result: `1.247%`.
+Last measured result: `1.181%`.
 
 ## Current Settings Back Baseline
 
@@ -228,7 +228,7 @@ cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-theme-menu-reference.png --actual reference\screenshots\r3code-settings-theme-menu-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
 ```
 
-Last measured result: `5.787%`.
+Last measured result: `5.798%`.
 
 The R3Code capture opens the settings route in forced light mode, opens the native GPUI theme select with the settings keyboard path, and then screenshots the open `System / Light / Dark` popup. The reference selects `Light` before opening the menu so both screenshots compare the same selected value.
 
@@ -247,7 +247,7 @@ cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-dark-reference.png --actual reference\screenshots\r3code-settings-dark-window.png --channel-tolerance 11 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
 ```
 
-Last measured result: `5.264%`.
+Last measured result: `5.276%`.
 
 The dark settings comparison uses a slightly higher channel tolerance because the Chromium reference and GPUI render the same dark text with different subpixel antialiasing, while the layout and pixel-percent gate remain unchanged.
 
