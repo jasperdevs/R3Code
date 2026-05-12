@@ -3466,6 +3466,107 @@ pub fn setup_project_script(scripts: &[ProjectScript]) -> Option<&ProjectScript>
     scripts.iter().find(|script| script.run_on_worktree_create)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitActionIconName {
+    Commit,
+    Push,
+    Pr,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitActionMenuItemId {
+    Commit,
+    Push,
+    Pr,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitActionMenuItem {
+    pub id: GitActionMenuItemId,
+    pub label: String,
+    pub disabled: bool,
+    pub icon: GitActionIconName,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitStatusSnapshot {
+    pub ref_name: Option<String>,
+    pub has_working_tree_changes: bool,
+    pub has_upstream: bool,
+    pub ahead_count: u32,
+    pub behind_count: u32,
+    pub ahead_of_default_count: Option<u32>,
+    pub has_open_pr: bool,
+}
+
+pub fn build_git_action_menu_items(
+    git_status: Option<&GitStatusSnapshot>,
+    is_busy: bool,
+    has_primary_remote: bool,
+) -> Vec<GitActionMenuItem> {
+    let Some(git_status) = git_status else {
+        return Vec::new();
+    };
+
+    let has_branch = git_status.ref_name.is_some();
+    let has_changes = git_status.has_working_tree_changes;
+    let is_behind = git_status.behind_count > 0;
+    let has_default_branch_delta = git_status
+        .ahead_of_default_count
+        .unwrap_or(git_status.ahead_count)
+        > 0;
+    let can_push_without_upstream = has_primary_remote && !git_status.has_upstream;
+    let can_commit = !is_busy && has_changes;
+    let can_push = !is_busy
+        && has_branch
+        && !is_behind
+        && git_status.ahead_count > 0
+        && (git_status.has_upstream || can_push_without_upstream);
+    let can_create_pr = !is_busy
+        && has_branch
+        && !has_changes
+        && !git_status.has_open_pr
+        && has_default_branch_delta
+        && !is_behind
+        && (git_status.has_upstream || can_push_without_upstream);
+    let can_open_pr = !is_busy && git_status.has_open_pr;
+
+    let commit_item = GitActionMenuItem {
+        id: GitActionMenuItemId::Commit,
+        label: "Commit".to_string(),
+        disabled: !can_commit,
+        icon: GitActionIconName::Commit,
+    };
+
+    if !has_primary_remote {
+        return vec![commit_item];
+    }
+
+    vec![
+        commit_item,
+        GitActionMenuItem {
+            id: GitActionMenuItemId::Push,
+            label: "Push".to_string(),
+            disabled: !can_push,
+            icon: GitActionIconName::Push,
+        },
+        GitActionMenuItem {
+            id: GitActionMenuItemId::Pr,
+            label: if git_status.has_open_pr {
+                "View PR".to_string()
+            } else {
+                "Create PR".to_string()
+            },
+            disabled: if git_status.has_open_pr {
+                !can_open_pr
+            } else {
+                !can_create_pr
+            },
+            icon: GitActionIconName::Pr,
+        },
+    ]
+}
+
 pub fn project_script_cwd(project_cwd: &str, worktree_path: Option<&str>) -> String {
     worktree_path.unwrap_or(project_cwd).to_string()
 }
@@ -10005,6 +10106,54 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["test", "parity"]
         );
+    }
+
+    #[test]
+    fn git_action_menu_items_match_upstream_clean_main_status() {
+        let status = GitStatusSnapshot {
+            ref_name: Some("main".to_string()),
+            has_working_tree_changes: false,
+            has_upstream: true,
+            ahead_count: 0,
+            behind_count: 0,
+            ahead_of_default_count: Some(0),
+            has_open_pr: false,
+        };
+
+        let items = build_git_action_menu_items(Some(&status), false, true);
+        assert_eq!(
+            items
+                .iter()
+                .map(|item| (item.label.as_str(), item.disabled, item.icon))
+                .collect::<Vec<_>>(),
+            vec![
+                ("Commit", true, GitActionIconName::Commit),
+                ("Push", true, GitActionIconName::Push),
+                ("Create PR", true, GitActionIconName::Pr),
+            ]
+        );
+
+        let changed_status = GitStatusSnapshot {
+            has_working_tree_changes: true,
+            ..status
+        };
+        assert_eq!(
+            build_git_action_menu_items(Some(&changed_status), false, true)[0].disabled,
+            false
+        );
+
+        let detached_status = GitStatusSnapshot {
+            ref_name: None,
+            ..changed_status
+        };
+        assert_eq!(
+            build_git_action_menu_items(Some(&detached_status), false, true)
+                .iter()
+                .map(|item| (item.label.as_str(), item.disabled))
+                .collect::<Vec<_>>(),
+            vec![("Commit", false), ("Push", true), ("Create PR", true)]
+        );
+        assert!(build_git_action_menu_items(None, false, true).is_empty());
     }
 
     #[test]

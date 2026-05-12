@@ -49,6 +49,10 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/clock-3.svg"),
     ),
     (
+        "icons/cloud-upload.svg",
+        include_bytes!("../assets/icons/cloud-upload.svg"),
+    ),
+    (
         "icons/cloud.svg",
         include_bytes!("../assets/icons/cloud.svg"),
     ),
@@ -292,6 +296,7 @@ mod tests {
             "claude-ai.svg",
             "clock-3.svg",
             "cloud.svg",
+            "cloud-upload.svg",
             "columns-2.svg",
             "cursor.svg",
             "diff.svg",
@@ -303,6 +308,7 @@ mod tests {
             "folder-git-2.svg",
             "folder-git.svg",
             "git-commit.svg",
+            "git-pull-request.svg",
             "hammer.svg",
             "list-checks.svg",
             "lock.svg",

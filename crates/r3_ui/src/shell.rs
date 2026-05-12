@@ -10,16 +10,17 @@ use r3_core::{
     APP_NAME, ActivityTone, AppSnapshot, ChatMessage, CommandPaletteGroup, CommandPaletteItem,
     CommandPaletteItemKind, ComposerCommandItem, ComposerMenuNudgeDirection, ComposerPromptSegment,
     ComposerSlashCommand, ComposerTrigger, DiagnosticsDescriptionInput, DiffOpenValue,
-    DiffRouteSearch, DraftThreadEnvMode, EditorOption, MAX_TERMINALS_PER_GROUP,
-    MAX_VISIBLE_WORK_LOG_ENTRIES, ModelPickerItem, ModelPickerSelectedInstance, ModelPickerState,
-    PendingApproval, PendingUserInputProgress, ProcessDiagnosticsEntry, ProcessDiagnosticsResult,
-    ProjectEntry, ProjectEntryKind, ProjectScript, ProjectScriptIcon, ProjectSummary,
-    ProviderInstanceEntry, RECENT_COMMAND_PALETTE_THREAD_LIMIT, ServerProviderModel,
-    ServerProviderSkill, ServerProviderSlashCommand, SidebarThreadSortOrder, TerminalEvent,
-    ThreadStatus, TraceDiagnosticsFailureSummary, TraceDiagnosticsLogEvent,
-    TraceDiagnosticsRecentFailure, TraceDiagnosticsResult, TraceDiagnosticsSpanOccurrence,
-    TraceDiagnosticsSpanSummary, TurnDiffFileChange, TurnDiffStat, TurnDiffSummary,
-    TurnDiffTreeNode, WorkLogEntry, build_composer_menu_items, build_project_action_items,
+    DiffRouteSearch, DraftThreadEnvMode, EditorOption, GitActionIconName, GitActionMenuItem,
+    GitStatusSnapshot, MAX_TERMINALS_PER_GROUP, MAX_VISIBLE_WORK_LOG_ENTRIES, ModelPickerItem,
+    ModelPickerSelectedInstance, ModelPickerState, PendingApproval, PendingUserInputProgress,
+    ProcessDiagnosticsEntry, ProcessDiagnosticsResult, ProjectEntry, ProjectEntryKind,
+    ProjectScript, ProjectScriptIcon, ProjectSummary, ProviderInstanceEntry,
+    RECENT_COMMAND_PALETTE_THREAD_LIMIT, ServerProviderModel, ServerProviderSkill,
+    ServerProviderSlashCommand, SidebarThreadSortOrder, TerminalEvent, ThreadStatus,
+    TraceDiagnosticsFailureSummary, TraceDiagnosticsLogEvent, TraceDiagnosticsRecentFailure,
+    TraceDiagnosticsResult, TraceDiagnosticsSpanOccurrence, TraceDiagnosticsSpanSummary,
+    TurnDiffFileChange, TurnDiffStat, TurnDiffSummary, TurnDiffTreeNode, WorkLogEntry,
+    build_composer_menu_items, build_git_action_menu_items, build_project_action_items,
     build_root_command_palette_groups, build_thread_action_items, build_turn_diff_tree,
     close_thread_terminal, composer_menu_search_key, detect_composer_trigger,
     filter_command_palette_groups, format_diagnostics_bytes, format_diagnostics_count,
@@ -86,6 +87,7 @@ pub struct R3Shell {
     project_script_menu_open: bool,
     opened_editor_count: usize,
     open_in_menu_open: bool,
+    git_actions_menu_open: bool,
     providers_refresh_requested: bool,
     providers_add_dialog_open: bool,
     expanded_provider_index: Option<usize>,
@@ -155,6 +157,7 @@ impl R3Shell {
             project_script_menu_open: screen == R3Screen::ProjectScriptsMenu,
             opened_editor_count: 0,
             open_in_menu_open: screen == R3Screen::OpenInMenu,
+            git_actions_menu_open: screen == R3Screen::GitActionsMenu,
             providers_refresh_requested: false,
             providers_add_dialog_open: false,
             expanded_provider_index: Some(0),
@@ -217,6 +220,7 @@ pub enum R3Screen {
     BranchToolbar,
     ProjectScriptsMenu,
     OpenInMenu,
+    GitActionsMenu,
     ProviderModelPicker,
     Settings,
     SettingsDiagnostics,
@@ -489,6 +493,7 @@ impl Render for R3Shell {
             | R3Screen::BranchToolbar
             | R3Screen::ProjectScriptsMenu
             | R3Screen::OpenInMenu
+            | R3Screen::GitActionsMenu
             | R3Screen::ProviderModelPicker => {
                 root.child(self.sidebar(cx)).child(self.main_panel(cx))
             }
@@ -511,6 +516,10 @@ impl Render for R3Shell {
 
         if self.open_in_menu_open && self.snapshot.open_in_picker_visible() {
             root = root.child(self.open_in_menu_popup(cx));
+        }
+
+        if self.git_actions_menu_open && self.snapshot.is_git_repo {
+            root = root.child(self.git_actions_menu_popup(cx));
         }
 
         root
@@ -2533,6 +2542,9 @@ impl R3Shell {
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.project_script_run_count = this.project_script_run_count.saturating_add(1);
                 this.composer_prompt = command.clone();
+                this.project_script_menu_open = false;
+                this.open_in_menu_open = false;
+                this.git_actions_menu_open = false;
                 cx.notify();
             }))
             .child(
@@ -2557,6 +2569,7 @@ impl R3Shell {
             .on_click(cx.listener(|this, _, _, cx| {
                 this.project_script_menu_open = !this.project_script_menu_open;
                 this.open_in_menu_open = false;
+                this.git_actions_menu_open = false;
                 cx.notify();
             }))
             .child(
@@ -2581,6 +2594,8 @@ impl R3Shell {
             .on_click(cx.listener(|this, _, _, cx| {
                 this.composer_prompt = "Add action".to_string();
                 this.project_script_menu_open = false;
+                this.open_in_menu_open = false;
+                this.git_actions_menu_open = false;
                 cx.notify();
             }))
             .child(
@@ -2623,7 +2638,9 @@ impl R3Shell {
                     .cursor_pointer()
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.opened_editor_count = this.opened_editor_count.saturating_add(1);
+                        this.project_script_menu_open = false;
                         this.open_in_menu_open = false;
+                        this.git_actions_menu_open = false;
                         cx.notify();
                     }))
                     .child(
@@ -2648,6 +2665,7 @@ impl R3Shell {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.open_in_menu_open = !this.open_in_menu_open;
                         this.project_script_menu_open = false;
+                        this.git_actions_menu_open = false;
                         cx.notify();
                     }))
                     .child(
@@ -2683,6 +2701,9 @@ impl R3Shell {
                     .cursor_pointer()
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.composer_prompt = "Commit".to_string();
+                        this.project_script_menu_open = false;
+                        this.open_in_menu_open = false;
+                        this.git_actions_menu_open = false;
                         cx.notify();
                     }))
                     .child(
@@ -2705,7 +2726,9 @@ impl R3Shell {
                     .text_color(self.theme.muted_foreground)
                     .cursor_pointer()
                     .on_click(cx.listener(|this, _, _, cx| {
-                        this.composer_prompt = "Git action options".to_string();
+                        this.git_actions_menu_open = !this.git_actions_menu_open;
+                        this.project_script_menu_open = false;
+                        this.open_in_menu_open = false;
                         cx.notify();
                     }))
                     .child(
@@ -2754,6 +2777,8 @@ impl R3Shell {
                 .on_click(cx.listener(|this, _, _, cx| {
                     this.composer_prompt = "Add action".to_string();
                     this.project_script_menu_open = false;
+                    this.open_in_menu_open = false;
+                    this.git_actions_menu_open = false;
                     cx.notify();
                 })),
             )
@@ -2784,8 +2809,97 @@ impl R3Shell {
             this.project_script_run_count = this.project_script_run_count.saturating_add(1);
             this.composer_prompt = command.clone();
             this.project_script_menu_open = false;
+            this.open_in_menu_open = false;
+            this.git_actions_menu_open = false;
             cx.notify();
         }))
+    }
+
+    fn git_actions_menu_popup(&self, cx: &mut Context<Self>) -> AnyElement {
+        let status = self.reference_git_status_snapshot();
+        let mut popup = div()
+            .id("git-actions-menu-popup")
+            .absolute()
+            .top(px(40.0))
+            .right(px(92.0))
+            .flex()
+            .flex_col()
+            .w(px(522.0))
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.background)
+            .p_1()
+            .text_color(self.theme.foreground)
+            .shadow(self.header_menu_shadow());
+
+        for item in build_git_action_menu_items(Some(&status), false, true) {
+            popup = popup.child(self.git_action_menu_item(&item, cx));
+        }
+
+        if status.ref_name.is_none() {
+            popup = popup.child(
+                div()
+                    .px_2()
+                    .py_1p5()
+                    .text_size(px(12.0))
+                    .text_color(git_action_warning_color())
+                    .child(
+                        "Detached HEAD: create and checkout a refName to enable push and pull request actions.",
+                    ),
+            );
+        }
+
+        popup.into_any_element()
+    }
+
+    fn git_action_menu_item(
+        &self,
+        item: &GitActionMenuItem,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let label = item.label.clone();
+        let row = self
+            .header_menu_row(
+                format!(
+                    "git-actions-menu-item-{}",
+                    label.to_ascii_lowercase().replace(' ', "-")
+                ),
+                git_action_icon_path(item.icon),
+                label.clone(),
+                None,
+                None,
+            )
+            .h(px(28.0))
+            .rounded(px(2.0))
+            .text_size(px(14.0))
+            .opacity(if item.disabled { 0.64 } else { 1.0 });
+
+        if item.disabled {
+            row
+        } else {
+            row.on_click(cx.listener(move |this, _, _, cx| {
+                this.composer_prompt = label.clone();
+                this.project_script_menu_open = false;
+                this.open_in_menu_open = false;
+                this.git_actions_menu_open = false;
+                cx.notify();
+            }))
+        }
+    }
+
+    fn reference_git_status_snapshot(&self) -> GitStatusSnapshot {
+        GitStatusSnapshot {
+            // The pinned upstream seed renders GitActionsControl with detached VCS status
+            // while the branch toolbar still resolves "From main".
+            ref_name: None,
+            has_working_tree_changes: false,
+            has_upstream: true,
+            ahead_count: 0,
+            behind_count: 0,
+            ahead_of_default_count: Some(0),
+            has_open_pr: false,
+        }
     }
 
     fn open_in_menu_popup(&self, cx: &mut Context<Self>) -> AnyElement {
@@ -2840,7 +2954,9 @@ impl R3Shell {
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.opened_editor_count = this.opened_editor_count.saturating_add(1);
                         this.composer_prompt = format!("Open in {label}");
+                        this.project_script_menu_open = false;
                         this.open_in_menu_open = false;
+                        this.git_actions_menu_open = false;
                         cx.notify();
                     })),
                 );
@@ -9017,6 +9133,18 @@ fn editor_option_icon_path(option: EditorOption) -> &'static str {
     }
 }
 
+fn git_action_icon_path(icon: GitActionIconName) -> &'static str {
+    match icon {
+        GitActionIconName::Commit => "icons/git-commit.svg",
+        GitActionIconName::Push => "icons/cloud-upload.svg",
+        GitActionIconName::Pr => "icons/git-pull-request.svg",
+    }
+}
+
+fn git_action_warning_color() -> gpui::Hsla {
+    hsla(38.0 / 360.0, 0.92, 0.50, 1.0)
+}
+
 fn provider_driver_icon_path(driver: &str) -> &'static str {
     match driver {
         "codex" => "icons/openai.svg",
@@ -9481,6 +9609,7 @@ pub fn open_main_window(cx: &mut App) {
         Ok("branch-toolbar") | Ok("branch") => (R3Screen::BranchToolbar, false),
         Ok("project-scripts-menu") | Ok("scripts-menu") => (R3Screen::ProjectScriptsMenu, false),
         Ok("open-in-menu") | Ok("editor-menu") => (R3Screen::OpenInMenu, false),
+        Ok("git-actions-menu") | Ok("git-menu") => (R3Screen::GitActionsMenu, false),
         Ok("provider-model-picker") | Ok("model-picker") => (R3Screen::ProviderModelPicker, false),
         Ok("settings-diagnostics") | Ok("diagnostics") => (R3Screen::SettingsDiagnostics, false),
         Ok("settings") => (R3Screen::Settings, false),
@@ -9508,7 +9637,9 @@ pub fn open_main_window(cx: &mut App) {
                 R3Screen::DiffPanel => AppSnapshot::diff_panel_reference_state(),
                 R3Screen::BranchToolbar => AppSnapshot::branch_toolbar_reference_state(),
                 R3Screen::ProjectScriptsMenu => AppSnapshot::active_chat_reference_state(),
-                R3Screen::OpenInMenu => AppSnapshot::branch_toolbar_reference_state(),
+                R3Screen::OpenInMenu | R3Screen::GitActionsMenu => {
+                    AppSnapshot::branch_toolbar_reference_state()
+                }
                 R3Screen::ProviderModelPicker => {
                     AppSnapshot::provider_model_picker_reference_state()
                 }

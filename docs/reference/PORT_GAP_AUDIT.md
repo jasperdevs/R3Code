@@ -4,7 +4,7 @@ R3Code is still an early static Rust/GPUI shell, not a full Rust port of T3 Code
 
 Reference commit: `8fc317939f5c8bbef4afbe309ae897abbc221631`
 
-Current local baseline: R3Code `main` after the project scripts/Open In menu reference-gate slice.
+Current local baseline: R3Code `main` after the Git actions menu reference-gate slice.
 
 ## Size Check
 
@@ -38,6 +38,7 @@ These screens have automated reference captures and native GPUI comparisons:
 | Branch toolbar draft worktree state | 3% |
 | Project scripts action menu | 6% |
 | Open In editor picker menu | 3% |
+| Git actions options menu | 3% |
 | Composer slash-command menu | 5% |
 | Composer inline mention/skill chips | 5% |
 | Provider/model picker | 6% |
@@ -70,7 +71,7 @@ These T3 surfaces have no complete Rust implementation yet:
 | Diff panel and changed-file browsing | `DiffPanel.tsx`, `DiffPanelShell.tsx`, `diffRouteSearch.ts`, `turnDiffTree.ts` | Seeded upstream reference gate for selected-turn patch view; route/tree/header contracts are partial and real checkpoint-diff query plus full `@pierre/diffs` rendering are still missing |
 | Branch/worktree toolbar | `BranchToolbar.tsx`, `BranchToolbar.logic.ts`, `BranchToolbarEnvModeSelector.tsx`, `BranchToolbarBranchSelector.tsx` | Seeded upstream reference gate for draft worktree toolbar state; full combobox, async git ref query, create-ref, PR checkout, and real environment switching paths remain missing |
 | Provider/model picker behavior | `ProviderModelPicker.tsx`, `ModelPickerContent.tsx`, `providerModels.ts` | Partial core logic + GPUI picker comparison gate |
-| Project scripts and open-in-editor picker | `ProjectScriptsControl.tsx`, `projectScripts.ts`, `OpenInPicker.tsx` | Seeded upstream menu gates plus partial core/header logic; dialogs, keybinding capture, full editor icon set, and real process/editor execution are still missing |
+| Project scripts, open-in-editor picker, and Git header actions | `ProjectScriptsControl.tsx`, `projectScripts.ts`, `OpenInPicker.tsx`, `GitActionsControl.tsx`, `GitActionsControl.logic.ts` | Seeded upstream menu gates plus partial core/header logic; dialogs, keybinding capture, disabled-reason tooltips, full editor/icon set, real process/editor execution, and live git mutations are still missing |
 | Settings providers/connections diagnostics depth | `settings/*`, `Provider*`, `ConnectionsSettings.tsx`, `DiagnosticsSettings.tsx`, `ProcessDiagnostics.ts`, `TraceDiagnostics.ts` | Partial provider, pairing, endpoint, process/trace diagnostics, diagnostics-format contracts, and top-level provider/connections/diagnostics comparison gates |
 | Command palette real actions/search | `CommandPalette.tsx`, `CommandPaletteResults.tsx`, `CommandPalette.logic.ts` | Partial core logic + dynamic GPUI groups |
 | Sidebar real grouping, selection, archival actions | `Sidebar.tsx`, `uiStateStore.ts`, `threadSelectionStore.ts` | Partial static |
@@ -85,7 +86,7 @@ These upstream backend/runtime areas have no Rust equivalent yet:
 | Provider orchestration | `apps/server/src/provider`, `orchestration`, `textGeneration` | Missing |
 | Persistence and migrations | `apps/server/src/persistence` | Missing |
 | Project discovery/setup/scripts | `apps/server/src/project`, `workspace` | Missing |
-| Git/source control/PR workflow | `apps/server/src/sourceControl`, `git`, `vcs` | Missing |
+| Git/source control/PR workflow | `apps/server/src/sourceControl`, `git`, `vcs` | Header/menu state and seeded detached-HEAD gate only; runtime git status refresh, commit/push/PR dialogs, publish repository flow, and source-control backend are still missing |
 | Terminal process management | `apps/server/src/terminal`, `processRunner.ts` | Missing runtime, UI state contracts only |
 | Auth/pairing/saved environments | `apps/server/src/auth`, `apps/web/src/environments` | Missing |
 | Desktop IPC/menu/bootstrap | `apps/desktop/src` | Missing |
