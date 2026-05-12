@@ -270,7 +270,7 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
     compare_screenshots(CompareOptions {
         expected: resolve_repo_path("reference/screenshots/upstream-active-chat-reference.png"),
         actual: resolve_repo_path("reference/screenshots/r3code-active-chat-window.png"),
-        max_different_pixels_percent: 6.0,
+        max_different_pixels_percent: 4.2,
         channel_tolerance: 8,
         ignore_rects: vec![Rect {
             x: 0,
@@ -292,7 +292,7 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
             "reference/screenshots/upstream-project-scripts-menu-reference.png",
         ),
         actual: resolve_repo_path("reference/screenshots/r3code-project-scripts-menu-window.png"),
-        max_different_pixels_percent: 6.0,
+        max_different_pixels_percent: 4.2,
         channel_tolerance: 8,
         ignore_rects: vec![Rect {
             x: 0,
@@ -354,7 +354,7 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
     compare_screenshots(CompareOptions {
         expected: resolve_repo_path("reference/screenshots/upstream-running-turn-reference.png"),
         actual: resolve_repo_path("reference/screenshots/r3code-running-turn-window.png"),
-        max_different_pixels_percent: 6.0,
+        max_different_pixels_percent: 4.0,
         channel_tolerance: 8,
         ignore_rects: vec![Rect {
             x: 0,
@@ -376,7 +376,7 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
             "reference/screenshots/upstream-pending-approval-reference.png",
         ),
         actual: resolve_repo_path("reference/screenshots/r3code-pending-approval-window.png"),
-        max_different_pixels_percent: 6.0,
+        max_different_pixels_percent: 5.0,
         channel_tolerance: 8,
         ignore_rects: vec![Rect {
             x: 0,
@@ -398,7 +398,7 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
             "reference/screenshots/upstream-pending-user-input-reference.png",
         ),
         actual: resolve_repo_path("reference/screenshots/r3code-pending-user-input-window.png"),
-        max_different_pixels_percent: 7.0,
+        max_different_pixels_percent: 5.5,
         channel_tolerance: 8,
         ignore_rects: vec![Rect {
             x: 0,

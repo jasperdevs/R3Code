@@ -4,7 +4,7 @@ R3Code is still an early static Rust/GPUI shell, not a full Rust port of T3 Code
 
 Reference commit: `8fc317939f5c8bbef4afbe309ae897abbc221631`
 
-Current local baseline: R3Code `main` after the project-scoped sidebar thread-row slice.
+Current local baseline: R3Code `main` after the timeline working-state parity slice.
 
 ## Size Check
 
@@ -31,20 +31,20 @@ These screens have automated reference captures and native GPUI comparisons:
 | Command palette | 5% |
 | Draft empty chat | 2% |
 | Composer focused empty state | 2% |
-| Active chat with user and assistant messages | 6% |
-| Running turn with work-log rows | 6% |
+| Active chat with user and assistant messages | 4.2% |
+| Running turn with work-log rows | 4% |
 | Terminal drawer split view | 6% |
 | Diff panel selected turn patch view | 12% |
 | Branch toolbar draft worktree state | 3% |
 | Sidebar options menu | 3.7% |
-| Project scripts action menu | 6% |
+| Project scripts action menu | 4.2% |
 | Open In editor picker menu | 3% |
 | Git actions options menu | 3% |
 | Composer slash-command menu | 5% |
 | Composer inline mention/skill chips | 5% |
 | Provider/model picker | 6% |
-| Pending approval composer state | 6% |
-| Pending user input composer state | 7% |
+| Pending approval composer state | 5% |
+| Pending user input composer state | 5.5% |
 | Settings general | 6% |
 | Settings keybindings | 9% |
 | Settings providers | 5% |
@@ -65,9 +65,9 @@ These T3 surfaces have no complete Rust implementation yet:
 
 | Upstream surface | Main source area | R3 state |
 | --- | --- | --- |
-| Active chat with real user/assistant turns | `apps/web/src/components/ChatView.tsx`, `MessagesTimeline.tsx` | Seeded upstream reference gate for the message shell; live thread/runtime behavior still missing |
-| Running agent turn, work log, tool output | `apps/web/src/session-logic.ts`, `MessagesTimeline.tsx` | Seeded upstream reference gate for running session/work-log shell; live provider stream and tool output runtime still missing |
-| Pending approval and pending user input panels | `ChatComposer.tsx`, `ComposerPendingApproval*`, `pendingUserInput.ts` | Seeded upstream reference gates for approval and user-input composer states. Core pending-input, composer send-state, trigger/cursor, command-menu, slash-menu, and inline-token contracts are partial |
+| Active chat with real user/assistant turns | `apps/web/src/components/ChatView.tsx`, `MessagesTimeline.tsx` | Seeded upstream reference gate for the message shell, content-sized user bubbles, assistant changed-files metadata ordering, and project-scoped sidebar row; live thread/runtime behavior still missing |
+| Running agent turn, work log, tool output | `apps/web/src/session-logic.ts`, `MessagesTimeline.tsx` | Seeded upstream reference gate for running session/work-log shell plus deterministic working indicator; live provider stream and tool output runtime still missing |
+| Pending approval and pending user input panels | `ChatComposer.tsx`, `ComposerPendingApproval*`, `pendingUserInput.ts` | Seeded upstream reference gates for approval and user-input composer states with active-thread changed-files and working indicator carried through. Core pending-input, composer send-state, trigger/cursor, command-menu, slash-menu, and inline-token contracts are partial |
 | Terminal drawer and xterm integration | `ThreadTerminalDrawer.tsx`, `terminalStateStore.ts`, `terminalContext.ts` | Seeded upstream reference gate for the split drawer shell plus terminal state, event replay, terminal-context, and composer inline-token contracts; live terminal runtime/xterm backend still missing |
 | Diff panel and changed-file browsing | `DiffPanel.tsx`, `DiffPanelShell.tsx`, `diffRouteSearch.ts`, `turnDiffTree.ts` | Seeded upstream reference gate for selected-turn patch view; route/tree/header contracts are partial and real checkpoint-diff query plus full `@pierre/diffs` rendering are still missing |
 | Branch/worktree toolbar | `BranchToolbar.tsx`, `BranchToolbar.logic.ts`, `BranchToolbarEnvModeSelector.tsx`, `BranchToolbarBranchSelector.tsx` | Seeded upstream reference gate for draft worktree toolbar state; full combobox, async git ref query, create-ref, PR checkout, and real environment switching paths remain missing |

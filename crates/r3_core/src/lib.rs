@@ -4212,6 +4212,35 @@ pub fn format_relative_time_label_at(iso_date: &str, now_iso: &str) -> String {
     format!("{}d ago", hours / 24)
 }
 
+pub fn format_working_timer_at(start_iso: &str, end_iso: &str) -> Option<String> {
+    let ended_at = iso_utc_timestamp_seconds(end_iso)?;
+    format_working_timer_at_unix_seconds(start_iso, ended_at)
+}
+
+pub fn format_working_timer_at_unix_seconds(start_iso: &str, ended_at: i64) -> Option<String> {
+    let started_at = iso_utc_timestamp_seconds(start_iso)?;
+    let elapsed_seconds = ended_at.saturating_sub(started_at).max(0);
+    if elapsed_seconds < 60 {
+        return Some(format!("{elapsed_seconds}s"));
+    }
+
+    let hours = elapsed_seconds / 3_600;
+    let minutes = (elapsed_seconds % 3_600) / 60;
+    let seconds = elapsed_seconds % 60;
+    if hours > 0 {
+        if minutes > 0 {
+            return Some(format!("{hours}h {minutes}m"));
+        }
+        return Some(format!("{hours}h"));
+    }
+
+    if seconds > 0 {
+        Some(format!("{minutes}m {seconds}s"))
+    } else {
+        Some(format!("{minutes}m"))
+    }
+}
+
 fn iso_utc_timestamp_seconds(iso: &str) -> Option<i64> {
     let date_time = iso.strip_suffix('Z').unwrap_or(iso);
     let year = date_time.get(0..4)?.parse::<i32>().ok()?;
@@ -7581,6 +7610,7 @@ pub struct AppSnapshot {
     pub terminal_event_entries: Vec<TerminalEventEntry>,
     pub diff_route: DiffRouteSearch,
     pub turn_diff_summaries: Vec<TurnDiffSummary>,
+    pub active_work_started_at: Option<String>,
 }
 
 impl AppSnapshot {
@@ -7943,6 +7973,7 @@ impl AppSnapshot {
             terminal_event_entries: Vec::new(),
             diff_route: DiffRouteSearch::default(),
             turn_diff_summaries: Vec::new(),
+            active_work_started_at: None,
         }
     }
 
@@ -7999,6 +8030,7 @@ impl AppSnapshot {
             terminal_event_entries: Vec::new(),
             diff_route: DiffRouteSearch::default(),
             turn_diff_summaries: Vec::new(),
+            active_work_started_at: None,
         }
     }
 
@@ -8066,6 +8098,7 @@ impl AppSnapshot {
             terminal_event_entries: Vec::new(),
             diff_route: DiffRouteSearch::default(),
             turn_diff_summaries: Vec::new(),
+            active_work_started_at: None,
         }
     }
 
@@ -8098,6 +8131,7 @@ impl AppSnapshot {
         if let Some(thread) = snapshot.threads.first_mut() {
             thread.status = ThreadStatus::Running;
         }
+        snapshot.active_work_started_at = Some("2026-03-04T12:10:00.000Z".to_string());
         snapshot.messages = vec![ChatMessage::user(
             "msg-user-running-turn",
             "Run the parity harness and fix any failures.",
@@ -8157,11 +8191,12 @@ impl AppSnapshot {
     }
 
     pub fn pending_approval_reference_state() -> Self {
-        let mut snapshot = Self::mock_reference_state();
+        let mut snapshot = Self::active_chat_reference_state();
         if let Some(thread) = snapshot.threads.first_mut() {
-            thread.status = ThreadStatus::NeedsInput;
+            thread.status = ThreadStatus::Running;
             thread.has_pending_approvals = true;
         }
+        snapshot.active_work_started_at = Some("2026-03-04T12:00:10.000Z".to_string());
         snapshot.pending_approvals = vec![
             PendingApproval {
                 request_id: "approval-command-run-tests".to_string(),
@@ -8180,11 +8215,12 @@ impl AppSnapshot {
     }
 
     pub fn pending_user_input_reference_state() -> Self {
-        let mut snapshot = Self::mock_reference_state();
+        let mut snapshot = Self::active_chat_reference_state();
         if let Some(thread) = snapshot.threads.first_mut() {
-            thread.status = ThreadStatus::NeedsInput;
+            thread.status = ThreadStatus::Running;
             thread.has_pending_user_input = true;
         }
+        snapshot.active_work_started_at = Some("2026-03-04T12:00:10.000Z".to_string());
         snapshot.pending_user_inputs = vec![PendingUserInput {
             request_id: "req-browser-user-input".to_string(),
             created_at: "2026-03-04T12:16:40.000Z".to_string(),
@@ -9599,6 +9635,26 @@ mod tests {
     }
 
     #[test]
+    fn working_timer_format_matches_upstream_labels() {
+        assert_eq!(
+            format_working_timer_at("2026-03-04T12:10:00.000Z", "2026-03-04T12:10:00.000Z"),
+            Some("0s".to_string())
+        );
+        assert_eq!(
+            format_working_timer_at("2026-03-04T12:10:00.000Z", "2026-03-04T12:10:08.000Z"),
+            Some("8s".to_string())
+        );
+        assert_eq!(
+            format_working_timer_at("2026-03-04T12:10:00.000Z", "2026-03-04T12:11:08.000Z"),
+            Some("1m 8s".to_string())
+        );
+        assert_eq!(
+            format_working_timer_at("2026-03-04T12:10:00.000Z", "2026-05-12T09:35:00.000Z"),
+            Some("1653h 25m".to_string())
+        );
+    }
+
+    #[test]
     fn command_palette_search_ranks_titles_over_context_and_filters_archived_threads() {
         let projects = vec![make_command_palette_project()];
         let mut context_match = make_command_palette_thread(
@@ -10487,8 +10543,13 @@ mod tests {
         let snapshot = AppSnapshot::pending_approval_reference_state();
         let approval = snapshot.active_pending_approval().unwrap();
 
-        assert_eq!(snapshot.threads[0].status, ThreadStatus::NeedsInput);
+        assert_eq!(snapshot.threads[0].status, ThreadStatus::Running);
         assert!(snapshot.threads[0].has_pending_approvals);
+        assert_eq!(
+            snapshot.active_work_started_at.as_deref(),
+            Some("2026-03-04T12:00:10.000Z")
+        );
+        assert_eq!(snapshot.turn_diff_summaries.len(), 2);
         assert_eq!(approval.request_kind, ApprovalRequestKind::Command);
         assert_eq!(approval.request_id, "approval-command-run-tests");
         assert!(!snapshot.is_responding_to_request(&approval.request_id));
@@ -10499,8 +10560,13 @@ mod tests {
         let snapshot = AppSnapshot::pending_user_input_reference_state();
         let progress = snapshot.active_pending_user_input_progress().unwrap();
 
-        assert_eq!(snapshot.threads[0].status, ThreadStatus::NeedsInput);
+        assert_eq!(snapshot.threads[0].status, ThreadStatus::Running);
         assert!(snapshot.threads[0].has_pending_user_input);
+        assert_eq!(
+            snapshot.active_work_started_at.as_deref(),
+            Some("2026-03-04T12:00:10.000Z")
+        );
+        assert_eq!(snapshot.turn_diff_summaries.len(), 2);
         assert_eq!(progress.question_index, 0);
         assert_eq!(progress.active_question.unwrap().id, "scope");
         assert!(progress.selected_option_labels.is_empty());

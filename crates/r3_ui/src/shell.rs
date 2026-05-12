@@ -26,8 +26,8 @@ use r3_core::{
     close_thread_terminal, composer_menu_search_key, default_sidebar_options_state,
     detect_composer_trigger, filter_command_palette_groups, format_diagnostics_bytes,
     format_diagnostics_count, format_diagnostics_description, format_diagnostics_duration_ms,
-    format_provider_skill_display_name, get_display_model_name, get_provider_summary,
-    get_provider_version_advisory_presentation, get_provider_version_label,
+    format_provider_skill_display_name, format_working_timer_at, get_display_model_name,
+    get_provider_summary, get_provider_version_advisory_presentation, get_provider_version_label,
     group_composer_command_items, new_thread_terminal, nudge_composer_menu_highlight,
     ordered_turn_diff_files, parse_diff_route_search, primary_project_script,
     provider_instance_initials, replace_text_range, resolve_composer_command_selection,
@@ -42,6 +42,7 @@ use r3_core::{
 use crate::theme::{FONT_FAMILY, MONO_FONT_FAMILY, SIDEBAR_MIN_WIDTH, Theme, ThemeMode};
 
 const COMMAND_PALETTE_REFERENCE_NOW_ISO: &str = "2026-03-25T12:00:00.000Z";
+const REFERENCE_WORKING_TIMER_NOW: &str = "2026-05-12T09:35:10.000Z";
 
 #[derive(Debug, Clone, Copy)]
 struct DiffPatchRow {
@@ -569,7 +570,7 @@ impl R3Shell {
                         .rounded(px(5.0))
                         .bg(self.theme.accent)
                         .px_1()
-                        .py_0p5()
+                        .py_1()
                         .text_size(px(9.0))
                         .text_color(self.theme.muted_foreground)
                         .child("DEV"),
@@ -916,6 +917,9 @@ impl R3Shell {
         if !work_log_entries.is_empty() {
             content = content.child(self.work_log_group(&work_log_entries));
         }
+        if let Some(started_at) = self.snapshot.active_work_started_at.as_deref() {
+            content = content.child(self.working_timeline_row(started_at));
+        }
 
         div()
             .id("messages-timeline-scroll")
@@ -941,20 +945,21 @@ impl R3Shell {
     }
 
     fn user_timeline_message(&self, message: &ChatMessage) -> impl IntoElement {
-        let bubble_width = if self.snapshot.diff_open() {
-            420.0
+        let bubble_max_width = if self.snapshot.diff_open() {
+            368.0
         } else {
-            520.0
+            608.0
         };
         div().flex().justify_end().child(
             div()
                 .rounded(px(16.0))
+                .rounded_br(px(2.0))
                 .border_1()
                 .border_color(self.theme.border)
                 .bg(self.theme.accent)
                 .px_4()
                 .py_3()
-                .w(px(bubble_width))
+                .max_w(px(bubble_max_width))
                 .child(
                     div()
                         .text_size(px(14.0))
@@ -990,20 +995,21 @@ impl R3Shell {
                     .text_color(self.theme.foreground)
                     .child(message.text.clone()),
             )
+            .when_some(
+                self.turn_diff_summary_for_message(&message.id),
+                |message_node, summary| {
+                    message_node.child(self.assistant_changed_files_section(summary, cx))
+                },
+            )
             .child(
                 div()
+                    .mt_1p5()
                     .flex()
                     .items_center()
                     .gap_2()
                     .text_size(px(10.0))
                     .text_color(self.theme.muted_foreground.opacity(0.30))
                     .child("12:00 PM"),
-            )
-            .when_some(
-                self.turn_diff_summary_for_message(&message.id),
-                |message_node, summary| {
-                    message_node.child(self.assistant_changed_files_section(summary, cx))
-                },
             )
     }
 
@@ -1031,11 +1037,12 @@ impl R3Shell {
                 summary.turn_id
             )))
             .mt_2()
+            .mx(px(-4.0))
             .rounded(px(8.0))
             .border_1()
             .border_color(self.theme.border.opacity(0.80))
             .bg(self.theme.card.opacity(0.45))
-            .p(px(10.0))
+            .p_2()
             .child(
                 div()
                     .mb_1p5()
@@ -1119,7 +1126,7 @@ impl R3Shell {
         depth: usize,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let mut list = div().flex().flex_col().gap(px(2.0));
+        let mut list = div().flex().flex_col();
         for node in nodes {
             list = list.child(self.changed_files_tree_node(node, turn_id, depth, cx));
         }
@@ -1144,14 +1151,13 @@ impl R3Shell {
                 .id(SharedString::from(format!("changed-files-dir-{path}")))
                 .flex()
                 .flex_col()
-                .gap(px(2.0))
                 .child(
                     div()
                         .flex()
                         .items_center()
                         .gap_1p5()
                         .rounded(px(6.0))
-                        .py_1()
+                        .py_0p5()
                         .pr_2()
                         .pl(px(left_padding))
                         .text_size(px(11.0))
@@ -1184,6 +1190,11 @@ impl R3Shell {
             TurnDiffTreeNode::File { name, path, stat } => {
                 let turn_id_for_click = turn_id.to_string();
                 let path_for_click = path.clone();
+                let icon_path = if name == "diff.svg" {
+                    "icons/diff.svg"
+                } else {
+                    "icons/file-json.svg"
+                };
                 div()
                     .id(SharedString::from(format!("changed-files-file-{path}")))
                     .flex()
@@ -1207,7 +1218,7 @@ impl R3Shell {
                     .child(div().w(px(14.0)).h(px(14.0)).flex_shrink_0())
                     .child(
                         svg()
-                            .path("icons/file-json.svg")
+                            .path(icon_path)
                             .size_3()
                             .text_color(self.theme.muted_foreground.opacity(0.70)),
                     )
@@ -1333,6 +1344,54 @@ impl R3Shell {
                             .text_color(work_log_tone_color(entry.tone, self.theme))
                             .child(display_text),
                     ),
+            )
+    }
+
+    fn working_timeline_row(&self, started_at: &str) -> impl IntoElement {
+        let label = format!(
+            "Working for {}",
+            working_timer_label(started_at).unwrap_or_else(|| "0s".to_string())
+        );
+        div()
+            .id("timeline-working-indicator")
+            .py_0p5()
+            .pl_1p5()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .pt_1()
+                    .text_size(px(11.0))
+                    .text_color(self.theme.muted_foreground.opacity(0.70))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(3.0))
+                            .child(
+                                div()
+                                    .w(px(4.0))
+                                    .h(px(4.0))
+                                    .rounded(px(2.0))
+                                    .bg(self.theme.muted_foreground.opacity(0.30)),
+                            )
+                            .child(
+                                div()
+                                    .w(px(4.0))
+                                    .h(px(4.0))
+                                    .rounded(px(2.0))
+                                    .bg(self.theme.muted_foreground.opacity(0.30)),
+                            )
+                            .child(
+                                div()
+                                    .w(px(4.0))
+                                    .h(px(4.0))
+                                    .rounded(px(2.0))
+                                    .bg(self.theme.muted_foreground.opacity(0.30)),
+                            ),
+                    )
+                    .child(label),
             )
     }
 
@@ -3100,15 +3159,16 @@ impl R3Shell {
             .child(
                 div()
                     .flex()
+                    .flex_wrap()
                     .items_center()
                     .gap_2()
-                    .px_4()
-                    .py_3()
+                    .px_5()
+                    .py_4()
                     .child(
                         div()
                             .text_size(px(14.0))
                             .text_color(self.theme.foreground)
-                            .child("PENDING APPROVAL"),
+                            .child("P E N D I N G A P P R O V A L"),
                     )
                     .child(
                         div()
@@ -3673,6 +3733,21 @@ impl R3Shell {
         let tokenize_prompt = !placeholder
             && active_pending_approval.is_none()
             && active_pending_user_input_progress.is_none();
+        let input_min_height = if active_pending_approval.is_some() {
+            79.0
+        } else {
+            96.0
+        };
+        let input_top_padding = if active_pending_approval.is_some() {
+            12.0
+        } else {
+            16.0
+        };
+        let input_bottom_padding = if active_pending_approval.is_some() {
+            8.0
+        } else {
+            12.0
+        };
 
         div()
             .id("chat-composer-input")
@@ -3682,10 +3757,10 @@ impl R3Shell {
             .on_key_down(cx.listener(Self::on_composer_key_down))
             .tab_index(0)
             .cursor(CursorStyle::IBeam)
-            .min_h(px(96.0))
+            .min_h(px(input_min_height))
             .px_4()
-            .pt_4()
-            .pb_3()
+            .pt(px(input_top_padding))
+            .pb(px(input_bottom_padding))
             .on_click(cx.listener(|this, _, window, cx| {
                 if this.snapshot.active_pending_approval().is_none() {
                     this.composer_prompt_focused = true;
@@ -8658,16 +8733,16 @@ impl R3Shell {
                     .flex_1()
                     .items_center()
                     .gap_1p5()
+                    .when_some(status, |row, status| {
+                        row.child(self.sidebar_thread_status_pill(status))
+                    })
                     .child(
                         div()
                             .min_w_0()
                             .overflow_hidden()
                             .text_ellipsis()
                             .child(thread.title.clone()),
-                    )
-                    .when_some(status, |row, status| {
-                        row.child(self.sidebar_thread_status_pill(status))
-                    }),
+                    ),
             )
             .child(
                 div()
@@ -9528,6 +9603,10 @@ fn sidebar_thread_relative_time(thread: &r3_core::ThreadSummary) -> String {
     } else {
         "just now".to_string()
     }
+}
+
+fn working_timer_label(started_at: &str) -> Option<String> {
+    format_working_timer_at(started_at, REFERENCE_WORKING_TIMER_NOW)
 }
 
 fn provider_driver_icon_path(driver: &str) -> &'static str {

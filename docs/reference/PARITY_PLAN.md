@@ -167,13 +167,13 @@ Current measured diff:
 
 ```text
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen active-chat --output reference\screenshots\r3code-active-chat-window.png
-cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-active-chat-reference.png --actual reference\screenshots\r3code-active-chat-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-active-chat-reference.png --actual reference\screenshots\r3code-active-chat-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 4.2
 ```
 
-Last measured result: `5.365%`.
+Last measured result: `4.030%`.
 
 The upstream active-chat reference seeds the real T3 Code app store with a deterministic server thread, then captures the actual `/$environmentId/$threadId` route from pinned commit `8fc317939f5c8bbef4afbe309ae897abbc221631`.
-The R3Code sidebar now renders the seeded active thread as a project-scoped row under the matching project, with source-backed status pill priority and deterministic reference relative-time text. Multi-select, hover archive controls, context menus, show-more/show-less, and live sidebar grouping remain incomplete.
+The R3Code sidebar now renders the seeded active thread as a project-scoped row under the matching project, with source-backed status pill priority and deterministic reference relative-time text. The message timeline now ports upstream content-sized user bubbles, assistant metadata ordering after changed-files cards, and deterministic working-row timer formatting for seeded running states. Multi-select, hover archive controls, context menus, show-more/show-less, live sidebar grouping, and live timer updates remain incomplete.
 
 ## Current Native Captures
 
@@ -223,12 +223,12 @@ Current measured diff:
 
 ```text
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen pending-approval --output reference\screenshots\r3code-pending-approval-window.png
-cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-pending-approval-reference.png --actual reference\screenshots\r3code-pending-approval-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-pending-approval-reference.png --actual reference\screenshots\r3code-pending-approval-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 5
 ```
 
-Last measured result: `5.991%`.
+Last measured result: `4.888%`.
 
-The upstream pending-approval reference reuses the seeded active thread and injects two `approval.requested` activities matching the R3 command/file-change approval fixture, then captures the real upstream composer approval card and actions.
+The upstream pending-approval reference reuses the seeded active thread and injects two `approval.requested` activities matching the R3 command/file-change approval fixture, then captures the real upstream composer approval card and actions. R3 now keeps the active-chat changed-files card and working indicator visible in the pending-approval fixture before rendering the approval composer.
 
 ## Current Running Turn Baseline
 
@@ -242,10 +242,10 @@ Current measured diff:
 
 ```text
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen running-turn --output reference\screenshots\r3code-running-turn-window.png
-cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-running-turn-reference.png --actual reference\screenshots\r3code-running-turn-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-running-turn-reference.png --actual reference\screenshots\r3code-running-turn-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 4
 ```
 
-Last measured result: `5.124%`.
+Last measured result: `3.682%`.
 
 The upstream running-turn reference reuses the seeded active thread, replaces it with a running `latestTurn`, one user message, and three source-backed work-log activities, then captures the real upstream timeline/work-log state.
 
@@ -261,12 +261,12 @@ Current measured diff:
 
 ```text
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen pending-user-input --output reference\screenshots\r3code-pending-user-input-window.png
-cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-pending-user-input-reference.png --actual reference\screenshots\r3code-pending-user-input-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 7
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-pending-user-input-reference.png --actual reference\screenshots\r3code-pending-user-input-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 5.5
 ```
 
-Last measured result: `6.200%`.
+Last measured result: `5.288%`.
 
-The upstream pending-user-input reference reuses the seeded active thread and injects the browser-test `user-input.requested` activity from `ChatView.browser.tsx`, then captures the real upstream composer question card.
+The upstream pending-user-input reference reuses the seeded active thread and injects the browser-test `user-input.requested` activity from `ChatView.browser.tsx`, then captures the real upstream composer question card. R3 now keeps the active-chat changed-files card and working indicator visible in the pending-user-input fixture before rendering the user-input composer.
 
 ## Current Composer Command Menu Baseline
 
@@ -412,13 +412,13 @@ Current measured diffs:
 
 ```text
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen project-scripts-menu --output reference\screenshots\r3code-project-scripts-menu-window.png
-cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-project-scripts-menu-reference.png --actual reference\screenshots\r3code-project-scripts-menu-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-project-scripts-menu-reference.png --actual reference\screenshots\r3code-project-scripts-menu-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 4.2
 
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen open-in-menu --output reference\screenshots\r3code-open-in-menu-window.png
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-open-in-menu-reference.png --actual reference\screenshots\r3code-open-in-menu-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 3
 ```
 
-Last measured results: project scripts menu `5.398%`; Open In menu `2.575%`.
+Last measured results: project scripts menu `4.039%`; Open In menu `2.575%`.
 
 The project script/open-in header controls port upstream `projectScripts.ts`, `ProjectScriptsControl.tsx` primary/add button behavior, `OpenInPicker.tsx` visibility rules, editor option labels, preferred-editor shortcut display, script runtime cwd/env helpers, and the script/editor icon assets visible in the seeded references. The project scripts menu is now compared against a pinned active-chat menu reference and the Open In menu is compared against a pinned draft-route editor menu reference. The add/edit/delete dialogs, keybinding capture UI, full custom editor icon set, real shell open-in calls, and real shell/project-script process execution are still missing.
 The provider/model picker capture ports upstream `ProviderModelPicker.tsx`, `ModelPickerContent.tsx`, `providerInstances.ts`, `modelOrdering.ts`, `modelPickerSearch.ts`, provider trigger labels, duplicate-instance badges, active-instance sidebar selection, locked-provider filtering, selectable-model aliases, and the provider/lucide icon set used by the picker. It is now compared against a pinned upstream draft-route picker capture. Live provider snapshots, editable provider settings, real favorites persistence, and full combobox/input behavior are still incomplete.
