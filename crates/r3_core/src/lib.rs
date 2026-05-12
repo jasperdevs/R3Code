@@ -3090,6 +3090,522 @@ fn to_non_negative_u32(value: u64) -> Option<u32> {
     u32::try_from(value).ok()
 }
 
+const DEFAULT_SLOW_SPAN_THRESHOLD_MS: f64 = 1_000.0;
+const TRACE_TOP_LIMIT: usize = 10;
+const TRACE_RECENT_LIMIT: usize = 20;
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraceDiagnosticsFile {
+    pub path: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TraceDiagnosticsErrorSummary {
+    pub kind: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraceDiagnosticsSpanSummary {
+    pub name: String,
+    pub count: u64,
+    pub failure_count: u64,
+    pub total_duration_ms: f64,
+    pub average_duration_ms: f64,
+    pub max_duration_ms: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraceDiagnosticsSpanOccurrence {
+    pub name: String,
+    pub duration_ms: f64,
+    pub ended_at: String,
+    pub trace_id: String,
+    pub span_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraceDiagnosticsRecentFailure {
+    pub name: String,
+    pub cause: String,
+    pub duration_ms: f64,
+    pub ended_at: String,
+    pub trace_id: String,
+    pub span_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraceDiagnosticsFailureSummary {
+    pub name: String,
+    pub cause: String,
+    pub count: u64,
+    pub last_seen_at: String,
+    pub trace_id: String,
+    pub span_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraceDiagnosticsLogEvent {
+    pub span_name: String,
+    pub level: String,
+    pub message: String,
+    pub seen_at: String,
+    pub trace_id: String,
+    pub span_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct TraceDiagnosticsResult {
+    pub trace_file_path: String,
+    pub scanned_file_paths: Vec<String>,
+    pub read_at: String,
+    pub record_count: u64,
+    pub parse_error_count: u64,
+    pub first_span_at: Option<String>,
+    pub last_span_at: Option<String>,
+    pub failure_count: u64,
+    pub interruption_count: u64,
+    pub slow_span_threshold_ms: f64,
+    pub slow_span_count: u64,
+    pub log_level_counts: BTreeMap<String, u64>,
+    pub top_spans_by_count: Vec<TraceDiagnosticsSpanSummary>,
+    pub slowest_spans: Vec<TraceDiagnosticsSpanOccurrence>,
+    pub common_failures: Vec<TraceDiagnosticsFailureSummary>,
+    pub latest_failures: Vec<TraceDiagnosticsRecentFailure>,
+    pub latest_warning_and_error_logs: Vec<TraceDiagnosticsLogEvent>,
+    pub partial_failure: Option<bool>,
+    pub error: Option<TraceDiagnosticsErrorSummary>,
+}
+
+pub struct TraceDiagnosticsInput<'a> {
+    pub trace_file_path: &'a str,
+    pub files: &'a [TraceDiagnosticsFile],
+    pub scanned_file_paths: Option<Vec<String>>,
+    pub slow_span_threshold_ms: Option<f64>,
+    pub read_at: &'a str,
+    pub error: Option<TraceDiagnosticsErrorSummary>,
+    pub partial_failure: bool,
+}
+
+#[derive(Debug, Clone)]
+struct MutableTraceSpanSummary {
+    count: u64,
+    failure_count: u64,
+    total_duration_ms: f64,
+    max_duration_ms: f64,
+}
+
+pub fn to_rotated_trace_paths(trace_file_path: &str, max_files: i32) -> Vec<String> {
+    let backup_count = max_files.max(0) as usize;
+    let mut paths = (0..backup_count)
+        .map(|index| format!("{trace_file_path}.{}", backup_count - index))
+        .collect::<Vec<_>>();
+    paths.push(trace_file_path.to_string());
+    paths
+}
+
+pub fn aggregate_trace_diagnostics(input: TraceDiagnosticsInput<'_>) -> TraceDiagnosticsResult {
+    let slow_span_threshold_ms = input
+        .slow_span_threshold_ms
+        .unwrap_or(DEFAULT_SLOW_SPAN_THRESHOLD_MS);
+    let scanned_file_paths = input
+        .scanned_file_paths
+        .unwrap_or_else(|| input.files.iter().map(|file| file.path.clone()).collect());
+
+    if input.files.is_empty() {
+        return make_empty_trace_diagnostics(
+            input.trace_file_path,
+            scanned_file_paths,
+            input.read_at,
+            slow_span_threshold_ms,
+            input.error.or_else(|| {
+                Some(TraceDiagnosticsErrorSummary {
+                    kind: "trace-file-not-found".to_string(),
+                    message: "No local trace files were found.".to_string(),
+                })
+            }),
+            input.partial_failure,
+        );
+    }
+
+    let mut parse_error_count = 0_u64;
+    let mut record_count = 0_u64;
+    let mut failure_count = 0_u64;
+    let mut interruption_count = 0_u64;
+    let mut slow_span_count = 0_u64;
+    let mut first_span_at_millis = None::<i128>;
+    let mut last_span_at_millis = None::<i128>;
+    let mut spans_by_name = BTreeMap::<String, MutableTraceSpanSummary>::new();
+    let mut failures_by_key = BTreeMap::<String, TraceDiagnosticsFailureSummary>::new();
+    let mut latest_failures = Vec::<TraceDiagnosticsRecentFailure>::new();
+    let mut slowest_spans = Vec::<TraceDiagnosticsSpanOccurrence>::new();
+    let mut latest_warning_and_error_logs = Vec::<TraceDiagnosticsLogEvent>::new();
+    let mut log_level_counts = BTreeMap::<String, u64>::new();
+
+    for file in input.files {
+        for line in file.text.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            let Ok(parsed) = serde_json::from_str::<serde_json::Value>(line) else {
+                parse_error_count += 1;
+                continue;
+            };
+            let Some(record) = parsed.as_object() else {
+                parse_error_count += 1;
+                continue;
+            };
+
+            let name = trace_string_value(record.get("name"));
+            let trace_id = trace_string_value(record.get("traceId"));
+            let span_id = trace_string_value(record.get("spanId"));
+            let duration_ms = trace_number_value(record.get("durationMs"));
+            let ended_at_millis = unix_nano_to_millis(record.get("endTimeUnixNano"))
+                .and_then(|millis| unix_millis_to_iso(millis).map(|iso| (millis, iso)));
+            let started_at_millis = unix_nano_to_millis(record.get("startTimeUnixNano"));
+
+            let (
+                Some(name),
+                Some(trace_id),
+                Some(span_id),
+                Some(duration_ms),
+                Some((ended_at_millis, ended_at)),
+            ) = (name, trace_id, span_id, duration_ms, ended_at_millis)
+            else {
+                parse_error_count += 1;
+                continue;
+            };
+
+            record_count += 1;
+            if let Some(started_at_millis) = started_at_millis {
+                first_span_at_millis = Some(
+                    first_span_at_millis
+                        .map(|current| current.min(started_at_millis))
+                        .unwrap_or(started_at_millis),
+                );
+            }
+            last_span_at_millis = Some(
+                last_span_at_millis
+                    .map(|current| current.max(ended_at_millis))
+                    .unwrap_or(ended_at_millis),
+            );
+
+            let exit = record.get("exit");
+            let exit_tag = read_trace_exit_tag(exit);
+            let is_failure = exit_tag.as_deref() == Some("Failure");
+            let is_interrupted = exit_tag.as_deref() == Some("Interrupted");
+            if is_failure {
+                failure_count += 1;
+            }
+            if is_interrupted {
+                interruption_count += 1;
+            }
+
+            let span_summary =
+                spans_by_name
+                    .entry(name.clone())
+                    .or_insert(MutableTraceSpanSummary {
+                        count: 0,
+                        failure_count: 0,
+                        total_duration_ms: 0.0,
+                        max_duration_ms: 0.0,
+                    });
+            span_summary.count += 1;
+            span_summary.total_duration_ms += duration_ms;
+            span_summary.max_duration_ms = span_summary.max_duration_ms.max(duration_ms);
+            if is_failure {
+                span_summary.failure_count += 1;
+            }
+
+            let span_item = TraceDiagnosticsSpanOccurrence {
+                name: name.clone(),
+                duration_ms,
+                ended_at: ended_at.clone(),
+                trace_id: trace_id.clone(),
+                span_id: span_id.clone(),
+            };
+            if duration_ms >= slow_span_threshold_ms {
+                slow_span_count += 1;
+            }
+            insert_bounded_slowest_span(&mut slowest_spans, span_item);
+
+            if is_failure {
+                let cause = read_trace_exit_cause(exit);
+                latest_failures.push(TraceDiagnosticsRecentFailure {
+                    name: name.clone(),
+                    cause: cause.clone(),
+                    duration_ms,
+                    ended_at: ended_at.clone(),
+                    trace_id: trace_id.clone(),
+                    span_id: span_id.clone(),
+                });
+
+                let failure_key = format!("{name}\0{cause}");
+                let existing = failures_by_key.get(&failure_key);
+                let is_latest_failure = existing
+                    .and_then(|failure| iso_utc_timestamp_millis(&failure.last_seen_at))
+                    .map(|current| ended_at_millis > current)
+                    .unwrap_or(true);
+                failures_by_key.insert(
+                    failure_key,
+                    TraceDiagnosticsFailureSummary {
+                        name: name.clone(),
+                        cause,
+                        count: existing.map(|failure| failure.count).unwrap_or(0) + 1,
+                        last_seen_at: if is_latest_failure {
+                            ended_at.clone()
+                        } else {
+                            existing.unwrap().last_seen_at.clone()
+                        },
+                        trace_id: if is_latest_failure {
+                            trace_id.clone()
+                        } else {
+                            existing.unwrap().trace_id.clone()
+                        },
+                        span_id: if is_latest_failure {
+                            span_id.clone()
+                        } else {
+                            existing.unwrap().span_id.clone()
+                        },
+                    },
+                );
+            }
+
+            if let Some(events) = record.get("events").and_then(serde_json::Value::as_array) {
+                for event in events {
+                    let Some(event_record) = event.as_object() else {
+                        continue;
+                    };
+                    let level = event_record
+                        .get("attributes")
+                        .and_then(serde_json::Value::as_object)
+                        .and_then(|attributes| attributes.get("effect.logLevel"))
+                        .and_then(|value| trace_string_value(Some(value)));
+                    let Some(level) = level else {
+                        continue;
+                    };
+
+                    *log_level_counts.entry(level.clone()).or_default() += 1;
+                    let normalized_level = level.to_ascii_lowercase();
+                    if !matches!(
+                        normalized_level.as_str(),
+                        "warning" | "warn" | "error" | "fatal"
+                    ) {
+                        continue;
+                    }
+
+                    let seen_at = unix_nano_to_millis(event_record.get("timeUnixNano"))
+                        .and_then(unix_millis_to_iso)
+                        .unwrap_or_else(|| ended_at.clone());
+                    let message = event_record
+                        .get("name")
+                        .and_then(|value| trace_string_value(Some(value)))
+                        .map(|value| value.trim().to_string())
+                        .unwrap_or_else(|| "Log event".to_string());
+                    latest_warning_and_error_logs.push(TraceDiagnosticsLogEvent {
+                        span_name: name.clone(),
+                        level,
+                        message,
+                        seen_at,
+                        trace_id: trace_id.clone(),
+                        span_id: span_id.clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    let mut top_spans_by_count = spans_by_name
+        .into_iter()
+        .map(|(name, span)| TraceDiagnosticsSpanSummary {
+            name,
+            count: span.count,
+            failure_count: span.failure_count,
+            total_duration_ms: span.total_duration_ms,
+            average_duration_ms: if span.count > 0 {
+                span.total_duration_ms / span.count as f64
+            } else {
+                0.0
+            },
+            max_duration_ms: span.max_duration_ms,
+        })
+        .collect::<Vec<_>>();
+    top_spans_by_count.sort_by(|left, right| {
+        right
+            .count
+            .cmp(&left.count)
+            .then_with(|| compare_f64_desc(right.max_duration_ms, left.max_duration_ms))
+    });
+    top_spans_by_count.truncate(TRACE_TOP_LIMIT);
+
+    let mut common_failures = failures_by_key.into_values().collect::<Vec<_>>();
+    common_failures.sort_by(|left, right| {
+        right.count.cmp(&left.count).then_with(|| {
+            iso_utc_timestamp_millis(&right.last_seen_at)
+                .cmp(&iso_utc_timestamp_millis(&left.last_seen_at))
+        })
+    });
+    common_failures.truncate(TRACE_TOP_LIMIT);
+
+    latest_failures.sort_by(|left, right| {
+        iso_utc_timestamp_millis(&right.ended_at).cmp(&iso_utc_timestamp_millis(&left.ended_at))
+    });
+    latest_failures.truncate(TRACE_RECENT_LIMIT);
+
+    latest_warning_and_error_logs.sort_by(|left, right| {
+        iso_utc_timestamp_millis(&right.seen_at).cmp(&iso_utc_timestamp_millis(&left.seen_at))
+    });
+    latest_warning_and_error_logs.truncate(TRACE_RECENT_LIMIT);
+
+    TraceDiagnosticsResult {
+        trace_file_path: input.trace_file_path.to_string(),
+        scanned_file_paths,
+        read_at: input.read_at.to_string(),
+        record_count,
+        parse_error_count,
+        first_span_at: first_span_at_millis.and_then(unix_millis_to_iso),
+        last_span_at: last_span_at_millis.and_then(unix_millis_to_iso),
+        failure_count,
+        interruption_count,
+        slow_span_threshold_ms,
+        slow_span_count,
+        log_level_counts,
+        top_spans_by_count,
+        slowest_spans,
+        common_failures,
+        latest_failures,
+        latest_warning_and_error_logs,
+        partial_failure: input.partial_failure.then_some(true),
+        error: input.error,
+    }
+}
+
+fn make_empty_trace_diagnostics(
+    trace_file_path: &str,
+    scanned_file_paths: Vec<String>,
+    read_at: &str,
+    slow_span_threshold_ms: f64,
+    error: Option<TraceDiagnosticsErrorSummary>,
+    partial_failure: bool,
+) -> TraceDiagnosticsResult {
+    TraceDiagnosticsResult {
+        trace_file_path: trace_file_path.to_string(),
+        scanned_file_paths,
+        read_at: read_at.to_string(),
+        record_count: 0,
+        parse_error_count: 0,
+        first_span_at: None,
+        last_span_at: None,
+        failure_count: 0,
+        interruption_count: 0,
+        slow_span_threshold_ms,
+        slow_span_count: 0,
+        log_level_counts: BTreeMap::new(),
+        top_spans_by_count: Vec::new(),
+        slowest_spans: Vec::new(),
+        common_failures: Vec::new(),
+        latest_failures: Vec::new(),
+        latest_warning_and_error_logs: Vec::new(),
+        partial_failure: partial_failure.then_some(true),
+        error,
+    }
+}
+
+fn insert_bounded_slowest_span(
+    slowest_spans: &mut Vec<TraceDiagnosticsSpanOccurrence>,
+    span: TraceDiagnosticsSpanOccurrence,
+) {
+    if slowest_spans.len() >= TRACE_TOP_LIMIT
+        && span.duration_ms <= slowest_spans.last().unwrap().duration_ms
+    {
+        return;
+    }
+
+    slowest_spans.push(span);
+    slowest_spans.sort_by(|left, right| compare_f64_desc(right.duration_ms, left.duration_ms));
+    if slowest_spans.len() > TRACE_TOP_LIMIT {
+        slowest_spans.truncate(TRACE_TOP_LIMIT);
+    }
+}
+
+fn trace_string_value(value: Option<&serde_json::Value>) -> Option<String> {
+    let value = value?.as_str()?;
+    (!value.trim().is_empty()).then(|| value.to_string())
+}
+
+fn trace_number_value(value: Option<&serde_json::Value>) -> Option<f64> {
+    value
+        .and_then(serde_json::Value::as_f64)
+        .filter(|value| value.is_finite())
+}
+
+fn read_trace_exit_tag(exit: Option<&serde_json::Value>) -> Option<String> {
+    exit.and_then(serde_json::Value::as_object)
+        .and_then(|exit| exit.get("_tag"))
+        .and_then(|value| trace_string_value(Some(value)))
+}
+
+fn read_trace_exit_cause(exit: Option<&serde_json::Value>) -> String {
+    exit.and_then(serde_json::Value::as_object)
+        .and_then(|exit| exit.get("cause"))
+        .and_then(|value| trace_string_value(Some(value)))
+        .map(|cause| cause.trim().to_string())
+        .unwrap_or_else(|| "Failure".to_string())
+}
+
+fn unix_nano_to_millis(value: Option<&serde_json::Value>) -> Option<i128> {
+    let value = trace_string_value(value)?;
+    let nanos = value.parse::<i128>().ok()?;
+    Some(nanos / 1_000_000)
+}
+
+fn unix_millis_to_iso(millis: i128) -> Option<String> {
+    let seconds = millis.div_euclid(1_000);
+    let millis_part = millis.rem_euclid(1_000);
+    let days = seconds.div_euclid(86_400);
+    let second_of_day = seconds.rem_euclid(86_400);
+    let (year, month, day) = civil_from_days(days.try_into().ok()?);
+    let hour = second_of_day / 3_600;
+    let minute = (second_of_day % 3_600) / 60;
+    let second = second_of_day % 60;
+    Some(format!(
+        "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{millis_part:03}Z"
+    ))
+}
+
+fn civil_from_days(days: i64) -> (i32, u32, u32) {
+    let days = days + 719_468;
+    let era = if days >= 0 { days } else { days - 146_096 } / 146_097;
+    let day_of_era = days - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
+    let year = year + (month <= 2) as i64;
+    (year as i32, month as u32, day as u32)
+}
+
+fn iso_utc_timestamp_millis(iso: &str) -> Option<i128> {
+    let date_time = iso.strip_suffix('Z').unwrap_or(iso);
+    let seconds = iso_utc_timestamp_seconds(iso)? as i128;
+    let millis = if date_time.get(19..20) == Some(".") {
+        date_time.get(20..23)?.parse::<i128>().ok()?
+    } else {
+        0
+    };
+    Some(seconds * 1_000 + millis)
+}
+
+fn compare_f64_desc(left: f64, right: f64) -> std::cmp::Ordering {
+    left.partial_cmp(&right)
+        .unwrap_or(std::cmp::Ordering::Equal)
+}
+
 fn trimmed_non_empty(value: &str) -> Option<&str> {
     let value = value.trim();
     if value.is_empty() { None } else { Some(value) }
@@ -6666,6 +7182,311 @@ mod tests {
             )
             .process_count,
             0
+        );
+    }
+
+    fn ns(ms: i64) -> String {
+        (ms as i128 * 1_000_000).to_string()
+    }
+
+    fn trace_record(
+        name: &str,
+        trace_id: &str,
+        span_id: &str,
+        start_ms: i64,
+        duration_ms: f64,
+        exit: Option<serde_json::Value>,
+        events: Vec<serde_json::Value>,
+    ) -> String {
+        serde_json::json!({
+            "type": "effect-span",
+            "name": name,
+            "traceId": trace_id,
+            "spanId": span_id,
+            "sampled": true,
+            "kind": "internal",
+            "startTimeUnixNano": ns(start_ms),
+            "endTimeUnixNano": ns(start_ms + duration_ms as i64),
+            "durationMs": duration_ms,
+            "attributes": {},
+            "events": events,
+            "links": [],
+            "exit": exit.unwrap_or_else(|| serde_json::json!({ "_tag": "Success" })),
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn aggregates_trace_failures_slow_spans_logs_and_parse_errors() {
+        let diagnostics = aggregate_trace_diagnostics(TraceDiagnosticsInput {
+            trace_file_path: "/tmp/server.trace.ndjson",
+            read_at: "2026-05-05T10:00:00.000Z",
+            slow_span_threshold_ms: Some(1_000.0),
+            scanned_file_paths: None,
+            error: None,
+            partial_failure: false,
+            files: &[
+                TraceDiagnosticsFile {
+                    path: "/tmp/server.trace.ndjson.1".to_string(),
+                    text: [
+                        trace_record(
+                            "server.getConfig",
+                            "trace-a",
+                            "span-a",
+                            1_000,
+                            50.0,
+                            None,
+                            Vec::new(),
+                        ),
+                        "not-json".to_string(),
+                    ]
+                    .join("\n"),
+                },
+                TraceDiagnosticsFile {
+                    path: "/tmp/server.trace.ndjson".to_string(),
+                    text: [
+                        trace_record(
+                            "orchestration.dispatch",
+                            "trace-b",
+                            "span-b",
+                            2_000,
+                            1_500.0,
+                            Some(serde_json::json!({
+                                "_tag": "Failure",
+                                "cause": "Provider crashed"
+                            })),
+                            vec![serde_json::json!({
+                                "name": "provider failed",
+                                "timeUnixNano": ns(3_400),
+                                "attributes": { "effect.logLevel": "Error" }
+                            })],
+                        ),
+                        trace_record(
+                            "orchestration.dispatch",
+                            "trace-c",
+                            "span-c",
+                            4_000,
+                            250.0,
+                            Some(serde_json::json!({
+                                "_tag": "Failure",
+                                "cause": "Provider crashed"
+                            })),
+                            Vec::new(),
+                        ),
+                        trace_record(
+                            "git.status",
+                            "trace-d",
+                            "span-d",
+                            5_000,
+                            25.0,
+                            Some(serde_json::json!({
+                                "_tag": "Interrupted",
+                                "cause": "Interrupted"
+                            })),
+                            vec![serde_json::json!({
+                                "name": "status delayed",
+                                "timeUnixNano": ns(5_010),
+                                "attributes": { "effect.logLevel": "Warning" }
+                            })],
+                        ),
+                    ]
+                    .join("\n"),
+                },
+            ],
+        });
+
+        assert_eq!(diagnostics.record_count, 4);
+        assert_eq!(diagnostics.read_at, "2026-05-05T10:00:00.000Z");
+        assert_eq!(
+            diagnostics.first_span_at.as_deref(),
+            Some("1970-01-01T00:00:01.000Z")
+        );
+        assert_eq!(
+            diagnostics.last_span_at.as_deref(),
+            Some("1970-01-01T00:00:05.025Z")
+        );
+        assert_eq!(diagnostics.parse_error_count, 1);
+        assert_eq!(diagnostics.failure_count, 2);
+        assert_eq!(diagnostics.interruption_count, 1);
+        assert_eq!(diagnostics.slow_span_count, 1);
+        assert_eq!(diagnostics.log_level_counts.get("Error"), Some(&1));
+        assert_eq!(diagnostics.log_level_counts.get("Warning"), Some(&1));
+        assert_eq!(
+            diagnostics.common_failures[0].name,
+            "orchestration.dispatch"
+        );
+        assert_eq!(diagnostics.common_failures[0].count, 2);
+        assert_eq!(diagnostics.latest_failures[0].trace_id, "trace-c");
+        assert_eq!(diagnostics.slowest_spans[0].trace_id, "trace-b");
+        assert_eq!(
+            diagnostics.latest_warning_and_error_logs[0].message,
+            "status delayed"
+        );
+        assert_eq!(
+            diagnostics.top_spans_by_count[0].name,
+            "orchestration.dispatch"
+        );
+    }
+
+    #[test]
+    fn returns_trace_not_found_diagnostic_when_no_files_are_available() {
+        let diagnostics = aggregate_trace_diagnostics(TraceDiagnosticsInput {
+            trace_file_path: "/tmp/missing.trace.ndjson",
+            read_at: "2026-05-05T10:00:00.000Z",
+            files: &[],
+            scanned_file_paths: None,
+            slow_span_threshold_ms: None,
+            error: None,
+            partial_failure: false,
+        });
+
+        assert_eq!(diagnostics.record_count, 0);
+        assert_eq!(
+            diagnostics.error.as_ref().map(|error| error.kind.as_str()),
+            Some("trace-file-not-found")
+        );
+    }
+
+    #[test]
+    fn preserves_full_trace_failure_causes_and_log_messages() {
+        let long_cause = format!("VcsProcessSpawnError: {}", "missing executable ".repeat(80))
+            .trim()
+            .to_string();
+        let long_message = format!("provider warning: {}", "retrying command ".repeat(80))
+            .trim()
+            .to_string();
+        let diagnostics = aggregate_trace_diagnostics(TraceDiagnosticsInput {
+            trace_file_path: "/tmp/server.trace.ndjson",
+            read_at: "2026-05-05T10:00:00.000Z",
+            scanned_file_paths: None,
+            slow_span_threshold_ms: None,
+            error: None,
+            partial_failure: false,
+            files: &[TraceDiagnosticsFile {
+                path: "/tmp/server.trace.ndjson".to_string(),
+                text: trace_record(
+                    "VcsProcess.run",
+                    "trace-long",
+                    "span-long",
+                    1_000,
+                    25.0,
+                    Some(serde_json::json!({
+                        "_tag": "Failure",
+                        "cause": long_cause
+                    })),
+                    vec![serde_json::json!({
+                        "name": long_message,
+                        "timeUnixNano": ns(1_010),
+                        "attributes": { "effect.logLevel": "Warning" }
+                    })],
+                ),
+            }],
+        });
+
+        assert_eq!(diagnostics.latest_failures[0].cause, long_cause);
+        assert_eq!(diagnostics.common_failures[0].cause, long_cause);
+        assert_eq!(
+            diagnostics.latest_warning_and_error_logs[0].message,
+            long_message
+        );
+    }
+
+    #[test]
+    fn keeps_trace_partial_failure_metadata_with_loaded_data() {
+        let diagnostics = aggregate_trace_diagnostics(TraceDiagnosticsInput {
+            trace_file_path: "/tmp/server.trace.ndjson",
+            read_at: "2026-05-05T10:00:00.000Z",
+            scanned_file_paths: Some(vec![
+                "/tmp/server.trace.ndjson.1".to_string(),
+                "/tmp/server.trace.ndjson".to_string(),
+            ]),
+            slow_span_threshold_ms: None,
+            error: Some(TraceDiagnosticsErrorSummary {
+                kind: "trace-file-read-failed".to_string(),
+                message: "permission denied".to_string(),
+            }),
+            partial_failure: true,
+            files: &[TraceDiagnosticsFile {
+                path: "/tmp/server.trace.ndjson".to_string(),
+                text: trace_record(
+                    "server.getConfig",
+                    "trace-a",
+                    "span-a",
+                    1_000,
+                    50.0,
+                    None,
+                    Vec::new(),
+                ),
+            }],
+        });
+
+        assert_eq!(diagnostics.record_count, 1);
+        assert_eq!(diagnostics.partial_failure, Some(true));
+        assert_eq!(
+            diagnostics.error.as_ref().map(|error| error.kind.as_str()),
+            Some("trace-file-read-failed")
+        );
+        assert_eq!(
+            diagnostics.scanned_file_paths,
+            vec!["/tmp/server.trace.ndjson.1", "/tmp/server.trace.ndjson"]
+        );
+    }
+
+    #[test]
+    fn keeps_only_the_slowest_trace_span_occurrences() {
+        let text = (0..25)
+            .map(|index| {
+                trace_record(
+                    &format!("span-{index}"),
+                    &format!("trace-{index}"),
+                    &format!("span-{index}"),
+                    index * 1_000,
+                    index as f64,
+                    None,
+                    Vec::new(),
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let diagnostics = aggregate_trace_diagnostics(TraceDiagnosticsInput {
+            trace_file_path: "/tmp/server.trace.ndjson",
+            read_at: "2026-05-05T10:00:00.000Z",
+            files: &[TraceDiagnosticsFile {
+                path: "/tmp/server.trace.ndjson".to_string(),
+                text,
+            }],
+            scanned_file_paths: None,
+            slow_span_threshold_ms: None,
+            error: None,
+            partial_failure: false,
+        });
+
+        assert_eq!(diagnostics.record_count, 25);
+        assert_eq!(diagnostics.slowest_spans.len(), 10);
+        assert_eq!(
+            diagnostics
+                .slowest_spans
+                .iter()
+                .map(|span| span.duration_ms as i64)
+                .collect::<Vec<_>>(),
+            vec![24, 23, 22, 21, 20, 19, 18, 17, 16, 15]
+        );
+    }
+
+    #[test]
+    fn builds_rotated_trace_paths_like_upstream() {
+        assert_eq!(
+            to_rotated_trace_paths("/tmp/server.trace.ndjson", 3),
+            vec![
+                "/tmp/server.trace.ndjson.3",
+                "/tmp/server.trace.ndjson.2",
+                "/tmp/server.trace.ndjson.1",
+                "/tmp/server.trace.ndjson",
+            ]
+        );
+        assert_eq!(
+            to_rotated_trace_paths("/tmp/server.trace.ndjson", -1),
+            vec!["/tmp/server.trace.ndjson"]
         );
     }
 
