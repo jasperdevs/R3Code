@@ -74,12 +74,27 @@ impl Theme {
         Self {
             background: hsla(0.0, 0.0, 0.995, 1.0),
             app_chrome_background: hsla(0.0, 0.0, 0.995, 1.0),
-            foreground: hsla(0.0, 0.0, 0.09, 1.0),
+            foreground: hsla(0.0, 0.0, 38.0 / 255.0, 1.0),
             card: hsla(0.0, 0.0, 0.98, 1.0),
             border: hsla(0.0, 0.0, 0.0, 0.08),
             muted_foreground: hsla(0.0, 0.0, 0.58, 1.0),
             accent: hsla(0.0, 0.0, 0.0, 0.04),
             primary: hsla(247.0 / 360.0, 0.82, 0.48, 1.0),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Theme;
+
+    #[test]
+    fn light_foreground_matches_upstream_neutral_800_token() {
+        let foreground = Theme::light().foreground;
+
+        assert_eq!(foreground.h, 0.0);
+        assert_eq!(foreground.s, 0.0);
+        assert_eq!(foreground.l, 38.0 / 255.0);
+        assert_eq!(foreground.a, 1.0);
     }
 }

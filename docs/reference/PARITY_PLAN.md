@@ -493,12 +493,12 @@ Current measured diff:
 
 ```text
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen settings-keybindings --output reference\screenshots\r3code-settings-keybindings-window.png
-cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-keybindings-reference.png --actual reference\screenshots\r3code-settings-keybindings-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6.5
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-keybindings-reference.png --actual reference\screenshots\r3code-settings-keybindings-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6.35
 ```
 
-Last measured result: `6.350%`.
+Last measured result: `6.259%`.
 
-Current ported parity scope: native keybindings table now follows the upstream `SettingsSection` table proportions more closely: upstream `InfoIcon` warning banner, T3 Code warning copy, `muted/25` and `muted/15` table backgrounds, `border/70` and `border/60` dividers, upstream grid column math, uppercase table headers, upstream Windows shortcut glyph labels, upstream `Kbd` chip sizing/color/weight, upstream `border-input` when triggers, and the default keybinding rows now come from a Rust core projection of upstream command ids/default rules instead of a UI-only display string table.
+Current ported parity scope: native keybindings table now follows the upstream `SettingsSection` table proportions more closely: upstream `InfoIcon` warning banner, T3 Code warning copy, `muted/25` and `muted/15` table backgrounds, `border/70` and `border/60` dividers, upstream grid column math, uppercase table headers, upstream Windows shortcut glyph labels, upstream `Kbd` chip sizing/color/weight, upstream `border-input` when triggers, upstream light `foreground` token, and the default keybinding rows now come from a Rust core projection of upstream command ids/default rules instead of a UI-only display string table.
 
 ## Current Settings Source Control Baseline
 
