@@ -329,6 +329,18 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
         allow_window_capture: true,
         ..CaptureR3CodeOptions::default()
     })?;
+    compare_screenshots(CompareOptions {
+        expected: resolve_repo_path("reference/screenshots/upstream-running-turn-reference.png"),
+        actual: resolve_repo_path("reference/screenshots/r3code-running-turn-window.png"),
+        max_different_pixels_percent: 6.0,
+        channel_tolerance: 8,
+        ignore_rects: vec![Rect {
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 45,
+        }],
+    })?;
 
     capture_r3code_window(CaptureR3CodeOptions {
         screen: Some("pending-approval".to_string()),
@@ -1435,7 +1447,7 @@ fn capture_reference_browser(options: CaptureReferenceOptions) -> Result<()> {
         fs::write(
             options.output_dir.join("CAPTURE_MANIFEST.txt"),
             format!(
-                "Upstream reference repository: {}\nReference commit: {}\nIsolated reference home: {}\nOutput directory: {}\nCaptured:\n- upstream-empty-reference.png\n- upstream-command-palette-reference.png\n- upstream-draft-reference.png\n- upstream-composer-focused-reference.png\n- upstream-composer-menu-reference.png\n- upstream-composer-inline-tokens-reference.png\n- upstream-provider-model-picker-reference.png\n- upstream-active-chat-reference.png\n- upstream-pending-user-input-reference.png\n- upstream-pending-approval-reference.png\n- upstream-settings-reference.png\n- upstream-settings-keybindings-reference.png\n- upstream-settings-providers-reference.png\n- upstream-settings-source-control-reference.png\n- upstream-settings-connections-reference.png\n- upstream-settings-diagnostics-reference.png\n- upstream-settings-archive-reference.png\n- upstream-settings-theme-menu-reference.png\n- upstream-settings-dark-reference.png\n- upstream-empty-dark-reference.png\n",
+                "Upstream reference repository: {}\nReference commit: {}\nIsolated reference home: {}\nOutput directory: {}\nCaptured:\n- upstream-empty-reference.png\n- upstream-command-palette-reference.png\n- upstream-draft-reference.png\n- upstream-composer-focused-reference.png\n- upstream-composer-menu-reference.png\n- upstream-composer-inline-tokens-reference.png\n- upstream-provider-model-picker-reference.png\n- upstream-active-chat-reference.png\n- upstream-running-turn-reference.png\n- upstream-pending-user-input-reference.png\n- upstream-pending-approval-reference.png\n- upstream-settings-reference.png\n- upstream-settings-keybindings-reference.png\n- upstream-settings-providers-reference.png\n- upstream-settings-source-control-reference.png\n- upstream-settings-connections-reference.png\n- upstream-settings-diagnostics-reference.png\n- upstream-settings-archive-reference.png\n- upstream-settings-theme-menu-reference.png\n- upstream-settings-dark-reference.png\n- upstream-empty-dark-reference.png\n",
                 options.repo.display(),
                 commit.trim(),
                 options.home.display(),
@@ -1820,6 +1832,149 @@ const path = require("path");
       });
     });
   }
+  async function seedRunningTurnReference() {
+    await seedActiveChatReference();
+    await page.evaluate(async () => {
+      const { useStore } = await import("/src/store.ts");
+      const environmentId = "local";
+      const threadId = "thread-r3code-ui-shell";
+      const turnId = "turn-running-1";
+      const latestTurn = {
+        turnId,
+        state: "running",
+        requestedAt: "2026-03-04T12:10:00.000Z",
+        startedAt: "2026-03-04T12:10:01.000Z",
+        completedAt: null,
+        assistantMessageId: null,
+      };
+      const message = {
+        id: "msg-user-running-turn",
+        role: "user",
+        text: "Run the parity harness and fix any failures.",
+        turnId,
+        streaming: false,
+        createdAt: "2026-03-04T12:10:00.000Z",
+        updatedAt: "2026-03-04T12:10:00.000Z",
+      };
+      const activities = [
+        {
+          id: "activity-thinking",
+          kind: "task.progress",
+          summary: "Inspecting changed surfaces",
+          tone: "thinking",
+          payload: {
+            summary: "Inspecting changed surfaces",
+            detail: "Reading upstream MessagesTimeline work log behavior",
+          },
+          turnId,
+          sequence: 1,
+          createdAt: "2026-03-04T12:10:02.000Z",
+        },
+        {
+          id: "activity-command",
+          kind: "tool.completed",
+          summary: "Ran command",
+          tone: "tool",
+          payload: {
+            command: "cargo test --workspace",
+            title: "terminal",
+            itemType: "command_execution",
+            toolCallId: "tool-run-tests",
+          },
+          turnId,
+          sequence: 2,
+          createdAt: "2026-03-04T12:10:08.000Z",
+        },
+        {
+          id: "activity-files",
+          kind: "tool.completed",
+          summary: "Edited files",
+          tone: "tool",
+          payload: {
+            changedFiles: ["crates/r3_core/src/lib.rs", "crates/r3_ui/src/shell.rs"],
+            title: "file change",
+            itemType: "file_change",
+            toolCallId: "tool-edit-files",
+          },
+          turnId,
+          sequence: 3,
+          createdAt: "2026-03-04T12:10:14.000Z",
+        },
+      ];
+      const activityById = Object.fromEntries(activities.map((activity) => [activity.id, activity]));
+      useStore.setState((state) => {
+        const environmentState = state.environmentStateById[environmentId];
+        if (!environmentState) return state;
+        const currentShell = environmentState.threadShellById[threadId];
+        const currentSummary = environmentState.sidebarThreadSummaryById[threadId];
+        const currentSession = environmentState.threadSessionById[threadId];
+        const nextSession = currentSession
+          ? {
+              ...currentSession,
+              status: "running",
+              orchestrationStatus: "running",
+              activeTurnId: turnId,
+            }
+          : currentSession;
+        return {
+          ...state,
+          environmentStateById: {
+            ...state.environmentStateById,
+            [environmentId]: {
+              ...environmentState,
+              threadShellById: {
+                ...environmentState.threadShellById,
+                [threadId]: currentShell ? { ...currentShell, latestTurn } : currentShell,
+              },
+              threadSessionById: {
+                ...environmentState.threadSessionById,
+                [threadId]: nextSession,
+              },
+              threadTurnStateById: {
+                ...environmentState.threadTurnStateById,
+                [threadId]: { latestTurn },
+              },
+              messageIdsByThreadId: {
+                ...environmentState.messageIdsByThreadId,
+                [threadId]: [message.id],
+              },
+              messageByThreadId: {
+                ...environmentState.messageByThreadId,
+                [threadId]: { [message.id]: message },
+              },
+              activityIdsByThreadId: {
+                ...environmentState.activityIdsByThreadId,
+                [threadId]: activities.map((activity) => activity.id),
+              },
+              activityByThreadId: {
+                ...environmentState.activityByThreadId,
+                [threadId]: activityById,
+              },
+              turnDiffIdsByThreadId: {
+                ...environmentState.turnDiffIdsByThreadId,
+                [threadId]: [],
+              },
+              turnDiffSummaryByThreadId: {
+                ...environmentState.turnDiffSummaryByThreadId,
+                [threadId]: {},
+              },
+              sidebarThreadSummaryById: {
+                ...environmentState.sidebarThreadSummaryById,
+                [threadId]: currentSummary
+                  ? {
+                      ...currentSummary,
+                      session: nextSession,
+                      latestTurn,
+                      latestUserMessageAt: message.createdAt,
+                    }
+                  : currentSummary,
+              },
+            },
+          },
+        };
+      });
+    });
+  }
   await page.goto(process.env.PAIRING_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
   await page.getByText("Pick a thread to continue").waitFor({ timeout: 15000 });
   await page.waitForLoadState("networkidle", { timeout: 30000 });
@@ -1886,6 +2041,13 @@ const path = require("path");
   await page.waitForTimeout(350);
   await dismissUpdatesToast();
   await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-active-chat-reference.png"), fullPage: true });
+  await page.goto(new URL("/local/thread-r3code-ui-shell", appOrigin).toString(), { waitUntil: "domcontentloaded", timeout: 30000 });
+  await seedRunningTurnReference();
+  await page.getByText("Run the parity harness and fix any failures.").waitFor({ timeout: 15000 });
+  await page.getByText("Inspecting changed surfaces").waitFor({ timeout: 15000 });
+  await page.waitForTimeout(350);
+  await dismissUpdatesToast();
+  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-running-turn-reference.png"), fullPage: true });
   await page.goto(new URL("/local/thread-r3code-ui-shell", appOrigin).toString(), { waitUntil: "domcontentloaded", timeout: 30000 });
   await seedPendingUserInputReference();
   await page.getByText("What should this change cover?").waitFor({ timeout: 15000 });

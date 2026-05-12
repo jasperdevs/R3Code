@@ -32,6 +32,7 @@ These screens have automated reference captures and native GPUI comparisons:
 | Draft empty chat | 2% |
 | Composer focused empty state | 2% |
 | Active chat with user and assistant messages | 6% |
+| Running turn with work-log rows | 6% |
 | Composer slash-command menu | 5% |
 | Composer inline mention/skill chips | 5% |
 | Provider/model picker | 6% |
@@ -58,7 +59,7 @@ These T3 surfaces have no complete Rust implementation yet:
 | Upstream surface | Main source area | R3 state |
 | --- | --- | --- |
 | Active chat with real user/assistant turns | `apps/web/src/components/ChatView.tsx`, `MessagesTimeline.tsx` | Seeded upstream reference gate for the message shell; live thread/runtime behavior still missing |
-| Running agent turn, work log, tool output | `apps/web/src/session-logic.ts`, `MessagesTimeline.tsx` | Partial static GPUI smoke |
+| Running agent turn, work log, tool output | `apps/web/src/session-logic.ts`, `MessagesTimeline.tsx` | Seeded upstream reference gate for running session/work-log shell; live provider stream and tool output runtime still missing |
 | Pending approval and pending user input panels | `ChatComposer.tsx`, `ComposerPendingApproval*`, `pendingUserInput.ts` | Seeded upstream reference gates for approval and user-input composer states. Core pending-input, composer send-state, trigger/cursor, command-menu, slash-menu, and inline-token contracts are partial |
 | Terminal drawer and xterm integration | `ThreadTerminalDrawer.tsx`, `terminalStateStore.ts`, `terminalContext.ts` | Partial static GPUI smoke plus terminal drawer, terminal-context, and composer inline-token contracts |
 | Diff panel and changed-file browsing | `DiffPanel.tsx`, `diffRouteSearch.ts`, `turnDiffTree.ts` | Partial static GPUI smoke |
