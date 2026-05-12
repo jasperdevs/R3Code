@@ -177,6 +177,7 @@ The settings sidebar renders the upstream settings nav icon set through GPUI SVG
 `Settings2`, `Keyboard`, `Bot`, `GitBranch`, `Link2`, `Archive`, and the footer `ArrowLeft`.
 The footer Back affordance is a native GPUI click target, and the parity gate follows that click path for settings-to-empty verification.
 The settings nav rows are native GPUI click targets; the parity gate opens Keybindings through the native settings nav click path.
+The parity gate also captures provider and connections settings smoke screens at `reference/screenshots/r3code-settings-providers-window.png` and `reference/screenshots/r3code-settings-connections-window.png`. These remain R3-only smoke captures until matching upstream provider/connection fixtures are added.
 
 ## Current Settings Keybindings Baseline
 

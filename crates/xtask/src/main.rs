@@ -112,7 +112,7 @@ fn print_usage() {
         "Usage:
   cargo run -p xtask -- check-parity --allow-window-capture [--refresh-reference]
   cargo run -p xtask -- compare-screenshots --expected <png> --actual <png> [--channel-tolerance <n>] [--ignore-rect x,y,w,h] [--max-different-pixels-percent <n>]
-  cargo run -p xtask -- capture-r3code-window --allow-window-capture [--screen draft|active-chat|running-turn|pending-approval|pending-user-input|terminal-drawer|diff-panel|branch-toolbar|provider-model-picker|settings|command-palette|settings-theme-menu|settings-dark|settings-back|settings-keybindings|settings-source-control|settings-archive] [--theme light|dark|system] [--output <png>]
+  cargo run -p xtask -- capture-r3code-window --allow-window-capture [--screen draft|active-chat|running-turn|pending-approval|pending-user-input|terminal-drawer|diff-panel|branch-toolbar|provider-model-picker|settings|command-palette|settings-theme-menu|settings-dark|settings-back|settings-keybindings|settings-providers|settings-source-control|settings-connections|settings-archive] [--theme light|dark|system] [--output <png>]
   cargo run -p xtask -- capture-reference-browser"
     );
 }
@@ -345,6 +345,14 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
     })?;
 
     capture_r3code_window(CaptureR3CodeOptions {
+        screen: Some("settings-providers".to_string()),
+        theme: Some("light".to_string()),
+        output: resolve_repo_path("reference/screenshots/r3code-settings-providers-window.png"),
+        allow_window_capture: true,
+        ..CaptureR3CodeOptions::default()
+    })?;
+
+    capture_r3code_window(CaptureR3CodeOptions {
         screen: Some("settings-source-control".to_string()),
         theme: Some("light".to_string()),
         output: resolve_repo_path(
@@ -368,6 +376,14 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
             width: 120,
             height: 45,
         }],
+    })?;
+
+    capture_r3code_window(CaptureR3CodeOptions {
+        screen: Some("settings-connections".to_string()),
+        theme: Some("light".to_string()),
+        output: resolve_repo_path("reference/screenshots/r3code-settings-connections-window.png"),
+        allow_window_capture: true,
+        ..CaptureR3CodeOptions::default()
     })?;
 
     capture_r3code_window(CaptureR3CodeOptions {
@@ -735,7 +751,9 @@ fn capture_r3code_window_direct(options: &CaptureR3CodeOptions) -> Result<()> {
             | "settings-dark"
             | "settings-back"
             | "settings-keybindings"
+            | "settings-providers"
             | "settings-source-control"
+            | "settings-connections"
             | "settings-archive" => {
                 command.env("R3CODE_SCREEN", "settings");
             }
@@ -777,8 +795,14 @@ fn capture_r3code_window_direct(options: &CaptureR3CodeOptions) -> Result<()> {
         } else if options.screen.as_deref() == Some("settings-keybindings") {
             click_settings_keybindings_nav(hwnd)?;
             thread::sleep(Duration::from_millis(350));
+        } else if options.screen.as_deref() == Some("settings-providers") {
+            click_settings_providers_nav(hwnd)?;
+            thread::sleep(Duration::from_millis(350));
         } else if options.screen.as_deref() == Some("settings-source-control") {
             click_settings_source_control_nav(hwnd)?;
+            thread::sleep(Duration::from_millis(350));
+        } else if options.screen.as_deref() == Some("settings-connections") {
+            click_settings_connections_nav(hwnd)?;
             thread::sleep(Duration::from_millis(350));
         } else if options.screen.as_deref() == Some("settings-archive") {
             click_settings_archive_nav(hwnd)?;
@@ -863,8 +887,18 @@ fn click_settings_keybindings_nav(hwnd: HWND) -> Result<()> {
 }
 
 #[cfg(windows)]
+fn click_settings_providers_nav(hwnd: HWND) -> Result<()> {
+    send_client_click(hwnd, 78, 134)
+}
+
+#[cfg(windows)]
 fn click_settings_source_control_nav(hwnd: HWND) -> Result<()> {
     send_client_click(hwnd, 78, 166)
+}
+
+#[cfg(windows)]
+fn click_settings_connections_nav(hwnd: HWND) -> Result<()> {
+    send_client_click(hwnd, 78, 198)
 }
 
 #[cfg(windows)]
