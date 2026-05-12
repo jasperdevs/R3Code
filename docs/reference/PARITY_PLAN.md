@@ -129,6 +129,7 @@ R3Code capture: `reference/screenshots/r3code-active-chat-window.png`
 R3Code pending approval capture: `reference/screenshots/r3code-pending-approval-window.png`
 R3Code pending user input capture: `reference/screenshots/r3code-pending-user-input-window.png`
 R3Code terminal drawer capture: `reference/screenshots/r3code-terminal-drawer-window.png`
+R3Code diff panel capture: `reference/screenshots/r3code-diff-panel-window.png`
 
 Command:
 
@@ -137,11 +138,13 @@ cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen pending-approval --output reference\screenshots\r3code-pending-approval-window.png
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen pending-user-input --output reference\screenshots\r3code-pending-user-input-window.png
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen terminal-drawer --output reference\screenshots\r3code-terminal-drawer-window.png
+cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen diff-panel --output reference\screenshots\r3code-diff-panel-window.png
 ```
 
 This is a native Rust/GPUI smoke capture for the first server-thread state: active header title/project badge, sidebar thread row, user/assistant timeline rows, and composer chrome. It is intentionally not a parity comparison yet because the current upstream reference harness has deterministic captures for empty/draft/settings, but not a full active server-thread route with persisted messages. The next parity step is to add a source-backed upstream fixture capture for the same `ChatView.browser.tsx` message state.
 The pending approval and pending user input captures use the same active-thread shell with upstream-shaped `ChatComposer` state: approval summary/actions, user-input question progress, option shortcut chips, selected `CheckIcon`, and pending primary actions. They are also smoke captures until the upstream browser harness can seed the matching server-thread pending request fixtures.
 The terminal drawer capture ports the upstream terminal UI state contract into Rust first: default drawer height, terminal IDs, active terminal/group, split/new/close behavior, running activity, and event replay filtering. The GPUI surface is a static terminal drawer smoke screen until the native runtime/xterm layer exists.
+The diff panel capture ports the upstream diff route parser, turn-diff summary ordering, changed-file tree/stat contracts, and the inline `DiffPanelShell` header controls. It remains a smoke screen until the Rust side has the real checkpoint-diff query and patch renderer equivalent to `@pierre/diffs`.
 
 ## Current Settings Baseline
 

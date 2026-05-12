@@ -5,10 +5,12 @@ use gpui::{
     Window, div, hsla, point, px, svg,
 };
 use r3_core::{
-    APP_NAME, AppSnapshot, ChatMessage, MAX_TERMINALS_PER_GROUP, PendingApproval,
-    PendingUserInputProgress, ProjectSummary, TerminalEvent, ThreadStatus, close_thread_terminal,
-    new_thread_terminal, set_pending_user_input_custom_answer, set_thread_active_terminal,
-    set_thread_terminal_open, split_thread_terminal, toggle_pending_user_input_option_selection,
+    APP_NAME, AppSnapshot, ChatMessage, DiffOpenValue, DiffRouteSearch, MAX_TERMINALS_PER_GROUP,
+    PendingApproval, PendingUserInputProgress, ProjectSummary, TerminalEvent, ThreadStatus,
+    TurnDiffFileChange, TurnDiffStat, TurnDiffTreeNode, build_turn_diff_tree,
+    close_thread_terminal, new_thread_terminal, parse_diff_route_search,
+    set_pending_user_input_custom_answer, set_thread_active_terminal, set_thread_terminal_open,
+    split_thread_terminal, summarize_turn_diff_stats, toggle_pending_user_input_option_selection,
 };
 
 use crate::theme::{FONT_FAMILY, MONO_FONT_FAMILY, SIDEBAR_MIN_WIDTH, Theme, ThemeMode};
@@ -56,6 +58,9 @@ pub struct R3Shell {
     composer_runtime_index: usize,
     composer_plan_mode: bool,
     composer_submitted_count: usize,
+    diff_render_split: bool,
+    diff_word_wrap: bool,
+    diff_ignore_whitespace: bool,
     shell_focus_handle: FocusHandle,
     composer_focus_handle: FocusHandle,
     command_palette_focus_handle: FocusHandle,
@@ -113,6 +118,9 @@ impl R3Shell {
             composer_runtime_index: 2,
             composer_plan_mode: false,
             composer_submitted_count: 0,
+            diff_render_split: false,
+            diff_word_wrap: false,
+            diff_ignore_whitespace: true,
             shell_focus_handle: cx.focus_handle(),
             composer_focus_handle: cx.focus_handle(),
             command_palette_focus_handle: cx.focus_handle(),
@@ -129,6 +137,7 @@ pub enum R3Screen {
     PendingApproval,
     PendingUserInput,
     TerminalDrawer,
+    DiffPanel,
     Settings,
 }
 
@@ -431,7 +440,8 @@ impl Render for R3Shell {
             | R3Screen::ActiveChat
             | R3Screen::PendingApproval
             | R3Screen::PendingUserInput
-            | R3Screen::TerminalDrawer => root.child(self.sidebar(cx)).child(self.main_panel(cx)),
+            | R3Screen::TerminalDrawer
+            | R3Screen::DiffPanel => root.child(self.sidebar(cx)).child(self.main_panel(cx)),
             R3Screen::Settings => root
                 .child(self.settings_sidebar(cx))
                 .child(self.settings_panel(cx)),
@@ -640,7 +650,7 @@ impl R3Shell {
         )
     }
 
-    fn main_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn main_panel(&self, cx: &mut Context<Self>) -> AnyElement {
         let mut panel = div()
             .flex()
             .flex_col()
@@ -657,7 +667,17 @@ impl R3Shell {
             panel = panel.child(self.composer(cx));
         }
 
-        panel
+        if self.snapshot.diff_open() {
+            div()
+                .flex()
+                .flex_1()
+                .min_w_0()
+                .child(panel)
+                .child(self.diff_panel(cx))
+                .into_any_element()
+        } else {
+            panel.into_any_element()
+        }
     }
 
     fn toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -809,7 +829,12 @@ impl R3Shell {
     }
 
     fn messages_timeline(&self) -> impl IntoElement {
-        let mut content = div().flex().flex_col().gap_4().w(px(760.0));
+        let content_width = if self.snapshot.diff_open() {
+            460.0
+        } else {
+            760.0
+        };
+        let mut content = div().flex().flex_col().gap_4().w(px(content_width));
 
         for message in &self.snapshot.messages {
             content = content.child(self.timeline_message(message));
@@ -839,6 +864,11 @@ impl R3Shell {
     }
 
     fn user_timeline_message(&self, message: &ChatMessage) -> impl IntoElement {
+        let bubble_width = if self.snapshot.diff_open() {
+            420.0
+        } else {
+            520.0
+        };
         div().flex().justify_end().child(
             div()
                 .rounded(px(16.0))
@@ -847,7 +877,7 @@ impl R3Shell {
                 .bg(self.theme.accent)
                 .px_4()
                 .py_3()
-                .w(px(520.0))
+                .w(px(bubble_width))
                 .child(
                     div()
                         .text_size(px(14.0))
@@ -1343,9 +1373,661 @@ impl R3Shell {
         }
     }
 
+    fn diff_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("thread-diff-panel")
+            .flex()
+            .flex_col()
+            .h_full()
+            .min_w(px(360.0))
+            .w(px(520.0))
+            .flex_shrink_0()
+            .border_l_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.background)
+            .child(self.diff_panel_header(cx))
+            .child(self.diff_panel_body(cx))
+    }
+
+    fn diff_panel_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let summaries = self.snapshot.ordered_turn_diff_summaries();
+        let selected_turn_id = self.snapshot.diff_route.diff_turn_id.clone();
+        let mut turn_strip = div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .min_w_0()
+            .flex_1()
+            .overflow_hidden()
+            .px_1();
+
+        turn_strip = turn_strip.child(self.diff_turn_chip(
+            "All turns",
+            None,
+            selected_turn_id.is_none(),
+            cx,
+        ));
+        for summary in summaries {
+            let label = format!(
+                "Turn {}  {}",
+                summary
+                    .checkpoint_turn_count
+                    .map(|count| count.to_string())
+                    .unwrap_or_else(|| "?".to_string()),
+                short_timestamp_label(&summary.completed_at),
+            );
+            turn_strip = turn_strip.child(self.diff_turn_chip(
+                label,
+                Some(summary.turn_id.clone()),
+                Some(&summary.turn_id) == selected_turn_id.as_ref(),
+                cx,
+            ));
+        }
+
+        div().border_b_1().border_color(self.theme.border).child(
+            div()
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_2()
+                .h(px(48.0))
+                .px_4()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .min_w_0()
+                        .flex_1()
+                        .child(self.diff_header_scroll_button(
+                            "diff-turn-scroll-left",
+                            "icons/chevron-left.svg",
+                            false,
+                        ))
+                        .child(turn_strip)
+                        .child(self.diff_header_scroll_button(
+                            "diff-turn-scroll-right",
+                            "icons/chevron-right.svg",
+                            false,
+                        )),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .flex_shrink_0()
+                        .child(self.diff_toggle_button(
+                            "diff-view-stacked",
+                            "icons/rows-3.svg",
+                            !self.diff_render_split,
+                            cx,
+                        ))
+                        .child(self.diff_toggle_button(
+                            "diff-view-split",
+                            "icons/columns-2.svg",
+                            self.diff_render_split,
+                            cx,
+                        ))
+                        .child(self.diff_toggle_button(
+                            "diff-word-wrap",
+                            "icons/text-wrap.svg",
+                            self.diff_word_wrap,
+                            cx,
+                        ))
+                        .child(self.diff_toggle_button(
+                            "diff-ignore-whitespace",
+                            "icons/pilcrow.svg",
+                            self.diff_ignore_whitespace,
+                            cx,
+                        )),
+                ),
+        )
+    }
+
+    fn diff_header_scroll_button(
+        &self,
+        id: &'static str,
+        icon_path: &'static str,
+        enabled: bool,
+    ) -> impl IntoElement {
+        div()
+            .id(id)
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(24.0))
+            .h(px(24.0))
+            .flex_shrink_0()
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(if enabled {
+                self.theme.border.opacity(0.70)
+            } else {
+                self.theme.border.opacity(0.40)
+            })
+            .bg(self.theme.background.opacity(0.90))
+            .text_color(if enabled {
+                self.theme.muted_foreground
+            } else {
+                self.theme.muted_foreground.opacity(0.40)
+            })
+            .child(svg().path(icon_path).size_3().text_color(if enabled {
+                self.theme.muted_foreground
+            } else {
+                self.theme.muted_foreground.opacity(0.40)
+            }))
+    }
+
+    fn diff_turn_chip(
+        &self,
+        label: impl Into<SharedString>,
+        turn_id: Option<String>,
+        selected: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let turn_id_for_click = turn_id.clone();
+        div()
+            .id(SharedString::from(match turn_id.as_deref() {
+                Some(turn_id) => format!("diff-turn-chip-{turn_id}"),
+                None => "diff-turn-chip-all".to_string(),
+            }))
+            .flex()
+            .items_center()
+            .h(px(28.0))
+            .flex_shrink_0()
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(if selected {
+                self.theme.border
+            } else {
+                self.theme.border.opacity(0.70)
+            })
+            .bg(if selected {
+                self.theme.accent
+            } else {
+                self.theme.background.opacity(0.70)
+            })
+            .px_2()
+            .text_size(px(10.0))
+            .font_weight(FontWeight(500.0))
+            .text_color(if selected {
+                self.theme.foreground
+            } else {
+                self.theme.muted_foreground.opacity(0.85)
+            })
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.snapshot.diff_route = parse_diff_route_search(
+                    Some(DiffOpenValue::from("1")),
+                    turn_id_for_click.as_deref(),
+                    None,
+                );
+                cx.notify();
+            }))
+            .child(label.into())
+    }
+
+    fn diff_toggle_button(
+        &self,
+        id: &'static str,
+        icon_path: &'static str,
+        active: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id(id)
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(px(28.0))
+            .h(px(28.0))
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(if active {
+                self.theme.border
+            } else {
+                self.theme.border.opacity(0.70)
+            })
+            .bg(if active {
+                self.theme.accent
+            } else {
+                self.theme.background.opacity(0.70)
+            })
+            .text_color(if active {
+                self.theme.foreground
+            } else {
+                self.theme.muted_foreground
+            })
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                match id {
+                    "diff-view-stacked" => this.diff_render_split = false,
+                    "diff-view-split" => this.diff_render_split = true,
+                    "diff-word-wrap" => this.diff_word_wrap = !this.diff_word_wrap,
+                    "diff-ignore-whitespace" => {
+                        this.diff_ignore_whitespace = !this.diff_ignore_whitespace
+                    }
+                    _ => {}
+                }
+                cx.notify();
+            }))
+            .child(svg().path(icon_path).size_3().text_color(if active {
+                self.theme.foreground
+            } else {
+                self.theme.muted_foreground
+            }))
+    }
+
+    fn diff_panel_body(&self, cx: &mut Context<Self>) -> AnyElement {
+        if !self.snapshot.renders_chat_view() {
+            return self
+                .diff_panel_center_state("Select a thread to inspect turn diffs.")
+                .into_any_element();
+        }
+        if self.snapshot.turn_diff_summaries.is_empty() {
+            return self
+                .diff_panel_center_state("No completed turns yet.")
+                .into_any_element();
+        }
+
+        let files = self.diff_panel_files();
+        if files.is_empty() {
+            return self
+                .diff_panel_center_state("No patch available for this selection.")
+                .into_any_element();
+        }
+
+        let total_stat = summarize_turn_diff_stats(&files);
+        let tree = build_turn_diff_tree(&files);
+        let mut patch_surface = div().flex().flex_col().gap_2().p_2();
+        for (index, file) in files.iter().enumerate() {
+            patch_surface = patch_surface.child(self.diff_file_card(file, index));
+        }
+
+        div()
+            .id("diff-panel-viewport")
+            .min_h_0()
+            .min_w_0()
+            .flex_1()
+            .overflow_y_scroll()
+            .p_2()
+            .child(
+                div()
+                    .rounded(px(6.0))
+                    .border_1()
+                    .border_color(self.theme.border.opacity(0.60))
+                    .bg(self.theme.card.opacity(0.25))
+                    .mb_2()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .gap_2()
+                            .border_b_1()
+                            .border_color(self.theme.border.opacity(0.50))
+                            .px_3()
+                            .py_2()
+                            .child(
+                                div()
+                                    .text_size(px(10.0))
+                                    .font_weight(FontWeight(650.0))
+                                    .text_color(self.theme.muted_foreground.opacity(0.65))
+                                    .child(
+                                        format!("Changed files ({})", files.len()).to_uppercase(),
+                                    ),
+                            )
+                            .child(self.diff_stat_label(total_stat, false)),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(2.0))
+                            .p_2()
+                            .child(self.diff_tree_nodes(&tree, 0, cx)),
+                    ),
+            )
+            .child(patch_surface)
+            .into_any_element()
+    }
+
+    fn diff_panel_center_state(&self, label: &'static str) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_1()
+            .items_center()
+            .justify_center()
+            .px_5()
+            .text_align(TextAlign::Center)
+            .text_size(px(12.0))
+            .text_color(self.theme.muted_foreground.opacity(0.70))
+            .child(label)
+    }
+
+    fn diff_panel_files(&self) -> Vec<TurnDiffFileChange> {
+        if let Some(summary) = self.snapshot.selected_turn_diff_summary() {
+            return summary.files.clone();
+        }
+
+        self.snapshot
+            .turn_diff_summaries
+            .iter()
+            .flat_map(|summary| summary.files.clone())
+            .collect()
+    }
+
+    fn diff_tree_nodes(
+        &self,
+        nodes: &[TurnDiffTreeNode],
+        depth: usize,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let mut list = div().flex().flex_col().gap(px(2.0));
+        for node in nodes {
+            list = list.child(self.diff_tree_node(node, depth, cx));
+        }
+        list
+    }
+
+    fn diff_tree_node(
+        &self,
+        node: &TurnDiffTreeNode,
+        depth: usize,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let left_padding = 8.0 + depth as f32 * 14.0;
+        match node {
+            TurnDiffTreeNode::Directory {
+                name,
+                path,
+                stat,
+                children,
+            } => div()
+                .id(SharedString::from(format!("diff-tree-dir-{path}")))
+                .flex()
+                .flex_col()
+                .gap(px(2.0))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_1p5()
+                        .rounded(px(6.0))
+                        .py_1()
+                        .pr_2()
+                        .pl(px(left_padding))
+                        .text_size(px(11.0))
+                        .text_color(self.theme.muted_foreground.opacity(0.90))
+                        .child(
+                            svg()
+                                .path("icons/chevron-down.svg")
+                                .size_3()
+                                .text_color(self.theme.muted_foreground.opacity(0.70)),
+                        )
+                        .child(
+                            svg()
+                                .path("icons/folder.svg")
+                                .size_3()
+                                .text_color(self.theme.muted_foreground.opacity(0.75)),
+                        )
+                        .child(
+                            div()
+                                .min_w_0()
+                                .flex_1()
+                                .font_family(SharedString::from(MONO_FONT_FAMILY))
+                                .child(name.clone()),
+                        )
+                        .when(stat.additions > 0 || stat.deletions > 0, |row| {
+                            row.child(self.diff_stat_label(*stat, false))
+                        }),
+                )
+                .child(self.diff_tree_nodes(children, depth + 1, cx))
+                .into_any_element(),
+            TurnDiffTreeNode::File { name, path, stat } => {
+                let turn_id = self
+                    .snapshot
+                    .selected_turn_diff_summary()
+                    .map(|summary| summary.turn_id.clone());
+                let path_for_click = path.clone();
+                let selected = self.snapshot.selected_diff_file_path() == Some(path.as_str());
+                div()
+                    .id(SharedString::from(format!("diff-tree-file-{path}")))
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
+                    .rounded(px(6.0))
+                    .py_1()
+                    .pr_2()
+                    .pl(px(left_padding))
+                    .bg(if selected {
+                        self.theme.accent.opacity(0.70)
+                    } else {
+                        self.theme.background.alpha(0.0)
+                    })
+                    .text_size(px(11.0))
+                    .text_color(if selected {
+                        self.theme.foreground.opacity(0.90)
+                    } else {
+                        self.theme.muted_foreground.opacity(0.80)
+                    })
+                    .cursor_pointer()
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.snapshot.diff_route = parse_diff_route_search(
+                            Some(DiffOpenValue::from("1")),
+                            turn_id.as_deref(),
+                            Some(&path_for_click),
+                        );
+                        cx.notify();
+                    }))
+                    .child(div().w(px(14.0)).h(px(14.0)).flex_shrink_0())
+                    .child(
+                        svg()
+                            .path("icons/file-json.svg")
+                            .size_3()
+                            .text_color(self.theme.muted_foreground.opacity(0.70)),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .font_family(SharedString::from(MONO_FONT_FAMILY))
+                            .child(name.clone()),
+                    )
+                    .when_some(*stat, |row, stat| {
+                        row.child(self.diff_stat_label(stat, false))
+                    })
+                    .into_any_element()
+            }
+        }
+    }
+
+    fn diff_file_card(&self, file: &TurnDiffFileChange, index: usize) -> impl IntoElement {
+        let stat = TurnDiffStat {
+            additions: file.additions.unwrap_or(0),
+            deletions: file.deletions.unwrap_or(0),
+        };
+        let selected = self.snapshot.selected_diff_file_path() == Some(file.path.as_str());
+        div()
+            .id(SharedString::from(format!("diff-render-file-{index}")))
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(if selected {
+                self.theme.border
+            } else {
+                self.theme.border.opacity(0.70)
+            })
+            .bg(self.theme.card.opacity(0.90))
+            .overflow_hidden()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .border_b_1()
+                    .border_color(self.theme.border)
+                    .bg(self.theme.card.opacity(0.94))
+                    .px_3()
+                    .py_2()
+                    .text_size(px(11.0))
+                    .child(
+                        svg()
+                            .path("icons/chevron-down.svg")
+                            .size_4()
+                            .text_color(self.diff_kind_color(file.kind.as_deref())),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .font_family(SharedString::from(MONO_FONT_FAMILY))
+                            .text_color(self.theme.foreground.opacity(0.90))
+                            .child(file.path.clone()),
+                    )
+                    .child(self.diff_file_kind_badge(file.kind.as_deref()))
+                    .child(self.diff_stat_label(stat, false)),
+            )
+            .child(self.diff_line_row(" ", "context", "checkpoint summary", self.theme.background))
+            .when(file.deletions.unwrap_or(0) > 0, |card| {
+                card.child(self.diff_line_row(
+                    "-",
+                    "old",
+                    "removed lines represented by this turn diff",
+                    diff_destructive_color().opacity(0.10),
+                ))
+            })
+            .when(file.additions.unwrap_or(0) > 0, |card| {
+                card.child(self.diff_line_row(
+                    "+",
+                    "new",
+                    "added lines represented by this turn diff",
+                    diff_success_color().opacity(0.10),
+                ))
+            })
+    }
+
+    fn diff_file_kind_badge(&self, kind: Option<&str>) -> impl IntoElement {
+        let label = match kind {
+            Some("added") | Some("new") => "added",
+            Some("deleted") => "deleted",
+            Some("renamed") => "renamed",
+            _ => "modified",
+        };
+        div()
+            .rounded(px(999.0))
+            .border_1()
+            .border_color(self.theme.border.opacity(0.70))
+            .px_1p5()
+            .py_0p5()
+            .text_size(px(10.0))
+            .text_color(self.theme.muted_foreground.opacity(0.80))
+            .child(label)
+    }
+
+    fn diff_line_row(
+        &self,
+        marker: &'static str,
+        gutter: &'static str,
+        text: &'static str,
+        bg: gpui::Hsla,
+    ) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .min_h(px(24.0))
+            .bg(bg)
+            .font_family(SharedString::from(MONO_FONT_FAMILY))
+            .text_size(px(11.0))
+            .child(
+                div()
+                    .w(px(34.0))
+                    .flex_shrink_0()
+                    .text_align(TextAlign::Center)
+                    .text_color(self.theme.muted_foreground.opacity(0.45))
+                    .child(gutter),
+            )
+            .child(
+                div()
+                    .w(px(18.0))
+                    .flex_shrink_0()
+                    .text_color(match marker {
+                        "+" => diff_success_color(),
+                        "-" => diff_destructive_color(),
+                        _ => self.theme.muted_foreground.opacity(0.45),
+                    })
+                    .child(marker),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .flex_1()
+                    .text_color(self.theme.foreground.opacity(0.76))
+                    .child(text),
+            )
+    }
+
+    fn diff_kind_color(&self, kind: Option<&str>) -> gpui::Hsla {
+        match kind {
+            Some("added") | Some("new") => diff_success_color(),
+            Some("deleted") => diff_destructive_color(),
+            _ => self.theme.muted_foreground.opacity(0.80),
+        }
+    }
+
+    fn diff_stat_label(&self, stat: TurnDiffStat, show_parentheses: bool) -> impl IntoElement {
+        let mut label = div()
+            .flex()
+            .items_center()
+            .flex_shrink_0()
+            .font_family(SharedString::from(MONO_FONT_FAMILY))
+            .text_size(px(10.0));
+
+        if show_parentheses {
+            label = label.child(
+                div()
+                    .text_color(self.theme.muted_foreground.opacity(0.70))
+                    .child("("),
+            );
+        }
+
+        label = label
+            .child(
+                div()
+                    .text_color(diff_success_color())
+                    .child(format!("+{}", stat.additions)),
+            )
+            .child(
+                div()
+                    .mx_0p5()
+                    .text_color(self.theme.muted_foreground.opacity(0.70))
+                    .child("/"),
+            )
+            .child(
+                div()
+                    .text_color(diff_destructive_color())
+                    .child(format!("-{}", stat.deletions)),
+            );
+
+        if show_parentheses {
+            label = label.child(
+                div()
+                    .text_color(self.theme.muted_foreground.opacity(0.70))
+                    .child(")"),
+            );
+        }
+
+        label
+    }
+
     fn composer(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let active_pending_approval = self.snapshot.active_pending_approval();
         let active_pending_user_input_progress = self.snapshot.active_pending_user_input_progress();
+        let composer_width = if self.snapshot.diff_open() {
+            440.0
+        } else {
+            832.0
+        };
         let mut surface = div()
             .rounded(px(20.0))
             .border_1()
@@ -1379,7 +2061,7 @@ impl R3Shell {
             .child(
                 div()
                     .id("chat-composer-form")
-                    .w(px(832.0))
+                    .w(px(composer_width))
                     .rounded(px(22.0))
                     .bg(self.theme.primary.opacity(0.10))
                     .p(px(1.0))
@@ -1678,6 +2360,18 @@ impl R3Shell {
                 .into_any_element();
         }
 
+        let compact = self.snapshot.diff_open();
+        let effort_label = if compact {
+            "Medium"
+        } else {
+            "Medium · Normal"
+        };
+        let runtime_label = if compact {
+            "Full"
+        } else {
+            self.runtime_mode().label
+        };
+
         div()
             .id("chat-composer-footer")
             .flex()
@@ -1696,7 +2390,7 @@ impl R3Shell {
                     .child(self.composer_footer_separator())
                     .child(self.composer_footer_text_control(
                         "chat-composer-effort-mode",
-                        "Medium · Normal",
+                        effort_label,
                         cx,
                     ))
                     .child(self.composer_footer_separator())
@@ -1714,7 +2408,7 @@ impl R3Shell {
                     .child(self.composer_footer_control(
                         "chat-composer-runtime-mode",
                         self.runtime_mode().icon,
-                        self.runtime_mode().label,
+                        runtime_label,
                         cx,
                     )),
             )
@@ -5167,6 +5861,22 @@ impl R3Shell {
                     this.snapshot.terminal_state =
                         set_thread_terminal_open(&this.snapshot.terminal_state, open);
                     cx.notify();
+                } else if id == "thread-diff" {
+                    this.snapshot.diff_route = if this.snapshot.diff_open() {
+                        DiffRouteSearch::default()
+                    } else {
+                        let selected_turn_id = this
+                            .snapshot
+                            .ordered_turn_diff_summaries()
+                            .first()
+                            .map(|summary| summary.turn_id.clone());
+                        parse_diff_route_search(
+                            Some(DiffOpenValue::from("1")),
+                            selected_turn_id.as_deref(),
+                            None,
+                        )
+                    };
+                    cx.notify();
                 }
             }))
             .child(
@@ -5765,6 +6475,33 @@ fn pending_blue_icon() -> gpui::Hsla {
     hsla(213.0 / 360.0, 0.94, 0.68, 1.0)
 }
 
+fn diff_success_color() -> gpui::Hsla {
+    hsla(142.0 / 360.0, 0.71, 0.38, 1.0)
+}
+
+fn diff_destructive_color() -> gpui::Hsla {
+    hsla(0.0, 0.72, 0.48, 1.0)
+}
+
+fn short_timestamp_label(timestamp: &str) -> String {
+    let Some(time) = timestamp.split('T').nth(1) else {
+        return timestamp.to_string();
+    };
+    let mut parts = time.split(':');
+    let Some(hour) = parts.next().and_then(|value| value.parse::<u32>().ok()) else {
+        return timestamp.to_string();
+    };
+    let Some(minute) = parts.next().and_then(|value| value.parse::<u32>().ok()) else {
+        return timestamp.to_string();
+    };
+    let suffix = if hour >= 12 { "PM" } else { "AM" };
+    let hour = match hour % 12 {
+        0 => 12,
+        value => value,
+    };
+    format!("{hour}:{minute:02} {suffix}")
+}
+
 fn provider_instance_rows() -> &'static [ProviderInstanceRow] {
     &[
         ProviderInstanceRow {
@@ -5976,6 +6713,7 @@ pub fn open_main_window(cx: &mut App) {
         Ok("pending-approval") | Ok("approval") => (R3Screen::PendingApproval, false),
         Ok("pending-user-input") | Ok("user-input") => (R3Screen::PendingUserInput, false),
         Ok("terminal-drawer") | Ok("terminal") => (R3Screen::TerminalDrawer, false),
+        Ok("diff-panel") | Ok("diff") => (R3Screen::DiffPanel, false),
         Ok("settings") => (R3Screen::Settings, false),
         _ => (R3Screen::Empty, false),
     };
@@ -5994,6 +6732,7 @@ pub fn open_main_window(cx: &mut App) {
                 R3Screen::PendingApproval => AppSnapshot::pending_approval_reference_state(),
                 R3Screen::PendingUserInput => AppSnapshot::pending_user_input_reference_state(),
                 R3Screen::TerminalDrawer => AppSnapshot::terminal_drawer_reference_state(),
+                R3Screen::DiffPanel => AppSnapshot::diff_panel_reference_state(),
                 R3Screen::Empty | R3Screen::Settings => AppSnapshot::empty_reference_state(),
             };
             let shell = cx.new(|cx| {

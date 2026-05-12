@@ -50,7 +50,7 @@ These T3 surfaces have no complete Rust implementation yet:
 | Running agent turn, work log, tool output | `apps/web/src/session-logic.ts`, `MessagesTimeline.tsx` | Missing |
 | Pending approval and pending user input panels | `ChatComposer.tsx`, `ComposerPendingApproval*`, `pendingUserInput.ts` | Partial static GPUI smoke |
 | Terminal drawer and xterm integration | `ThreadTerminalDrawer.tsx`, `terminalStateStore.ts` | Partial static GPUI smoke |
-| Diff panel and changed-file browsing | `DiffPanel.tsx`, `diffRouteSearch.ts` | Missing |
+| Diff panel and changed-file browsing | `DiffPanel.tsx`, `diffRouteSearch.ts`, `turnDiffTree.ts` | Partial static GPUI smoke |
 | Branch/worktree toolbar | `BranchToolbar.tsx`, `BranchToolbar.logic.ts` | Missing |
 | Provider/model picker behavior | `ProviderModelPicker.tsx`, `ModelPickerContent.tsx`, `providerModels.ts` | Static footer only |
 | Project scripts and open-in-editor picker | `ProjectScriptsControl.tsx`, `OpenInPicker.tsx` | Missing |

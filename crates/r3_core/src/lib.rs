@@ -1300,6 +1300,304 @@ pub struct TurnDiffFileChange {
     pub deletions: Option<u32>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct TurnDiffStat {
+    pub additions: u32,
+    pub deletions: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TurnDiffTreeNode {
+    Directory {
+        name: String,
+        path: String,
+        stat: TurnDiffStat,
+        children: Vec<TurnDiffTreeNode>,
+    },
+    File {
+        name: String,
+        path: String,
+        stat: Option<TurnDiffStat>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DiffRouteSearch {
+    pub diff: Option<String>,
+    pub diff_turn_id: Option<String>,
+    pub diff_file_path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiffOpenValue {
+    String(String),
+    Number(i32),
+    Bool(bool),
+}
+
+impl From<&str> for DiffOpenValue {
+    fn from(value: &str) -> Self {
+        Self::String(value.to_string())
+    }
+}
+
+fn is_diff_open_value(value: Option<&DiffOpenValue>) -> bool {
+    matches!(
+        value,
+        Some(DiffOpenValue::String(value)) if value == "1"
+    ) || matches!(
+        value,
+        Some(DiffOpenValue::Number(1)) | Some(DiffOpenValue::Bool(true))
+    )
+}
+
+fn normalize_search_string(value: Option<&str>) -> Option<String> {
+    let trimmed = value?.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+pub fn parse_diff_route_search(
+    diff: Option<DiffOpenValue>,
+    diff_turn_id: Option<&str>,
+    diff_file_path: Option<&str>,
+) -> DiffRouteSearch {
+    if !is_diff_open_value(diff.as_ref()) {
+        return DiffRouteSearch::default();
+    }
+    let diff_turn_id = normalize_search_string(diff_turn_id);
+    let diff_file_path = diff_turn_id
+        .as_ref()
+        .and_then(|_| normalize_search_string(diff_file_path));
+
+    DiffRouteSearch {
+        diff: Some("1".to_string()),
+        diff_turn_id,
+        diff_file_path,
+    }
+}
+
+pub fn summarize_turn_diff_stats(files: &[TurnDiffFileChange]) -> TurnDiffStat {
+    files
+        .iter()
+        .fold(TurnDiffStat::default(), |mut stat, file| {
+            if let (Some(additions), Some(deletions)) = (file.additions, file.deletions) {
+                stat.additions += additions;
+                stat.deletions += deletions;
+            }
+            stat
+        })
+}
+
+pub fn has_non_zero_turn_diff_stat(stat: TurnDiffStat) -> bool {
+    stat.additions > 0 || stat.deletions > 0
+}
+
+#[derive(Debug, Clone)]
+struct MutableDiffDirectory {
+    name: String,
+    path: String,
+    stat: TurnDiffStat,
+    directories: BTreeMap<String, MutableDiffDirectory>,
+    files: Vec<TurnDiffTreeNode>,
+}
+
+fn normalize_diff_path_segments(path: &str) -> Vec<String> {
+    path.replace('\\', "/")
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn read_turn_diff_stat(file: &TurnDiffFileChange) -> Option<TurnDiffStat> {
+    Some(TurnDiffStat {
+        additions: file.additions?,
+        deletions: file.deletions?,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum DiffSortToken {
+    Text(String),
+    Number(u128),
+}
+
+fn diff_sort_tokens(value: &str) -> Vec<DiffSortToken> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut current_is_digit = None;
+
+    for character in value.chars() {
+        let is_digit = character.is_ascii_digit();
+        if current_is_digit == Some(is_digit) {
+            current.push(character);
+            continue;
+        }
+        if !current.is_empty() {
+            if current_is_digit == Some(true) {
+                tokens.push(DiffSortToken::Number(current.parse().unwrap_or(0)));
+            } else {
+                tokens.push(DiffSortToken::Text(current.to_ascii_lowercase()));
+            }
+        }
+        current.clear();
+        current.push(character);
+        current_is_digit = Some(is_digit);
+    }
+
+    if !current.is_empty() {
+        if current_is_digit == Some(true) {
+            tokens.push(DiffSortToken::Number(current.parse().unwrap_or(0)));
+        } else {
+            tokens.push(DiffSortToken::Text(current.to_ascii_lowercase()));
+        }
+    }
+
+    tokens
+}
+
+fn compare_diff_names(left: &str, right: &str) -> std::cmp::Ordering {
+    diff_sort_tokens(left)
+        .cmp(&diff_sort_tokens(right))
+        .then_with(|| left.cmp(right))
+}
+
+fn compare_diff_node_name(left: &TurnDiffTreeNode, right: &TurnDiffTreeNode) -> std::cmp::Ordering {
+    compare_diff_names(diff_node_name(left), diff_node_name(right))
+}
+
+fn diff_node_name(node: &TurnDiffTreeNode) -> &str {
+    match node {
+        TurnDiffTreeNode::Directory { name, .. } | TurnDiffTreeNode::File { name, .. } => name,
+    }
+}
+
+fn compact_diff_directory_node(node: TurnDiffTreeNode) -> TurnDiffTreeNode {
+    let TurnDiffTreeNode::Directory {
+        mut name,
+        mut path,
+        mut stat,
+        mut children,
+    } = node
+    else {
+        return node;
+    };
+
+    children = children
+        .into_iter()
+        .map(|child| match child {
+            TurnDiffTreeNode::Directory { .. } => compact_diff_directory_node(child),
+            TurnDiffTreeNode::File { .. } => child,
+        })
+        .collect();
+
+    loop {
+        if children.len() != 1 {
+            break;
+        }
+        match children.pop().expect("single child exists") {
+            TurnDiffTreeNode::Directory {
+                name: child_name,
+                path: child_path,
+                stat: child_stat,
+                children: child_children,
+            } => {
+                name = format!("{name}/{child_name}");
+                path = child_path;
+                stat = child_stat;
+                children = child_children;
+            }
+            child @ TurnDiffTreeNode::File { .. } => {
+                children.push(child);
+                break;
+            }
+        }
+    }
+
+    TurnDiffTreeNode::Directory {
+        name,
+        path,
+        stat,
+        children,
+    }
+}
+
+fn to_turn_diff_tree_nodes(directory: MutableDiffDirectory) -> Vec<TurnDiffTreeNode> {
+    let mut directories = directory
+        .directories
+        .into_values()
+        .map(|directory| {
+            compact_diff_directory_node(TurnDiffTreeNode::Directory {
+                name: directory.name.clone(),
+                path: directory.path.clone(),
+                stat: directory.stat,
+                children: to_turn_diff_tree_nodes(directory),
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut files = directory.files;
+    directories.sort_by(compare_diff_node_name);
+    files.sort_by(compare_diff_node_name);
+    directories.extend(files);
+    directories
+}
+
+pub fn build_turn_diff_tree(files: &[TurnDiffFileChange]) -> Vec<TurnDiffTreeNode> {
+    let mut root = MutableDiffDirectory {
+        name: String::new(),
+        path: String::new(),
+        stat: TurnDiffStat::default(),
+        directories: BTreeMap::new(),
+        files: Vec::new(),
+    };
+
+    for file in files {
+        let segments = normalize_diff_path_segments(&file.path);
+        let Some(file_name) = segments.last().cloned() else {
+            continue;
+        };
+        let file_path = segments.join("/");
+        let stat = read_turn_diff_stat(file);
+        let mut current = &mut root;
+        if let Some(stat) = stat {
+            current.stat.additions += stat.additions;
+            current.stat.deletions += stat.deletions;
+        }
+        for segment in &segments[..segments.len().saturating_sub(1)] {
+            let next_path = if current.path.is_empty() {
+                segment.clone()
+            } else {
+                format!("{}/{}", current.path, segment)
+            };
+            current = current
+                .directories
+                .entry(segment.clone())
+                .or_insert_with(|| MutableDiffDirectory {
+                    name: segment.clone(),
+                    path: next_path,
+                    stat: TurnDiffStat::default(),
+                    directories: BTreeMap::new(),
+                    files: Vec::new(),
+                });
+            if let Some(stat) = stat {
+                current.stat.additions += stat.additions;
+                current.stat.deletions += stat.deletions;
+            }
+        }
+        current.files.push(TurnDiffTreeNode::File {
+            name: file_name,
+            path: file_path,
+            stat,
+        });
+    }
+
+    to_turn_diff_tree_nodes(root)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurnDiffSummary {
     pub turn_id: String,
@@ -1451,6 +1749,8 @@ pub struct AppSnapshot {
     pub terminal_state: ThreadTerminalState,
     pub terminal_launch_context: Option<ThreadTerminalLaunchContext>,
     pub terminal_event_entries: Vec<TerminalEventEntry>,
+    pub diff_route: DiffRouteSearch,
+    pub turn_diff_summaries: Vec<TurnDiffSummary>,
 }
 
 impl AppSnapshot {
@@ -1469,6 +1769,8 @@ impl AppSnapshot {
             terminal_state: create_default_thread_terminal_state(),
             terminal_launch_context: None,
             terminal_event_entries: Vec::new(),
+            diff_route: DiffRouteSearch::default(),
+            turn_diff_summaries: Vec::new(),
         }
     }
 
@@ -1508,6 +1810,8 @@ impl AppSnapshot {
             terminal_state: create_default_thread_terminal_state(),
             terminal_launch_context: None,
             terminal_event_entries: Vec::new(),
+            diff_route: DiffRouteSearch::default(),
+            turn_diff_summaries: Vec::new(),
         }
     }
 
@@ -1561,6 +1865,8 @@ impl AppSnapshot {
             terminal_state: create_default_thread_terminal_state(),
             terminal_launch_context: None,
             terminal_event_entries: Vec::new(),
+            diff_route: DiffRouteSearch::default(),
+            turn_diff_summaries: Vec::new(),
         }
     }
 
@@ -1711,6 +2017,68 @@ impl AppSnapshot {
         snapshot
     }
 
+    pub fn diff_panel_reference_state() -> Self {
+        let mut snapshot = Self::mock_reference_state();
+        snapshot.diff_route = parse_diff_route_search(
+            Some(DiffOpenValue::from("1")),
+            Some("turn-r3code-ui-shell-2"),
+            Some("crates/r3_ui/src/shell.rs"),
+        );
+        snapshot.turn_diff_summaries = vec![
+            TurnDiffSummary {
+                turn_id: "turn-r3code-ui-shell-2".to_string(),
+                completed_at: "2026-03-04T12:05:18.000Z".to_string(),
+                status: Some("completed".to_string()),
+                files: vec![
+                    TurnDiffFileChange {
+                        path: "crates/r3_ui/src/shell.rs".to_string(),
+                        kind: Some("modified".to_string()),
+                        additions: Some(126),
+                        deletions: Some(18),
+                    },
+                    TurnDiffFileChange {
+                        path: "crates/r3_core/src/lib.rs".to_string(),
+                        kind: Some("modified".to_string()),
+                        additions: Some(74),
+                        deletions: Some(4),
+                    },
+                    TurnDiffFileChange {
+                        path: "docs/reference/PARITY_PLAN.md".to_string(),
+                        kind: Some("modified".to_string()),
+                        additions: Some(8),
+                        deletions: Some(0),
+                    },
+                ],
+                checkpoint_ref: Some("checkpoint-turn-2".to_string()),
+                assistant_message_id: Some("msg-assistant-r3code-ui-shell".to_string()),
+                checkpoint_turn_count: Some(2),
+            },
+            TurnDiffSummary {
+                turn_id: "turn-r3code-ui-shell-1".to_string(),
+                completed_at: "2026-03-04T12:01:42.000Z".to_string(),
+                status: Some("completed".to_string()),
+                files: vec![
+                    TurnDiffFileChange {
+                        path: "crates/r3_ui/assets/icons/diff.svg".to_string(),
+                        kind: Some("added".to_string()),
+                        additions: Some(1),
+                        deletions: Some(0),
+                    },
+                    TurnDiffFileChange {
+                        path: "crates/r3_ui/src/assets.rs".to_string(),
+                        kind: Some("modified".to_string()),
+                        additions: Some(6),
+                        deletions: Some(1),
+                    },
+                ],
+                checkpoint_ref: Some("checkpoint-turn-1".to_string()),
+                assistant_message_id: Some("msg-assistant-r3code-ui-shell".to_string()),
+                checkpoint_turn_count: Some(1),
+            },
+        ];
+        snapshot
+    }
+
     pub fn renders_chat_view(&self) -> bool {
         self.route.renders_chat_view()
     }
@@ -1754,6 +2122,37 @@ impl AppSnapshot {
 
     pub fn terminal_open(&self) -> bool {
         self.terminal_state.terminal_open
+    }
+
+    pub fn diff_open(&self) -> bool {
+        self.diff_route.diff.as_deref() == Some("1")
+    }
+
+    pub fn ordered_turn_diff_summaries(&self) -> Vec<&TurnDiffSummary> {
+        let mut summaries = self.turn_diff_summaries.iter().collect::<Vec<_>>();
+        summaries.sort_by(|left, right| {
+            right
+                .checkpoint_turn_count
+                .unwrap_or(0)
+                .cmp(&left.checkpoint_turn_count.unwrap_or(0))
+                .then_with(|| right.completed_at.cmp(&left.completed_at))
+        });
+        summaries
+    }
+
+    pub fn selected_turn_diff_summary(&self) -> Option<&TurnDiffSummary> {
+        let selected_turn_id = self.diff_route.diff_turn_id.as_ref()?;
+        self.turn_diff_summaries
+            .iter()
+            .find(|summary| &summary.turn_id == selected_turn_id)
+            .or_else(|| self.ordered_turn_diff_summaries().first().copied())
+    }
+
+    pub fn selected_diff_file_path(&self) -> Option<&str> {
+        self.diff_route
+            .diff_turn_id
+            .as_ref()
+            .and(self.diff_route.diff_file_path.as_deref())
     }
 }
 
@@ -1857,6 +2256,272 @@ mod tests {
             }]
         );
         assert_eq!(snapshot.terminal_event_entries.len(), 4);
+    }
+
+    #[test]
+    fn diff_route_search_matches_upstream_parser_contract() {
+        assert_eq!(
+            parse_diff_route_search(
+                Some(DiffOpenValue::from("1")),
+                Some("turn-1"),
+                Some("src/app.ts")
+            ),
+            DiffRouteSearch {
+                diff: Some("1".to_string()),
+                diff_turn_id: Some("turn-1".to_string()),
+                diff_file_path: Some("src/app.ts".to_string()),
+            }
+        );
+        assert_eq!(
+            parse_diff_route_search(Some(DiffOpenValue::Number(1)), Some("turn-1"), None),
+            DiffRouteSearch {
+                diff: Some("1".to_string()),
+                diff_turn_id: Some("turn-1".to_string()),
+                diff_file_path: None,
+            }
+        );
+        assert_eq!(
+            parse_diff_route_search(Some(DiffOpenValue::Bool(true)), Some("turn-1"), None),
+            DiffRouteSearch {
+                diff: Some("1".to_string()),
+                diff_turn_id: Some("turn-1".to_string()),
+                diff_file_path: None,
+            }
+        );
+        assert_eq!(
+            parse_diff_route_search(
+                Some(DiffOpenValue::from("0")),
+                Some("turn-1"),
+                Some("src/app.ts")
+            ),
+            DiffRouteSearch::default()
+        );
+        assert_eq!(
+            parse_diff_route_search(Some(DiffOpenValue::from("1")), None, Some("src/app.ts")),
+            DiffRouteSearch {
+                diff: Some("1".to_string()),
+                diff_turn_id: None,
+                diff_file_path: None,
+            }
+        );
+        assert_eq!(
+            parse_diff_route_search(Some(DiffOpenValue::from("1")), Some("  "), Some("  ")),
+            DiffRouteSearch {
+                diff: Some("1".to_string()),
+                diff_turn_id: None,
+                diff_file_path: None,
+            }
+        );
+    }
+
+    #[test]
+    fn turn_diff_stats_sum_only_files_with_numeric_values() {
+        let stat = summarize_turn_diff_stats(&[
+            diff_file("README.md", Some(3), Some(1)),
+            diff_file("docs/notes.md", None, None),
+            diff_file("src/index.ts", Some(5), Some(2)),
+        ]);
+
+        assert_eq!(
+            stat,
+            TurnDiffStat {
+                additions: 8,
+                deletions: 3,
+            }
+        );
+        assert!(has_non_zero_turn_diff_stat(stat));
+    }
+
+    #[test]
+    fn builds_turn_diff_tree_with_aggregated_directory_stats() {
+        let tree = build_turn_diff_tree(&[
+            diff_file("src/index.ts", Some(2), Some(1)),
+            diff_file("src/components/Button.tsx", Some(4), Some(2)),
+            diff_file("README.md", Some(1), Some(0)),
+        ]);
+
+        assert_eq!(
+            tree,
+            vec![
+                TurnDiffTreeNode::Directory {
+                    name: "src".to_string(),
+                    path: "src".to_string(),
+                    stat: TurnDiffStat {
+                        additions: 6,
+                        deletions: 3,
+                    },
+                    children: vec![
+                        TurnDiffTreeNode::Directory {
+                            name: "components".to_string(),
+                            path: "src/components".to_string(),
+                            stat: TurnDiffStat {
+                                additions: 4,
+                                deletions: 2,
+                            },
+                            children: vec![TurnDiffTreeNode::File {
+                                name: "Button.tsx".to_string(),
+                                path: "src/components/Button.tsx".to_string(),
+                                stat: Some(TurnDiffStat {
+                                    additions: 4,
+                                    deletions: 2,
+                                }),
+                            }],
+                        },
+                        TurnDiffTreeNode::File {
+                            name: "index.ts".to_string(),
+                            path: "src/index.ts".to_string(),
+                            stat: Some(TurnDiffStat {
+                                additions: 2,
+                                deletions: 1,
+                            }),
+                        },
+                    ],
+                },
+                TurnDiffTreeNode::File {
+                    name: "README.md".to_string(),
+                    path: "README.md".to_string(),
+                    stat: Some(TurnDiffStat {
+                        additions: 1,
+                        deletions: 0,
+                    }),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn turn_diff_tree_keeps_missing_stats_and_normalizes_windows_paths() {
+        let missing_stats = build_turn_diff_tree(&[
+            diff_file("docs/notes.md", None, None),
+            diff_file("docs/todo.md", Some(1), Some(1)),
+        ]);
+        assert_eq!(
+            missing_stats,
+            vec![TurnDiffTreeNode::Directory {
+                name: "docs".to_string(),
+                path: "docs".to_string(),
+                stat: TurnDiffStat {
+                    additions: 1,
+                    deletions: 1,
+                },
+                children: vec![
+                    TurnDiffTreeNode::File {
+                        name: "notes.md".to_string(),
+                        path: "docs/notes.md".to_string(),
+                        stat: None,
+                    },
+                    TurnDiffTreeNode::File {
+                        name: "todo.md".to_string(),
+                        path: "docs/todo.md".to_string(),
+                        stat: Some(TurnDiffStat {
+                            additions: 1,
+                            deletions: 1,
+                        }),
+                    },
+                ],
+            }]
+        );
+
+        assert_eq!(
+            build_turn_diff_tree(&[diff_file("apps\\web\\src\\index.ts", Some(2), Some(1))]),
+            vec![TurnDiffTreeNode::Directory {
+                name: "apps/web/src".to_string(),
+                path: "apps/web/src".to_string(),
+                stat: TurnDiffStat {
+                    additions: 2,
+                    deletions: 1,
+                },
+                children: vec![TurnDiffTreeNode::File {
+                    name: "index.ts".to_string(),
+                    path: "apps/web/src/index.ts".to_string(),
+                    stat: Some(TurnDiffStat {
+                        additions: 2,
+                        deletions: 1,
+                    }),
+                }],
+            }]
+        );
+    }
+
+    #[test]
+    fn turn_diff_tree_compacts_directory_chains_and_sorts_numerically() {
+        let tree = build_turn_diff_tree(&[
+            diff_file("apps/server/src/file10.ts", Some(2), Some(1)),
+            diff_file("apps/server/src/file2.ts", Some(4), Some(0)),
+            diff_file("apps/server/main.ts", Some(1), Some(0)),
+        ]);
+
+        assert_eq!(
+            tree,
+            vec![TurnDiffTreeNode::Directory {
+                name: "apps/server".to_string(),
+                path: "apps/server".to_string(),
+                stat: TurnDiffStat {
+                    additions: 7,
+                    deletions: 1,
+                },
+                children: vec![
+                    TurnDiffTreeNode::Directory {
+                        name: "src".to_string(),
+                        path: "apps/server/src".to_string(),
+                        stat: TurnDiffStat {
+                            additions: 6,
+                            deletions: 1,
+                        },
+                        children: vec![
+                            TurnDiffTreeNode::File {
+                                name: "file2.ts".to_string(),
+                                path: "apps/server/src/file2.ts".to_string(),
+                                stat: Some(TurnDiffStat {
+                                    additions: 4,
+                                    deletions: 0,
+                                }),
+                            },
+                            TurnDiffTreeNode::File {
+                                name: "file10.ts".to_string(),
+                                path: "apps/server/src/file10.ts".to_string(),
+                                stat: Some(TurnDiffStat {
+                                    additions: 2,
+                                    deletions: 1,
+                                }),
+                            },
+                        ],
+                    },
+                    TurnDiffTreeNode::File {
+                        name: "main.ts".to_string(),
+                        path: "apps/server/main.ts".to_string(),
+                        stat: Some(TurnDiffStat {
+                            additions: 1,
+                            deletions: 0,
+                        }),
+                    },
+                ],
+            }]
+        );
+    }
+
+    #[test]
+    fn diff_panel_reference_state_exposes_selected_turn_and_file() {
+        let snapshot = AppSnapshot::diff_panel_reference_state();
+        let selected = snapshot.selected_turn_diff_summary().unwrap();
+
+        assert!(snapshot.diff_open());
+        assert_eq!(selected.turn_id, "turn-r3code-ui-shell-2");
+        assert_eq!(
+            snapshot.selected_diff_file_path(),
+            Some("crates/r3_ui/src/shell.rs")
+        );
+        assert_eq!(
+            snapshot.ordered_turn_diff_summaries()[0].turn_id,
+            selected.turn_id
+        );
+        assert_eq!(
+            summarize_turn_diff_stats(&selected.files),
+            TurnDiffStat {
+                additions: 208,
+                deletions: 22,
+            }
+        );
     }
 
     #[test]
@@ -2150,6 +2815,15 @@ mod tests {
         let state = EnvironmentState::default();
 
         assert!(get_thread_from_environment_state(&state, "missing-thread").is_none());
+    }
+
+    fn diff_file(path: &str, additions: Option<u32>, deletions: Option<u32>) -> TurnDiffFileChange {
+        TurnDiffFileChange {
+            path: path.to_string(),
+            kind: Some("modified".to_string()),
+            additions,
+            deletions,
+        }
     }
 
     #[test]

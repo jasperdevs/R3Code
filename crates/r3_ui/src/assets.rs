@@ -32,8 +32,16 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/chevron-down.svg"),
     ),
     (
+        "icons/chevron-left.svg",
+        include_bytes!("../assets/icons/chevron-left.svg"),
+    ),
+    (
         "icons/chevron-right.svg",
         include_bytes!("../assets/icons/chevron-right.svg"),
+    ),
+    (
+        "icons/columns-2.svg",
+        include_bytes!("../assets/icons/columns-2.svg"),
     ),
     ("icons/copy.svg", include_bytes!("../assets/icons/copy.svg")),
     ("icons/diff.svg", include_bytes!("../assets/icons/diff.svg")),
@@ -75,6 +83,10 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/pen-line.svg"),
     ),
     (
+        "icons/pilcrow.svg",
+        include_bytes!("../assets/icons/pilcrow.svg"),
+    ),
+    (
         "icons/plus-square.svg",
         include_bytes!("../assets/icons/plus-square.svg"),
     ),
@@ -86,6 +98,10 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
     (
         "icons/rotate-ccw.svg",
         include_bytes!("../assets/icons/rotate-ccw.svg"),
+    ),
+    (
+        "icons/rows-3.svg",
+        include_bytes!("../assets/icons/rows-3.svg"),
     ),
     (
         "icons/search.svg",
@@ -106,6 +122,10 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
     (
         "icons/terminal.svg",
         include_bytes!("../assets/icons/terminal.svg"),
+    ),
+    (
+        "icons/text-wrap.svg",
+        include_bytes!("../assets/icons/text-wrap.svg"),
     ),
     (
         "icons/trash-2.svg",
@@ -174,15 +194,20 @@ mod tests {
     fn upstream_lucide_icons_used_by_native_surfaces_are_listed() {
         let icons = assets_list();
         for icon in [
-            "diff.svg",
             "check.svg",
+            "chevron-left.svg",
+            "columns-2.svg",
+            "diff.svg",
             "folder.svg",
             "lock.svg",
             "lock-open.svg",
             "pen-line.svg",
+            "pilcrow.svg",
             "rotate-ccw.svg",
+            "rows-3.svg",
             "square-split-horizontal.svg",
             "square-terminal.svg",
+            "text-wrap.svg",
             "triangle-alert.svg",
             "trash-2.svg",
         ] {
