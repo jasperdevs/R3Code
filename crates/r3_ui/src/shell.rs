@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use gpui::prelude::{FluentBuilder, InteractiveElement, StatefulInteractiveElement};
 use gpui::{
     AnyElement, App, AppContext, BoxShadow, Context, CursorStyle, FocusHandle, Focusable,
@@ -9,18 +11,21 @@ use r3_core::{
     CommandPaletteItemKind, DiagnosticsDescriptionInput, DiffOpenValue, DiffRouteSearch,
     DraftThreadEnvMode, EditorOption, MAX_TERMINALS_PER_GROUP, MAX_VISIBLE_WORK_LOG_ENTRIES,
     ModelPickerItem, ModelPickerSelectedInstance, ModelPickerState, PendingApproval,
-    PendingUserInputProgress, ProjectScript, ProjectScriptIcon, ProjectSummary,
-    ProviderInstanceEntry, RECENT_COMMAND_PALETTE_THREAD_LIMIT, ServerProviderModel,
-    SidebarThreadSortOrder, TerminalEvent, ThreadStatus, TurnDiffFileChange, TurnDiffStat,
-    TurnDiffSummary, TurnDiffTreeNode, WorkLogEntry, build_project_action_items,
-    build_root_command_palette_groups, build_thread_action_items, build_turn_diff_tree,
-    close_thread_terminal, filter_command_palette_groups, format_diagnostics_description,
-    get_display_model_name, get_provider_summary, get_provider_version_advisory_presentation,
-    get_provider_version_label, new_thread_terminal, parse_diff_route_search,
-    primary_project_script, provider_instance_initials, resolve_model_picker_state,
-    resolve_selectable_model, set_pending_user_input_custom_answer, set_thread_active_terminal,
-    set_thread_terminal_open, split_thread_terminal, summarize_turn_diff_stats,
-    toggle_pending_user_input_option_selection,
+    PendingUserInputProgress, ProcessDiagnosticsEntry, ProcessDiagnosticsResult, ProjectScript,
+    ProjectScriptIcon, ProjectSummary, ProviderInstanceEntry, RECENT_COMMAND_PALETTE_THREAD_LIMIT,
+    ServerProviderModel, SidebarThreadSortOrder, TerminalEvent, ThreadStatus,
+    TraceDiagnosticsFailureSummary, TraceDiagnosticsLogEvent, TraceDiagnosticsRecentFailure,
+    TraceDiagnosticsResult, TraceDiagnosticsSpanOccurrence, TraceDiagnosticsSpanSummary,
+    TurnDiffFileChange, TurnDiffStat, TurnDiffSummary, TurnDiffTreeNode, WorkLogEntry,
+    build_project_action_items, build_root_command_palette_groups, build_thread_action_items,
+    build_turn_diff_tree, close_thread_terminal, filter_command_palette_groups,
+    format_diagnostics_bytes, format_diagnostics_count, format_diagnostics_description,
+    format_diagnostics_duration_ms, get_display_model_name, get_provider_summary,
+    get_provider_version_advisory_presentation, get_provider_version_label, new_thread_terminal,
+    parse_diff_route_search, primary_project_script, provider_instance_initials,
+    resolve_model_picker_state, resolve_selectable_model, set_pending_user_input_custom_answer,
+    set_thread_active_terminal, set_thread_terminal_open, shorten_trace_id, split_thread_terminal,
+    summarize_turn_diff_stats, toggle_pending_user_input_option_selection,
 };
 
 use crate::theme::{FONT_FAMILY, MONO_FONT_FAMILY, SIDEBAR_MIN_WIDTH, Theme, ThemeMode};
@@ -164,6 +169,7 @@ pub enum R3Screen {
     BranchToolbar,
     ProviderModelPicker,
     Settings,
+    SettingsDiagnostics,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -431,7 +437,7 @@ impl Render for R3Shell {
             | R3Screen::ProviderModelPicker => {
                 root.child(self.sidebar(cx)).child(self.main_panel(cx))
             }
-            R3Screen::Settings => root
+            R3Screen::Settings | R3Screen::SettingsDiagnostics => root
                 .child(self.settings_sidebar(cx))
                 .child(self.settings_panel(cx)),
         };
@@ -4033,7 +4039,7 @@ impl R3Shell {
 
         let mut nav = div().flex().flex_col().px_2().py_1();
         for item in nav_items {
-            let active = self.settings_section == item.section;
+            let active = self.screen == R3Screen::Settings && self.settings_section == item.section;
             nav = nav.child(
                 div()
                     .id(item.section.id())
@@ -4119,7 +4125,7 @@ impl R3Shell {
             .border_color(self.theme.border)
             .child(div().text_size(px(14.0)).child("Settings"));
 
-        if self.settings_section == SettingsSection::General {
+        if self.screen == R3Screen::Settings && self.settings_section == SettingsSection::General {
             header = header.child(
                 div()
                     .id("settings-restore-defaults")
@@ -4160,19 +4166,25 @@ impl R3Shell {
             .flex_1()
             .min_w_0()
             .child(header)
-            .child(match self.settings_section {
-                SettingsSection::General => self.settings_general_panel(cx).into_any_element(),
-                SettingsSection::Keybindings => {
-                    self.settings_keybindings_panel(cx).into_any_element()
+            .child(if self.screen == R3Screen::SettingsDiagnostics {
+                self.settings_diagnostics_panel().into_any_element()
+            } else {
+                match self.settings_section {
+                    SettingsSection::General => self.settings_general_panel(cx).into_any_element(),
+                    SettingsSection::Keybindings => {
+                        self.settings_keybindings_panel(cx).into_any_element()
+                    }
+                    SettingsSection::Providers => {
+                        self.settings_providers_panel(cx).into_any_element()
+                    }
+                    SettingsSection::SourceControl => {
+                        self.settings_source_control_panel(cx).into_any_element()
+                    }
+                    SettingsSection::Connections => {
+                        self.settings_connections_panel(cx).into_any_element()
+                    }
+                    SettingsSection::Archive => self.settings_archive_panel().into_any_element(),
                 }
-                SettingsSection::Providers => self.settings_providers_panel(cx).into_any_element(),
-                SettingsSection::SourceControl => {
-                    self.settings_source_control_panel(cx).into_any_element()
-                }
-                SettingsSection::Connections => {
-                    self.settings_connections_panel(cx).into_any_element()
-                }
-                SettingsSection::Archive => self.settings_archive_panel().into_any_element(),
             })
     }
 
@@ -4201,6 +4213,308 @@ impl R3Shell {
                             .child(self.settings_card(cx)),
                     )
                     .child(self.settings_about_section(cx)),
+            )
+    }
+
+    fn settings_diagnostics_panel(&self) -> impl IntoElement {
+        let process_diagnostics = reference_process_diagnostics_result();
+        let trace_diagnostics = reference_trace_diagnostics_result();
+
+        div()
+            .id("settings-diagnostics-scroll")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_h_0()
+            .items_center()
+            .overflow_y_scroll()
+            .p_8()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .w(px(768.0))
+                    .gap_7()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2p5()
+                            .child(self.settings_section_header("LIVE PROCESSES"))
+                            .child(self.diagnostics_stats_card(vec![
+                                (
+                                    "Child Processes",
+                                    format_diagnostics_count(
+                                        process_diagnostics.process_count as u64,
+                                    ),
+                                ),
+                                (
+                                    "CPU",
+                                    format!("{:.1}%", process_diagnostics.total_cpu_percent),
+                                ),
+                                (
+                                    "Memory",
+                                    format_diagnostics_bytes(process_diagnostics.total_rss_bytes),
+                                ),
+                                ("Server PID", process_diagnostics.server_pid.to_string()),
+                            ]))
+                            .child(self.diagnostics_process_card(&process_diagnostics.processes)),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2p5()
+                            .child(self.settings_section_header("TRACE DIAGNOSTICS"))
+                            .child(self.diagnostics_stats_card(vec![
+                                (
+                                    "Spans",
+                                    format_diagnostics_count(trace_diagnostics.record_count),
+                                ),
+                                (
+                                    "Failures",
+                                    format_diagnostics_count(trace_diagnostics.failure_count),
+                                ),
+                                (
+                                    "Slow Spans",
+                                    format_diagnostics_count(trace_diagnostics.slow_span_count),
+                                ),
+                                (
+                                    "Parse Errors",
+                                    format_diagnostics_count(trace_diagnostics.parse_error_count),
+                                ),
+                            ])),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2p5()
+                            .child(self.settings_section_header("LATEST FAILURES"))
+                            .child(
+                                self.diagnostics_failures_card(&trace_diagnostics.latest_failures),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2p5()
+                            .child(self.settings_section_header("MOST COMMON FAILURES"))
+                            .child(self.diagnostics_common_failures_card(
+                                &trace_diagnostics.common_failures,
+                            )),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2p5()
+                            .child(self.settings_section_header("SLOWEST SPANS"))
+                            .child(
+                                self.diagnostics_slowest_spans_card(
+                                    &trace_diagnostics.slowest_spans,
+                                ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2p5()
+                            .child(self.settings_section_header("SPAN LOGS"))
+                            .child(self.diagnostics_logs_card(
+                                &trace_diagnostics.latest_warning_and_error_logs,
+                            )),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2p5()
+                            .child(self.settings_section_header("TOP SPAN NAMES"))
+                            .child(
+                                self.diagnostics_top_spans_card(
+                                    &trace_diagnostics.top_spans_by_count,
+                                ),
+                            ),
+                    ),
+            )
+    }
+
+    fn diagnostics_stats_card(&self, stats: Vec<(&'static str, String)>) -> gpui::Div {
+        let mut grid = div().grid().grid_cols(4);
+        for (label, value) in stats {
+            grid = grid.child(
+                div()
+                    .min_w_0()
+                    .border_l_1()
+                    .border_color(self.theme.border)
+                    .px_4()
+                    .py_3()
+                    .child(
+                        div()
+                            .text_size(px(10.0))
+                            .font_weight(FontWeight(650.0))
+                            .text_color(self.theme.muted_foreground.opacity(0.72))
+                            .child(label),
+                    )
+                    .child(
+                        div()
+                            .mt_1()
+                            .text_size(px(18.0))
+                            .font_weight(FontWeight(650.0))
+                            .font_family(SharedString::from(MONO_FONT_FAMILY))
+                            .child(value),
+                    ),
+            );
+        }
+        self.settings_about_card().child(grid)
+    }
+
+    fn diagnostics_process_card(&self, processes: &[ProcessDiagnosticsEntry]) -> gpui::Div {
+        let mut card = self.settings_about_card();
+        for (index, process) in processes.iter().enumerate() {
+            card = card.child(self.diagnostics_row(
+                index == 0,
+                process.command.clone(),
+                format!(
+                    "PID {} · {} · depth {}",
+                    process.pid, process.status, process.depth
+                ),
+                format!(
+                    "{} · {:.1}%",
+                    format_diagnostics_bytes(process.rss_bytes),
+                    process.cpu_percent
+                ),
+            ));
+        }
+        card
+    }
+
+    fn diagnostics_failures_card(&self, failures: &[TraceDiagnosticsRecentFailure]) -> gpui::Div {
+        let mut card = self.settings_about_card();
+        for (index, failure) in failures.iter().take(4).enumerate() {
+            card = card.child(self.diagnostics_row(
+                index == 0,
+                failure.name.clone(),
+                failure.cause.clone(),
+                format_diagnostics_duration_ms(failure.duration_ms),
+            ));
+        }
+        card
+    }
+
+    fn diagnostics_common_failures_card(
+        &self,
+        failures: &[TraceDiagnosticsFailureSummary],
+    ) -> gpui::Div {
+        let mut card = self.settings_about_card();
+        for (index, failure) in failures.iter().take(4).enumerate() {
+            card = card.child(self.diagnostics_row(
+                index == 0,
+                failure.name.clone(),
+                failure.cause.clone(),
+                format!("{}x", format_diagnostics_count(failure.count)),
+            ));
+        }
+        card
+    }
+
+    fn diagnostics_slowest_spans_card(
+        &self,
+        spans: &[TraceDiagnosticsSpanOccurrence],
+    ) -> gpui::Div {
+        let mut card = self.settings_about_card();
+        for (index, span) in spans.iter().take(5).enumerate() {
+            card = card.child(self.diagnostics_row(
+                index == 0,
+                span.name.clone(),
+                format!("Trace {}", shorten_trace_id(&span.trace_id)),
+                format_diagnostics_duration_ms(span.duration_ms),
+            ));
+        }
+        card
+    }
+
+    fn diagnostics_logs_card(&self, logs: &[TraceDiagnosticsLogEvent]) -> gpui::Div {
+        let mut card = self.settings_about_card();
+        for (index, event) in logs.iter().take(4).enumerate() {
+            card = card.child(self.diagnostics_row(
+                index == 0,
+                event.message.clone(),
+                format!("{} · {}", event.level, event.span_name),
+                shorten_trace_id(&event.trace_id),
+            ));
+        }
+        card
+    }
+
+    fn diagnostics_top_spans_card(&self, spans: &[TraceDiagnosticsSpanSummary]) -> gpui::Div {
+        let mut card = self.settings_about_card();
+        for (index, span) in spans.iter().take(5).enumerate() {
+            card = card.child(self.diagnostics_row(
+                index == 0,
+                span.name.clone(),
+                format!(
+                    "{} failures · avg {}",
+                    format_diagnostics_count(span.failure_count),
+                    format_diagnostics_duration_ms(span.average_duration_ms)
+                ),
+                format!("{}x", format_diagnostics_count(span.count)),
+            ));
+        }
+        card
+    }
+
+    fn diagnostics_row(
+        &self,
+        first: bool,
+        title: impl Into<SharedString>,
+        detail: impl Into<SharedString>,
+        metric: impl Into<SharedString>,
+    ) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .min_h(px(58.0))
+            .border_t_1()
+            .border_color(if first {
+                self.theme.card
+            } else {
+                self.theme.border
+            })
+            .px_5()
+            .py_3()
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .text_size(px(12.0))
+                            .font_weight(FontWeight(650.0))
+                            .overflow_hidden()
+                            .child(title.into()),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.0))
+                            .text_color(self.theme.muted_foreground.opacity(0.82))
+                            .overflow_hidden()
+                            .child(detail.into()),
+                    ),
+            )
+            .child(
+                div()
+                    .ml_4()
+                    .text_size(px(12.0))
+                    .font_family(SharedString::from(MONO_FONT_FAMILY))
+                    .text_color(self.theme.muted_foreground)
+                    .child(metric.into()),
             )
     }
 
@@ -6517,6 +6831,7 @@ impl R3Shell {
             .cursor_pointer()
             .on_click(cx.listener(|this, _, _, cx| {
                 this.settings_diagnostics_opened = true;
+                this.screen = R3Screen::SettingsDiagnostics;
                 cx.notify();
             }))
             .child(if self.settings_diagnostics_opened {
@@ -7613,6 +7928,7 @@ impl R3Shell {
     }
 
     fn set_settings_section(&mut self, section: SettingsSection, cx: &mut Context<Self>) {
+        self.screen = R3Screen::Settings;
         self.settings_section = section;
         self.settings_select_open = None;
         cx.notify();
@@ -8110,6 +8426,143 @@ fn diff_destructive_color() -> gpui::Hsla {
     hsla(0.0, 0.72, 0.48, 1.0)
 }
 
+fn reference_process_diagnostics_result() -> ProcessDiagnosticsResult {
+    ProcessDiagnosticsResult {
+        server_pid: 100,
+        read_at: "2026-05-05T10:00:00.000Z".to_string(),
+        process_count: 2,
+        total_rss_bytes: 6_000,
+        total_cpu_percent: 4.75,
+        processes: vec![
+            ProcessDiagnosticsEntry {
+                pid: 101,
+                ppid: 100,
+                pgid: Some(100),
+                status: "S".to_string(),
+                cpu_percent: 1.5,
+                rss_bytes: 2_000,
+                elapsed: "00:20".to_string(),
+                command: "codex app-server".to_string(),
+                depth: 0,
+                child_pids: vec![102],
+            },
+            ProcessDiagnosticsEntry {
+                pid: 102,
+                ppid: 101,
+                pgid: Some(100),
+                status: "R".to_string(),
+                cpu_percent: 3.25,
+                rss_bytes: 4_000,
+                elapsed: "00:05".to_string(),
+                command: "git status".to_string(),
+                depth: 1,
+                child_pids: Vec::new(),
+            },
+        ],
+        error: None,
+    }
+}
+
+fn reference_trace_diagnostics_result() -> TraceDiagnosticsResult {
+    TraceDiagnosticsResult {
+        trace_file_path: "/tmp/server.trace.ndjson".to_string(),
+        scanned_file_paths: vec![
+            "/tmp/server.trace.ndjson.1".to_string(),
+            "/tmp/server.trace.ndjson".to_string(),
+        ],
+        read_at: "2026-05-05T10:00:00.000Z".to_string(),
+        record_count: 4,
+        parse_error_count: 1,
+        first_span_at: Some("1970-01-01T00:00:01.000Z".to_string()),
+        last_span_at: Some("1970-01-01T00:00:05.025Z".to_string()),
+        failure_count: 2,
+        interruption_count: 1,
+        slow_span_threshold_ms: 1_000.0,
+        slow_span_count: 1,
+        log_level_counts: BTreeMap::from([("Error".to_string(), 1), ("Warning".to_string(), 1)]),
+        top_spans_by_count: vec![
+            TraceDiagnosticsSpanSummary {
+                name: "orchestration.dispatch".to_string(),
+                count: 2,
+                failure_count: 2,
+                total_duration_ms: 1_750.0,
+                average_duration_ms: 875.0,
+                max_duration_ms: 1_500.0,
+            },
+            TraceDiagnosticsSpanSummary {
+                name: "server.getConfig".to_string(),
+                count: 1,
+                failure_count: 0,
+                total_duration_ms: 50.0,
+                average_duration_ms: 50.0,
+                max_duration_ms: 50.0,
+            },
+        ],
+        slowest_spans: vec![
+            TraceDiagnosticsSpanOccurrence {
+                name: "orchestration.dispatch".to_string(),
+                duration_ms: 1_500.0,
+                ended_at: "1970-01-01T00:00:03.500Z".to_string(),
+                trace_id: "trace-b".to_string(),
+                span_id: "span-b".to_string(),
+            },
+            TraceDiagnosticsSpanOccurrence {
+                name: "orchestration.dispatch".to_string(),
+                duration_ms: 250.0,
+                ended_at: "1970-01-01T00:00:04.250Z".to_string(),
+                trace_id: "trace-c".to_string(),
+                span_id: "span-c".to_string(),
+            },
+        ],
+        common_failures: vec![TraceDiagnosticsFailureSummary {
+            name: "orchestration.dispatch".to_string(),
+            cause: "Provider crashed".to_string(),
+            count: 2,
+            last_seen_at: "1970-01-01T00:00:04.250Z".to_string(),
+            trace_id: "trace-c".to_string(),
+            span_id: "span-c".to_string(),
+        }],
+        latest_failures: vec![
+            TraceDiagnosticsRecentFailure {
+                name: "orchestration.dispatch".to_string(),
+                cause: "Provider crashed".to_string(),
+                duration_ms: 250.0,
+                ended_at: "1970-01-01T00:00:04.250Z".to_string(),
+                trace_id: "trace-c".to_string(),
+                span_id: "span-c".to_string(),
+            },
+            TraceDiagnosticsRecentFailure {
+                name: "orchestration.dispatch".to_string(),
+                cause: "Provider crashed".to_string(),
+                duration_ms: 1_500.0,
+                ended_at: "1970-01-01T00:00:03.500Z".to_string(),
+                trace_id: "trace-b".to_string(),
+                span_id: "span-b".to_string(),
+            },
+        ],
+        latest_warning_and_error_logs: vec![
+            TraceDiagnosticsLogEvent {
+                span_name: "git.status".to_string(),
+                level: "Warning".to_string(),
+                message: "status delayed".to_string(),
+                seen_at: "1970-01-01T00:00:05.010Z".to_string(),
+                trace_id: "trace-d".to_string(),
+                span_id: "span-d".to_string(),
+            },
+            TraceDiagnosticsLogEvent {
+                span_name: "orchestration.dispatch".to_string(),
+                level: "Error".to_string(),
+                message: "provider failed".to_string(),
+                seen_at: "1970-01-01T00:00:03.400Z".to_string(),
+                trace_id: "trace-b".to_string(),
+                span_id: "span-b".to_string(),
+            },
+        ],
+        partial_failure: None,
+        error: None,
+    }
+}
+
 fn short_timestamp_label(timestamp: &str) -> String {
     let Some(time) = timestamp.split('T').nth(1) else {
         return timestamp.to_string();
@@ -8364,6 +8817,7 @@ pub fn open_main_window(cx: &mut App) {
         Ok("diff-panel") | Ok("diff") => (R3Screen::DiffPanel, false),
         Ok("branch-toolbar") | Ok("branch") => (R3Screen::BranchToolbar, false),
         Ok("provider-model-picker") | Ok("model-picker") => (R3Screen::ProviderModelPicker, false),
+        Ok("settings-diagnostics") | Ok("diagnostics") => (R3Screen::SettingsDiagnostics, false),
         Ok("settings") => (R3Screen::Settings, false),
         _ => (R3Screen::Empty, false),
     };
@@ -8386,7 +8840,9 @@ pub fn open_main_window(cx: &mut App) {
                 R3Screen::DiffPanel => AppSnapshot::diff_panel_reference_state(),
                 R3Screen::BranchToolbar => AppSnapshot::branch_toolbar_reference_state(),
                 R3Screen::ProviderModelPicker => AppSnapshot::active_chat_reference_state(),
-                R3Screen::Empty | R3Screen::Settings => AppSnapshot::empty_reference_state(),
+                R3Screen::Empty | R3Screen::Settings | R3Screen::SettingsDiagnostics => {
+                    AppSnapshot::empty_reference_state()
+                }
             };
             let shell = cx.new(|cx| {
                 cx.observe_window_appearance(window, |_, window, _| {
