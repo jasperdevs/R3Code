@@ -243,6 +243,7 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         "icons/wrench.svg",
         include_bytes!("../assets/icons/wrench.svg"),
     ),
+    ("icons/x.svg", include_bytes!("../assets/icons/x.svg")),
     ("icons/zed.svg", include_bytes!("../assets/icons/zed.svg")),
 ];
 
@@ -350,6 +351,7 @@ mod tests {
             "trash-2.svg",
             "visual-studio-code.svg",
             "wrench.svg",
+            "x.svg",
             "zed.svg",
         ] {
             assert!(icons.iter().any(|listed| listed == icon), "{icon}");

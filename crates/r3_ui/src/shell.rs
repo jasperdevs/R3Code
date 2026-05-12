@@ -11,33 +11,34 @@ use r3_core::{
     CommandPaletteItemKind, ComposerCommandItem, ComposerMenuNudgeDirection, ComposerPromptSegment,
     ComposerSlashCommand, ComposerTrigger, DiagnosticsDescriptionInput, DiffOpenValue,
     DiffRouteSearch, DraftThreadEnvMode, EditorOption, GitActionIconName, GitActionMenuItem,
-    GitStatusSnapshot, KeybindingSettingsRow, MAX_TERMINALS_PER_GROUP,
-    MAX_VISIBLE_WORK_LOG_ENTRIES, ModelPickerItem, ModelPickerSelectedInstance, ModelPickerState,
-    PendingApproval, PendingUserInputProgress, ProcessDiagnosticsEntry, ProcessDiagnosticsResult,
-    ProjectEntry, ProjectEntryKind, ProjectScript, ProjectScriptIcon, ProjectSummary,
-    ProviderInstanceEntry, RECENT_COMMAND_PALETTE_THREAD_LIMIT, ServerProviderModel,
-    ServerProviderSkill, ServerProviderSlashCommand, SidebarOptionsState,
-    SidebarProjectGroupingMode, SidebarProjectSortOrder, SidebarThreadSortOrder, TerminalEvent,
-    ThreadStatus, TraceDiagnosticsFailureSummary, TraceDiagnosticsLogEvent,
-    TraceDiagnosticsRecentFailure, TraceDiagnosticsResult, TraceDiagnosticsSpanOccurrence,
-    TraceDiagnosticsSpanSummary, TurnDiffFileChange, TurnDiffStat, TurnDiffSummary,
-    TurnDiffTreeNode, WorkLogEntry, build_composer_menu_items, build_default_keybinding_rows,
-    build_git_action_menu_items, build_project_action_items, build_root_command_palette_groups,
-    build_thread_action_items, build_turn_diff_tree, close_thread_terminal,
-    composer_menu_search_key, default_sidebar_options_state, detect_composer_trigger,
+    GitStatusSnapshot, KeybindingRow, MAX_TERMINALS_PER_GROUP, MAX_VISIBLE_WORK_LOG_ENTRIES,
+    ModelPickerItem, ModelPickerSelectedInstance, ModelPickerState, PendingApproval,
+    PendingUserInputProgress, ProcessDiagnosticsEntry, ProcessDiagnosticsResult, ProjectEntry,
+    ProjectEntryKind, ProjectScript, ProjectScriptIcon, ProjectSummary, ProviderInstanceEntry,
+    RECENT_COMMAND_PALETTE_THREAD_LIMIT, ServerProviderModel, ServerProviderSkill,
+    ServerProviderSlashCommand, SidebarOptionsState, SidebarProjectGroupingMode,
+    SidebarProjectSortOrder, SidebarThreadSortOrder, TerminalEvent, ThreadStatus,
+    TraceDiagnosticsFailureSummary, TraceDiagnosticsLogEvent, TraceDiagnosticsRecentFailure,
+    TraceDiagnosticsResult, TraceDiagnosticsSpanOccurrence, TraceDiagnosticsSpanSummary,
+    TurnDiffFileChange, TurnDiffStat, TurnDiffSummary, TurnDiffTreeNode, WorkLogEntry,
+    build_composer_menu_items, build_git_action_menu_items, build_keybinding_rows,
+    build_project_action_items, build_root_command_palette_groups, build_thread_action_items,
+    build_turn_diff_tree, close_thread_terminal, composer_menu_search_key,
+    default_resolved_keybindings, default_sidebar_options_state, detect_composer_trigger,
     filter_command_palette_groups, format_diagnostics_bytes, format_diagnostics_count,
     format_diagnostics_description, format_diagnostics_duration_ms,
     format_provider_skill_display_name, format_working_timer_at, get_display_model_name,
     get_provider_summary, get_provider_version_advisory_presentation, get_provider_version_label,
-    group_composer_command_items, new_thread_terminal, nudge_composer_menu_highlight,
-    ordered_turn_diff_files, parse_diff_route_search, primary_project_script,
-    provider_instance_initials, replace_text_range, resolve_composer_command_selection,
-    resolve_composer_menu_active_item_id, resolve_editor_options, resolve_model_picker_state,
-    resolve_selectable_model, set_pending_user_input_custom_answer, set_thread_active_terminal,
-    set_thread_terminal_open, shorten_trace_id, sidebar_project_grouping_label,
-    sidebar_project_grouping_options, sidebar_project_sort_label, sidebar_project_sort_options,
-    sidebar_thread_sort_label, sidebar_thread_sort_options, split_prompt_into_composer_segments,
-    split_thread_terminal, summarize_turn_diff_stats, toggle_pending_user_input_option_selection,
+    group_composer_command_items, keybinding_command_label, new_thread_terminal,
+    nudge_composer_menu_highlight, ordered_turn_diff_files, parse_diff_route_search,
+    primary_project_script, provider_instance_initials, replace_text_range,
+    resolve_composer_command_selection, resolve_composer_menu_active_item_id,
+    resolve_editor_options, resolve_model_picker_state, resolve_selectable_model,
+    set_pending_user_input_custom_answer, set_thread_active_terminal, set_thread_terminal_open,
+    shorten_trace_id, sidebar_project_grouping_label, sidebar_project_grouping_options,
+    sidebar_project_sort_label, sidebar_project_sort_options, sidebar_thread_sort_label,
+    sidebar_thread_sort_options, split_prompt_into_composer_segments, split_thread_terminal,
+    summarize_turn_diff_stats, toggle_pending_user_input_option_selection,
 };
 
 use crate::theme::{FONT_FAMILY, MONO_FONT_FAMILY, SIDEBAR_MIN_WIDTH, Theme, ThemeMode};
@@ -5560,15 +5561,21 @@ impl R3Shell {
     }
 
     fn settings_keybindings_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let rows = build_default_keybinding_rows();
+        let keybindings = default_resolved_keybindings();
+        let rows = build_keybinding_rows(&keybindings, "");
         let mut table = div()
             .flex()
             .flex_col()
             .min_w(px(680.0))
             .child(self.keybindings_table_header());
 
+        if self.keybindings_add_dialog_open {
+            table = table.child(self.keybinding_new_table_row(cx));
+        }
+
+        let row_offset = usize::from(self.keybindings_add_dialog_open);
         for (index, row) in rows.iter().enumerate() {
-            table = table.child(self.keybindings_table_row(row, index));
+            table = table.child(self.keybindings_table_row(row, index + row_offset));
         }
 
         div()
@@ -5605,7 +5612,7 @@ impl R3Shell {
                                     .child(div().h(px(1.0)).w(px(12.0)).bg(self.theme.border))
                                     .child("KEYBINDINGS"),
                             )
-                            .child(self.keybindings_header_actions(rows.len(), cx)),
+                            .child(self.keybindings_header_actions(rows.len() + row_offset, cx)),
                     )
                     .child(
                         div()
@@ -5617,12 +5624,7 @@ impl R3Shell {
                             .bg(self.theme.background)
                             .child(self.keybindings_warning_banner())
                             .child(table),
-                    )
-                    .child(if self.keybindings_add_dialog_open {
-                        self.keybinding_add_panel(cx).into_any_element()
-                    } else {
-                        div().into_any_element()
-                    }),
+                    ),
             )
     }
 
@@ -6148,7 +6150,7 @@ impl R3Shell {
             .child(div().w(px(60.0)).child("STATUS"))
     }
 
-    fn keybindings_table_row(&self, row: &KeybindingSettingsRow, index: usize) -> impl IntoElement {
+    fn keybindings_table_row(&self, row: &KeybindingRow, index: usize) -> impl IntoElement {
         div()
             .flex()
             .items_center()
@@ -6168,15 +6170,15 @@ impl R3Shell {
                     .pr_4()
                     .text_size(px(13.0))
                     .font_weight(FontWeight(500.0))
-                    .child(row.command_label.clone()),
+                    .child(keybinding_command_label(&row.command)),
             )
             .child(
                 div()
                     .w(px(292.0))
                     .pr_4()
-                    .child(self.keybinding_pill(row.key)),
+                    .child(self.keybinding_pill(&row.key)),
             )
-            .child(div().w(px(294.0)).pr_4().child(self.when_pill(row.when)))
+            .child(div().w(px(294.0)).pr_4().child(self.when_pill(&row.when)))
             .child(
                 div()
                     .w(px(60.0))
@@ -6190,7 +6192,108 @@ impl R3Shell {
             )
     }
 
-    fn keybinding_pill(&self, value: &'static str) -> impl IntoElement {
+    fn keybinding_new_table_row(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .min_h(px(40.0))
+            .border_b_1()
+            .border_color(self.theme.border.opacity(0.60))
+            .bg(hsla(0.0, 0.0, 0.0, 0.0))
+            .px_4()
+            .py_1p5()
+            .child(
+                div().w(px(282.0)).pr_4().child(
+                    div()
+                        .h(px(28.0))
+                        .max_w(px(240.0))
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .rounded(px(6.0))
+                        .border_1()
+                        .border_color(self.theme.border)
+                        .bg(self.theme.background)
+                        .px_2p5()
+                        .text_size(px(12.0))
+                        .text_color(self.theme.muted_foreground)
+                        .child("Command")
+                        .child(
+                            svg()
+                                .path("icons/chevron-down.svg")
+                                .w(px(14.0))
+                                .h(px(14.0))
+                                .text_color(self.theme.muted_foreground.opacity(0.60)),
+                        ),
+                ),
+            )
+            .child(
+                div()
+                    .w(px(292.0))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .pr_4()
+                    .child(
+                        div()
+                            .h(px(28.0))
+                            .w(px(176.0))
+                            .flex()
+                            .items_center()
+                            .rounded(px(6.0))
+                            .border_1()
+                            .border_color(self.theme.border)
+                            .bg(self.theme.background)
+                            .px_2p5()
+                            .text_size(px(12.0))
+                            .font_family(SharedString::from(MONO_FONT_FAMILY))
+                            .text_color(self.theme.muted_foreground.opacity(0.72))
+                            .child("Unassigned"),
+                    )
+                    .child(
+                        div()
+                            .h(px(28.0))
+                            .rounded(px(6.0))
+                            .border_1()
+                            .border_color(self.theme.border.opacity(0.60))
+                            .bg(self.theme.accent.opacity(0.44))
+                            .px_3()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .text_size(px(12.0))
+                            .text_color(self.theme.muted_foreground.opacity(0.62))
+                            .child("Save"),
+                    ),
+            )
+            .child(div().w(px(294.0)).pr_4().child(self.when_pill("")))
+            .child(
+                div().w(px(60.0)).flex().justify_end().child(
+                    div()
+                        .id("keybindings-cancel-new")
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .w(px(28.0))
+                        .h(px(28.0))
+                        .rounded(px(7.0))
+                        .cursor_pointer()
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.keybindings_add_dialog_open = false;
+                            cx.notify();
+                        }))
+                        .child(
+                            svg()
+                                .path("icons/x.svg")
+                                .w(px(14.0))
+                                .h(px(14.0))
+                                .text_color(self.theme.muted_foreground),
+                        ),
+                ),
+            )
+    }
+
+    fn keybinding_pill(&self, value: &str) -> impl IntoElement {
         let mut group = div()
             .flex()
             .items_center()
@@ -6229,7 +6332,7 @@ impl R3Shell {
         group
     }
 
-    fn when_pill(&self, value: &'static str) -> impl IntoElement {
+    fn when_pill(&self, value: &str) -> impl IntoElement {
         div()
             .h(px(28.0))
             .w(px(278.0))
@@ -6248,7 +6351,11 @@ impl R3Shell {
             } else {
                 self.theme.foreground
             })
-            .child(if value.is_empty() { "Always" } else { value })
+            .child(if value.is_empty() {
+                "Always".to_string()
+            } else {
+                value.to_string()
+            })
             .child(
                 svg()
                     .path("icons/chevron-down.svg")
@@ -6369,84 +6476,6 @@ impl R3Shell {
                     .path(icon)
                     .size_3()
                     .text_color(self.theme.muted_foreground),
-            )
-    }
-
-    fn keybinding_add_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .rounded(px(12.0))
-            .border_1()
-            .border_color(self.theme.border)
-            .bg(self.theme.card)
-            .p_4()
-            .child(
-                div()
-                    .mb_3()
-                    .text_size(px(13.0))
-                    .font_weight(FontWeight(650.0))
-                    .child("Keybinding draft"),
-            )
-            .child(
-                div()
-                    .grid()
-                    .grid_cols(3)
-                    .gap_3()
-                    .child(self.keybinding_draft_cell("Command", "Command Palette: Toggle"))
-                    .child(self.keybinding_draft_cell("Shortcut", "mod+k"))
-                    .child(self.keybinding_draft_cell("When", "!terminalFocus")),
-            )
-            .child(
-                div()
-                    .id("keybindings-save-draft")
-                    .mt_3()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .gap_2()
-                    .h(px(32.0))
-                    .rounded(px(7.0))
-                    .border_1()
-                    .border_color(self.theme.border)
-                    .bg(self.theme.background)
-                    .text_size(px(12.0))
-                    .cursor_pointer()
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.keybindings_add_dialog_open = false;
-                        cx.notify();
-                    }))
-                    .child(
-                        svg()
-                            .path("icons/plus.svg")
-                            .size_4()
-                            .text_color(self.theme.foreground),
-                    )
-                    .child("Save draft"),
-            )
-    }
-
-    fn keybinding_draft_cell(&self, label: &'static str, value: &'static str) -> impl IntoElement {
-        div()
-            .flex()
-            .flex_col()
-            .gap_1()
-            .child(
-                div()
-                    .text_size(px(11.0))
-                    .font_weight(FontWeight(600.0))
-                    .text_color(self.theme.muted_foreground)
-                    .child(label),
-            )
-            .child(
-                div()
-                    .h(px(32.0))
-                    .rounded(px(7.0))
-                    .border_1()
-                    .border_color(self.theme.border)
-                    .bg(self.theme.background)
-                    .px_3()
-                    .py_2()
-                    .text_size(px(12.0))
-                    .child(value),
             )
     }
 
