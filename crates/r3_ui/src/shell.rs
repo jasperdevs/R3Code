@@ -8,21 +8,26 @@ use gpui::{
 };
 use r3_core::{
     APP_NAME, ActivityTone, AppSnapshot, ChatMessage, CommandPaletteGroup, CommandPaletteItem,
-    CommandPaletteItemKind, DiagnosticsDescriptionInput, DiffOpenValue, DiffRouteSearch,
+    CommandPaletteItemKind, ComposerCommandItem, ComposerMenuNudgeDirection, ComposerSlashCommand,
+    ComposerTrigger, DiagnosticsDescriptionInput, DiffOpenValue, DiffRouteSearch,
     DraftThreadEnvMode, EditorOption, MAX_TERMINALS_PER_GROUP, MAX_VISIBLE_WORK_LOG_ENTRIES,
     ModelPickerItem, ModelPickerSelectedInstance, ModelPickerState, PendingApproval,
-    PendingUserInputProgress, ProcessDiagnosticsEntry, ProcessDiagnosticsResult, ProjectScript,
-    ProjectScriptIcon, ProjectSummary, ProviderInstanceEntry, RECENT_COMMAND_PALETTE_THREAD_LIMIT,
-    ServerProviderModel, SidebarThreadSortOrder, TerminalEvent, ThreadStatus,
+    PendingUserInputProgress, ProcessDiagnosticsEntry, ProcessDiagnosticsResult, ProjectEntry,
+    ProjectEntryKind, ProjectScript, ProjectScriptIcon, ProjectSummary, ProviderInstanceEntry,
+    RECENT_COMMAND_PALETTE_THREAD_LIMIT, ServerProviderModel, ServerProviderSkill,
+    ServerProviderSlashCommand, SidebarThreadSortOrder, TerminalEvent, ThreadStatus,
     TraceDiagnosticsFailureSummary, TraceDiagnosticsLogEvent, TraceDiagnosticsRecentFailure,
     TraceDiagnosticsResult, TraceDiagnosticsSpanOccurrence, TraceDiagnosticsSpanSummary,
     TurnDiffFileChange, TurnDiffStat, TurnDiffSummary, TurnDiffTreeNode, WorkLogEntry,
-    build_project_action_items, build_root_command_palette_groups, build_thread_action_items,
-    build_turn_diff_tree, close_thread_terminal, filter_command_palette_groups,
+    build_composer_menu_items, build_project_action_items, build_root_command_palette_groups,
+    build_thread_action_items, build_turn_diff_tree, close_thread_terminal,
+    composer_menu_search_key, detect_composer_trigger, filter_command_palette_groups,
     format_diagnostics_bytes, format_diagnostics_count, format_diagnostics_description,
     format_diagnostics_duration_ms, get_display_model_name, get_provider_summary,
-    get_provider_version_advisory_presentation, get_provider_version_label, new_thread_terminal,
+    get_provider_version_advisory_presentation, get_provider_version_label,
+    group_composer_command_items, new_thread_terminal, nudge_composer_menu_highlight,
     parse_diff_route_search, primary_project_script, provider_instance_initials,
+    replace_text_range, resolve_composer_command_selection, resolve_composer_menu_active_item_id,
     resolve_model_picker_state, resolve_selectable_model, set_pending_user_input_custom_answer,
     set_thread_active_terminal, set_thread_terminal_open, shorten_trace_id, split_thread_terminal,
     summarize_turn_diff_stats, toggle_pending_user_input_option_selection,
@@ -74,6 +79,8 @@ pub struct R3Shell {
     settings_theme_highlighted_index: usize,
     composer_prompt: String,
     composer_prompt_focused: bool,
+    composer_highlighted_item_id: Option<String>,
+    composer_highlighted_search_key: Option<String>,
     model_picker_open: bool,
     model_picker_query: String,
     model_picker_selected_instance: ModelPickerSelectedInstance,
@@ -137,8 +144,14 @@ impl R3Shell {
             connections_endpoint_copied: false,
             connections_refresh_requested: false,
             settings_theme_highlighted_index: 0,
-            composer_prompt: String::new(),
-            composer_prompt_focused: false,
+            composer_prompt: if screen == R3Screen::ComposerCommandMenu {
+                "/".to_string()
+            } else {
+                String::new()
+            },
+            composer_prompt_focused: screen == R3Screen::ComposerCommandMenu,
+            composer_highlighted_item_id: None,
+            composer_highlighted_search_key: None,
             model_picker_open: screen == R3Screen::ProviderModelPicker,
             model_picker_query: String::new(),
             model_picker_selected_instance: ModelPickerSelectedInstance::Favorites,
@@ -164,6 +177,7 @@ pub enum R3Screen {
     RunningTurn,
     PendingApproval,
     PendingUserInput,
+    ComposerCommandMenu,
     TerminalDrawer,
     DiffPanel,
     BranchToolbar,
@@ -431,6 +445,7 @@ impl Render for R3Shell {
             | R3Screen::RunningTurn
             | R3Screen::PendingApproval
             | R3Screen::PendingUserInput
+            | R3Screen::ComposerCommandMenu
             | R3Screen::TerminalDrawer
             | R3Screen::DiffPanel
             | R3Screen::BranchToolbar
@@ -2731,10 +2746,14 @@ impl R3Shell {
 
         div()
             .flex()
+            .flex_col()
             .items_center()
             .justify_center()
             .px_8()
             .pb_1()
+            .when(self.should_show_composer_command_menu(), |container| {
+                container.child(self.composer_command_menu(cx))
+            })
             .child(
                 div()
                     .id("chat-composer-form")
@@ -2959,6 +2978,234 @@ impl R3Shell {
                 self.theme.accent.opacity(0.40)
             })
             .child(key.to_string())
+    }
+
+    fn active_composer_trigger(&self) -> Option<ComposerTrigger> {
+        if self.snapshot.active_pending_approval().is_some() {
+            return None;
+        }
+        detect_composer_trigger(
+            &self.composer_prompt,
+            self.composer_prompt.chars().count() as f64,
+        )
+    }
+
+    fn composer_workspace_entries(&self) -> Vec<ProjectEntry> {
+        vec![
+            ProjectEntry {
+                path: "src/main.rs".to_string(),
+                kind: ProjectEntryKind::File,
+                parent_path: Some("src".to_string()),
+            },
+            ProjectEntry {
+                path: "crates/r3_ui/src/shell.rs".to_string(),
+                kind: ProjectEntryKind::File,
+                parent_path: Some("crates/r3_ui/src".to_string()),
+            },
+            ProjectEntry {
+                path: "docs/reference".to_string(),
+                kind: ProjectEntryKind::Directory,
+                parent_path: Some("docs".to_string()),
+            },
+        ]
+    }
+
+    fn composer_provider_slash_commands(&self) -> Vec<ServerProviderSlashCommand> {
+        Vec::new()
+    }
+
+    fn composer_provider_skills(&self) -> Vec<ServerProviderSkill> {
+        Vec::new()
+    }
+
+    fn composer_menu_items(&self) -> Vec<ComposerCommandItem> {
+        let trigger = self.active_composer_trigger();
+        build_composer_menu_items(
+            trigger.as_ref(),
+            &self.composer_workspace_entries(),
+            "claudeAgent",
+            &self.composer_provider_slash_commands(),
+            &self.composer_provider_skills(),
+        )
+    }
+
+    fn should_show_composer_command_menu(&self) -> bool {
+        self.active_composer_trigger().is_some()
+            && !self.composer_menu_items().is_empty()
+            && self.snapshot.active_pending_user_input_progress().is_none()
+    }
+
+    fn active_composer_menu_item_id(&self, items: &[ComposerCommandItem]) -> Option<String> {
+        resolve_composer_menu_active_item_id(
+            items,
+            self.composer_highlighted_item_id.as_deref(),
+            composer_menu_search_key(self.active_composer_trigger().as_ref()).as_deref(),
+            self.composer_highlighted_search_key.as_deref(),
+        )
+    }
+
+    fn composer_command_menu(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let items = self.composer_menu_items();
+        let active_item_id = self.active_composer_menu_item_id(&items);
+        let trigger_kind = self.active_composer_trigger().map(|trigger| trigger.kind);
+        let groups = group_composer_command_items(&items, trigger_kind, true);
+        let mut menu = div()
+            .id("chat-composer-command-menu")
+            .w(px(if self.snapshot.diff_open() {
+                440.0
+            } else {
+                832.0
+            }))
+            .mb_2()
+            .overflow_hidden()
+            .rounded(px(12.0))
+            .border_1()
+            .border_color(self.theme.border.opacity(0.80))
+            .bg(self.theme.card.opacity(0.96))
+            .shadow(vec![BoxShadow {
+                color: hsla(0.0, 0.0, 0.0, 0.08),
+                offset: point(px(0.0), px(10.0)),
+                blur_radius: px(18.0),
+                spread_radius: px(-6.0),
+            }]);
+
+        for (group_index, group) in groups.into_iter().enumerate() {
+            let mut section = div().flex().flex_col();
+            if group_index > 0 {
+                section = section.child(
+                    div()
+                        .mx_2()
+                        .my_0p5()
+                        .h(px(1.0))
+                        .bg(self.theme.border.opacity(0.70)),
+                );
+            }
+            if let Some(label) = group.label {
+                section = section.child(
+                    div()
+                        .px_3()
+                        .pt_2()
+                        .pb_1()
+                        .text_size(px(10.0))
+                        .font_weight(FontWeight(650.0))
+                        .text_color(self.theme.muted_foreground.opacity(0.55))
+                        .child(label.to_ascii_uppercase()),
+                );
+            }
+            for item in group.items {
+                let active = active_item_id
+                    .as_deref()
+                    .map(|id| id == item.id())
+                    .unwrap_or(false);
+                section = section.child(self.composer_command_menu_item(item, active, cx));
+            }
+            menu = menu.child(section);
+        }
+
+        menu
+    }
+
+    fn composer_command_menu_item(
+        &self,
+        item: ComposerCommandItem,
+        active: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let (id, label, description, icon_path) = match &item {
+            ComposerCommandItem::Path {
+                id,
+                label,
+                description,
+                path_kind,
+                ..
+            } => (
+                id.clone(),
+                label.clone(),
+                description.clone(),
+                match path_kind {
+                    ProjectEntryKind::File => "icons/file-json.svg",
+                    ProjectEntryKind::Directory => "icons/folder.svg",
+                },
+            ),
+            ComposerCommandItem::SlashCommand {
+                id,
+                label,
+                description,
+                ..
+            } => (
+                id.clone(),
+                label.clone(),
+                description.clone(),
+                "icons/bot.svg",
+            ),
+            ComposerCommandItem::ProviderSlashCommand {
+                id,
+                label,
+                description,
+                ..
+            }
+            | ComposerCommandItem::Skill {
+                id,
+                label,
+                description,
+                ..
+            } => (
+                id.clone(),
+                label.clone(),
+                description.clone(),
+                "icons/sparkles.svg",
+            ),
+        };
+        let item_for_click = item.clone();
+        div()
+            .id(SharedString::from(format!(
+                "composer-command-menu-item-{id}"
+            )))
+            .flex()
+            .items_center()
+            .gap_2()
+            .px_3()
+            .py_2()
+            .bg(if active {
+                self.theme.accent
+            } else {
+                self.theme.background.alpha(0.0)
+            })
+            .text_color(if active {
+                self.theme.foreground
+            } else {
+                self.theme.foreground.opacity(0.90)
+            })
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.apply_composer_command_item(&item_for_click, cx);
+            }))
+            .child(
+                svg()
+                    .path(icon_path)
+                    .size_4()
+                    .flex_shrink_0()
+                    .text_color(self.theme.muted_foreground.opacity(0.82)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .min_w_0()
+                    .flex_1()
+                    .child(div().flex_shrink_0().text_size(px(14.0)).child(label))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .text_size(px(12.0))
+                            .text_color(self.theme.muted_foreground.opacity(0.70))
+                            .child(description),
+                    ),
+            )
     }
 
     fn composer_prompt_editor(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -8068,6 +8315,54 @@ impl R3Shell {
         cx.notify();
     }
 
+    fn active_composer_menu_item(&self) -> Option<ComposerCommandItem> {
+        let items = self.composer_menu_items();
+        let active_id = self.active_composer_menu_item_id(&items)?;
+        items.into_iter().find(|item| item.id() == active_id)
+    }
+
+    fn nudge_active_composer_menu(
+        &mut self,
+        direction: ComposerMenuNudgeDirection,
+        cx: &mut Context<Self>,
+    ) {
+        let items = self.composer_menu_items();
+        let current_active = self.active_composer_menu_item_id(&items);
+        self.composer_highlighted_item_id =
+            nudge_composer_menu_highlight(&items, current_active.as_deref(), direction);
+        self.composer_highlighted_search_key =
+            composer_menu_search_key(self.active_composer_trigger().as_ref());
+        cx.notify();
+    }
+
+    fn apply_composer_command_item(&mut self, item: &ComposerCommandItem, cx: &mut Context<Self>) {
+        let Some(trigger) = self.active_composer_trigger() else {
+            return;
+        };
+        let Some(selection) =
+            resolve_composer_command_selection(&self.composer_prompt, &trigger, item)
+        else {
+            return;
+        };
+        let next = replace_text_range(
+            &self.composer_prompt,
+            selection.range_start as f64,
+            selection.range_end as f64,
+            &selection.replacement,
+        );
+        self.composer_prompt = next.text;
+        if let Some(interaction_mode) = selection.interaction_mode {
+            self.composer_plan_mode = interaction_mode == ComposerSlashCommand::Plan;
+        }
+        if selection.open_model_picker {
+            self.model_picker_open = true;
+            self.model_picker_query.clear();
+        }
+        self.composer_highlighted_item_id = None;
+        self.composer_highlighted_search_key = None;
+        cx.notify();
+    }
+
     fn submit_composer(&mut self, cx: &mut Context<Self>) {
         if self.snapshot.active_pending_approval().is_some() {
             return;
@@ -8082,6 +8377,8 @@ impl R3Shell {
 
         self.composer_prompt.clear();
         self.composer_prompt_focused = true;
+        self.composer_highlighted_item_id = None;
+        self.composer_highlighted_search_key = None;
         self.composer_submitted_count = self.composer_submitted_count.saturating_add(1);
         cx.notify();
     }
@@ -8149,6 +8446,32 @@ impl R3Shell {
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.snapshot.active_pending_approval().is_none()
+            && self.snapshot.active_pending_user_input_progress().is_none()
+            && self.active_composer_trigger().is_some()
+        {
+            match event.keystroke.key.as_str() {
+                "down" => {
+                    self.nudge_active_composer_menu(ComposerMenuNudgeDirection::ArrowDown, cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                "up" => {
+                    self.nudge_active_composer_menu(ComposerMenuNudgeDirection::ArrowUp, cx);
+                    cx.stop_propagation();
+                    return;
+                }
+                "enter" => {
+                    if let Some(item) = self.active_composer_menu_item() {
+                        self.apply_composer_command_item(&item, cx);
+                        cx.stop_propagation();
+                        return;
+                    }
+                }
+                _ => {}
+            }
+        }
+
         let handled = match event.keystroke.key.as_str() {
             "enter" => {
                 self.submit_composer(cx);
@@ -8162,6 +8485,8 @@ impl R3Shell {
                         self.set_active_pending_user_input_custom_answer(custom_answer, cx);
                     } else {
                         self.composer_prompt.pop();
+                        self.composer_highlighted_item_id = None;
+                        self.composer_highlighted_search_key = None;
                         cx.notify();
                     }
                 }
@@ -8188,6 +8513,8 @@ impl R3Shell {
                             } else {
                                 self.composer_prompt.push_str(text);
                                 self.composer_prompt_focused = true;
+                                self.composer_highlighted_item_id = None;
+                                self.composer_highlighted_search_key = None;
                                 cx.notify();
                             }
                         }
@@ -8809,6 +9136,7 @@ pub fn open_main_window(cx: &mut App) {
     let (screen, command_palette_open) = match std::env::var("R3CODE_SCREEN").as_deref() {
         Ok("command-palette") => (R3Screen::Empty, true),
         Ok("draft") | Ok("chat-composer") => (R3Screen::Draft, false),
+        Ok("composer-menu") | Ok("slash-menu") => (R3Screen::ComposerCommandMenu, false),
         Ok("active-chat") | Ok("chat") => (R3Screen::ActiveChat, false),
         Ok("running-turn") | Ok("running") => (R3Screen::RunningTurn, false),
         Ok("pending-approval") | Ok("approval") => (R3Screen::PendingApproval, false),
@@ -8836,6 +9164,7 @@ pub fn open_main_window(cx: &mut App) {
                 R3Screen::RunningTurn => AppSnapshot::running_turn_reference_state(),
                 R3Screen::PendingApproval => AppSnapshot::pending_approval_reference_state(),
                 R3Screen::PendingUserInput => AppSnapshot::pending_user_input_reference_state(),
+                R3Screen::ComposerCommandMenu => AppSnapshot::draft_reference_state(),
                 R3Screen::TerminalDrawer => AppSnapshot::terminal_drawer_reference_state(),
                 R3Screen::DiffPanel => AppSnapshot::diff_panel_reference_state(),
                 R3Screen::BranchToolbar => AppSnapshot::branch_toolbar_reference_state(),
