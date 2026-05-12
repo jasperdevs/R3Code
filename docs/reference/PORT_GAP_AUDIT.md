@@ -4,7 +4,7 @@ R3Code is still an early static Rust/GPUI shell, not a full Rust port of T3 Code
 
 Reference commit: `8fc317939f5c8bbef4afbe309ae897abbc221631`
 
-Current local baseline: R3Code `main` after the diff panel reference-gate slice.
+Current local baseline: R3Code `main` after the branch toolbar reference-gate slice.
 
 ## Size Check
 
@@ -35,6 +35,7 @@ These screens have automated reference captures and native GPUI comparisons:
 | Running turn with work-log rows | 6% |
 | Terminal drawer split view | 6% |
 | Diff panel selected turn patch view | 12% |
+| Branch toolbar draft worktree state | 3% |
 | Composer slash-command menu | 5% |
 | Composer inline mention/skill chips | 5% |
 | Provider/model picker | 6% |
@@ -65,7 +66,7 @@ These T3 surfaces have no complete Rust implementation yet:
 | Pending approval and pending user input panels | `ChatComposer.tsx`, `ComposerPendingApproval*`, `pendingUserInput.ts` | Seeded upstream reference gates for approval and user-input composer states. Core pending-input, composer send-state, trigger/cursor, command-menu, slash-menu, and inline-token contracts are partial |
 | Terminal drawer and xterm integration | `ThreadTerminalDrawer.tsx`, `terminalStateStore.ts`, `terminalContext.ts` | Seeded upstream reference gate for the split drawer shell plus terminal state, event replay, terminal-context, and composer inline-token contracts; live terminal runtime/xterm backend still missing |
 | Diff panel and changed-file browsing | `DiffPanel.tsx`, `DiffPanelShell.tsx`, `diffRouteSearch.ts`, `turnDiffTree.ts` | Seeded upstream reference gate for selected-turn patch view; route/tree/header contracts are partial and real checkpoint-diff query plus full `@pierre/diffs` rendering are still missing |
-| Branch/worktree toolbar | `BranchToolbar.tsx`, `BranchToolbar.logic.ts`, `BranchToolbarBranchSelector.tsx` | Partial core logic + GPUI smoke |
+| Branch/worktree toolbar | `BranchToolbar.tsx`, `BranchToolbar.logic.ts`, `BranchToolbarEnvModeSelector.tsx`, `BranchToolbarBranchSelector.tsx` | Seeded upstream reference gate for draft worktree toolbar state; full combobox, async git ref query, create-ref, PR checkout, and real environment switching paths remain missing |
 | Provider/model picker behavior | `ProviderModelPicker.tsx`, `ModelPickerContent.tsx`, `providerModels.ts` | Partial core logic + GPUI picker comparison gate |
 | Project scripts and open-in-editor picker | `ProjectScriptsControl.tsx`, `projectScripts.ts`, `OpenInPicker.tsx` | Partial core logic + header smoke |
 | Settings providers/connections diagnostics depth | `settings/*`, `Provider*`, `ConnectionsSettings.tsx`, `DiagnosticsSettings.tsx`, `ProcessDiagnostics.ts`, `TraceDiagnostics.ts` | Partial provider, pairing, endpoint, process/trace diagnostics, diagnostics-format contracts, and top-level provider/connections/diagnostics comparison gates |

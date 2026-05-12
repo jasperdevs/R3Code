@@ -433,6 +433,18 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
         allow_window_capture: true,
         ..CaptureR3CodeOptions::default()
     })?;
+    compare_screenshots(CompareOptions {
+        expected: resolve_repo_path("reference/screenshots/upstream-branch-toolbar-reference.png"),
+        actual: resolve_repo_path("reference/screenshots/r3code-branch-toolbar-window.png"),
+        max_different_pixels_percent: 3.0,
+        channel_tolerance: 8,
+        ignore_rects: vec![Rect {
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 45,
+        }],
+    })?;
 
     capture_r3code_window(CaptureR3CodeOptions {
         screen: Some("provider-model-picker".to_string()),
@@ -1471,7 +1483,7 @@ fn capture_reference_browser(options: CaptureReferenceOptions) -> Result<()> {
         fs::write(
             options.output_dir.join("CAPTURE_MANIFEST.txt"),
             format!(
-                "Upstream reference repository: {}\nReference commit: {}\nIsolated reference home: {}\nOutput directory: {}\nCaptured:\n- upstream-empty-reference.png\n- upstream-command-palette-reference.png\n- upstream-draft-reference.png\n- upstream-composer-focused-reference.png\n- upstream-composer-menu-reference.png\n- upstream-composer-inline-tokens-reference.png\n- upstream-provider-model-picker-reference.png\n- upstream-active-chat-reference.png\n- upstream-running-turn-reference.png\n- upstream-terminal-drawer-reference.png\n- upstream-diff-panel-reference.png\n- upstream-pending-user-input-reference.png\n- upstream-pending-approval-reference.png\n- upstream-settings-reference.png\n- upstream-settings-keybindings-reference.png\n- upstream-settings-providers-reference.png\n- upstream-settings-source-control-reference.png\n- upstream-settings-connections-reference.png\n- upstream-settings-diagnostics-reference.png\n- upstream-settings-archive-reference.png\n- upstream-settings-theme-menu-reference.png\n- upstream-settings-dark-reference.png\n- upstream-empty-dark-reference.png\n",
+                "Upstream reference repository: {}\nReference commit: {}\nIsolated reference home: {}\nOutput directory: {}\nCaptured:\n- upstream-empty-reference.png\n- upstream-command-palette-reference.png\n- upstream-draft-reference.png\n- upstream-composer-focused-reference.png\n- upstream-composer-menu-reference.png\n- upstream-composer-inline-tokens-reference.png\n- upstream-provider-model-picker-reference.png\n- upstream-branch-toolbar-reference.png\n- upstream-active-chat-reference.png\n- upstream-running-turn-reference.png\n- upstream-terminal-drawer-reference.png\n- upstream-diff-panel-reference.png\n- upstream-pending-user-input-reference.png\n- upstream-pending-approval-reference.png\n- upstream-settings-reference.png\n- upstream-settings-keybindings-reference.png\n- upstream-settings-providers-reference.png\n- upstream-settings-source-control-reference.png\n- upstream-settings-connections-reference.png\n- upstream-settings-diagnostics-reference.png\n- upstream-settings-archive-reference.png\n- upstream-settings-theme-menu-reference.png\n- upstream-settings-dark-reference.png\n- upstream-empty-dark-reference.png\n",
                 options.repo.display(),
                 commit.trim(),
                 options.home.display(),
@@ -2136,6 +2148,113 @@ const path = require("path");
       });
     });
   }
+  async function seedBranchToolbarReference() {
+    await page.evaluate(async () => {
+      const { useComposerDraftStore } = await import("/src/composerDraftStore.ts");
+      const { __setEnvironmentApiOverrideForTests, readEnvironmentApi } = await import("/src/environmentApi.ts");
+      const draftId = window.location.pathname.split("/").filter(Boolean).pop();
+      if (!draftId) throw new Error("Unable to resolve current draft id.");
+      const draftSession = useComposerDraftStore.getState().getDraftSession(draftId);
+      if (!draftSession) throw new Error(`Unable to resolve draft session ${draftId}.`);
+      const { useStore } = await import("/src/store.ts");
+      const environmentId = draftSession.environmentId;
+      const environmentState = useStore.getState().environmentStateById[environmentId];
+      const projectId = Object.keys(environmentState?.projectById ?? {})[0];
+      if (!projectId) throw new Error(`Unable to resolve active project for ${environmentId}.`);
+      const cwd = "C:\\Users\\bunny\\Downloads\\r3code";
+      const refs = [
+        {
+          name: "main",
+          current: true,
+          isDefault: true,
+          isRemote: false,
+          remoteName: undefined,
+          worktreePath: null,
+        },
+        {
+          name: "feature/parity-branch-toolbar",
+          current: false,
+          isDefault: false,
+          isRemote: false,
+          remoteName: undefined,
+          worktreePath: "C:\\Users\\bunny\\Downloads\\r3code\\.t3\\worktrees\\branch-toolbar",
+        },
+        {
+          name: "origin/main",
+          current: false,
+          isDefault: true,
+          isRemote: true,
+          remoteName: "origin",
+          worktreePath: null,
+        },
+        {
+          name: "origin/feature/remote-only",
+          current: false,
+          isDefault: false,
+          isRemote: true,
+          remoteName: "origin",
+          worktreePath: null,
+        },
+      ];
+      const status = {
+        isRepo: true,
+        sourceControlProvider: { kind: "git", displayName: "Git" },
+        hasPrimaryRemote: true,
+        isDefaultRef: true,
+        refName: "main",
+        hasWorkingTreeChanges: false,
+        workingTree: { files: [], insertions: 0, deletions: 0 },
+        hasUpstream: true,
+        aheadCount: 0,
+        behindCount: 0,
+        aheadOfDefaultCount: 0,
+        pr: null,
+      };
+      const existingApi = readEnvironmentApi(environmentId);
+      __setEnvironmentApiOverrideForTests(environmentId, {
+        ...(existingApi ?? {}),
+        vcs: {
+          ...(existingApi?.vcs ?? {}),
+          async listRefs() {
+            return {
+              isRepo: true,
+              hasPrimaryRemote: true,
+              nextCursor: null,
+              totalCount: refs.length,
+              refs,
+            };
+          },
+          async refreshStatus() {
+            return status;
+          },
+          onStatus(_input, callback) {
+            callback(status);
+            return () => undefined;
+          },
+        },
+      });
+      useComposerDraftStore.getState().setDraftThreadContext(draftId, {
+        projectRef: { environmentId, projectId },
+        branch: null,
+        worktreePath: null,
+        envMode: "worktree",
+      });
+      useComposerDraftStore.setState((state) => ({
+        draftThreadsByThreadKey: {
+          ...state.draftThreadsByThreadKey,
+          [draftId]: {
+            ...state.draftThreadsByThreadKey[draftId],
+            environmentId,
+            projectId,
+            logicalProjectKey: `${environmentId}:${projectId}`,
+            branch: null,
+            worktreePath: null,
+            envMode: "worktree",
+          },
+        },
+      }));
+    });
+  }
   await page.goto(process.env.PAIRING_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
   await page.getByText("Pick a thread to continue").waitFor({ timeout: 15000 });
   await page.waitForLoadState("networkidle", { timeout: 30000 });
@@ -2194,6 +2313,14 @@ const path = require("path");
   await page.waitForTimeout(350);
   await dismissUpdatesToast();
   await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-provider-model-picker-reference.png"), fullPage: true });
+  await page.keyboard.press("Escape");
+  await page.locator(".model-picker-list").waitFor({ state: "detached", timeout: 15000 }).catch(() => undefined);
+  await seedBranchToolbarReference();
+  await page.getByText("New worktree", { exact: true }).waitFor({ timeout: 15000 });
+  await page.getByText("From main", { exact: true }).waitFor({ timeout: 15000 });
+  await page.waitForTimeout(350);
+  await dismissUpdatesToast();
+  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-branch-toolbar-reference.png"), fullPage: true });
   await page.goto(new URL("/local/thread-r3code-ui-shell", appOrigin).toString(), { waitUntil: "domcontentloaded", timeout: 30000 });
   await seedActiveChatReference();
   await page.getByRole("heading", { name: "Port R3Code UI shell" }).waitFor({ timeout: 15000 });
