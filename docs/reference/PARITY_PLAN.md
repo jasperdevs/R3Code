@@ -83,7 +83,7 @@ cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-empty-reference.png --actual reference\screenshots\r3code-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 2
 ```
 
-Last measured result: `1.565%`.
+Last measured result: `1.571%`.
 
 ## Current Command Palette Baseline
 
@@ -100,7 +100,7 @@ cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-command-palette-reference.png --actual reference\screenshots\r3code-command-palette-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 5
 ```
 
-Last measured result: `3.267%`.
+Last measured result: `3.272%`.
 
 The R3Code command palette capture launches the normal empty shell and opens the palette through the native sidebar click target before taking the screenshot.
 
@@ -119,7 +119,7 @@ cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-draft-reference.png --actual reference\screenshots\r3code-draft-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 2
 ```
 
-Last measured result: `1.691%`.
+Last measured result: `1.715%`.
 
 The upstream draft reference is produced by the real T3 command-palette add-project flow, which creates a `/draft/$draftId` route and captures the active empty chat surface after dismissing unrelated provider-update toast chrome.
 
@@ -131,6 +131,7 @@ R3Code pending approval capture: `reference/screenshots/r3code-pending-approval-
 R3Code pending user input capture: `reference/screenshots/r3code-pending-user-input-window.png`
 R3Code terminal drawer capture: `reference/screenshots/r3code-terminal-drawer-window.png`
 R3Code diff panel capture: `reference/screenshots/r3code-diff-panel-window.png`
+R3Code branch toolbar capture: `reference/screenshots/r3code-branch-toolbar-window.png`
 
 Command:
 
@@ -141,6 +142,7 @@ cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen pending-user-input --output reference\screenshots\r3code-pending-user-input-window.png
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen terminal-drawer --output reference\screenshots\r3code-terminal-drawer-window.png
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen diff-panel --output reference\screenshots\r3code-diff-panel-window.png
+cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen branch-toolbar --output reference\screenshots\r3code-branch-toolbar-window.png
 ```
 
 This is a native Rust/GPUI smoke capture for the first server-thread state: active header title/project badge, sidebar thread row, user/assistant timeline rows, changed-files summary tree, and composer chrome. It is intentionally not a parity comparison yet because the current upstream reference harness has deterministic captures for empty/draft/settings, but not a full active server-thread route with persisted messages. The next parity step is to add a source-backed upstream fixture capture for the same `ChatView.browser.tsx` message state.
@@ -148,6 +150,7 @@ The running turn capture ports the upstream work-log derivation shape first: act
 The pending approval and pending user input captures use the same active-thread shell with upstream-shaped `ChatComposer` state: approval summary/actions, user-input question progress, option shortcut chips, selected `CheckIcon`, and pending primary actions. They are also smoke captures until the upstream browser harness can seed the matching server-thread pending request fixtures.
 The terminal drawer capture ports the upstream terminal UI state contract into Rust first: default drawer height, terminal IDs, active terminal/group, split/new/close behavior, running activity, and event replay filtering. The GPUI surface is a static terminal drawer smoke screen until the native runtime/xterm layer exists.
 The diff panel capture ports the upstream diff route parser, turn-diff summary ordering, changed-file tree/stat contracts, and the inline `DiffPanelShell` header controls. It remains a smoke screen until the Rust side has the real checkpoint-diff query and patch renderer equivalent to `@pierre/diffs`.
+The branch toolbar capture ports upstream `BranchToolbar.logic.ts`, the shared remote-branch dedupe helpers, the environment/worktree labels, current/new-worktree mode resolution, branch trigger text, worktree selection target rules, and lucide `Monitor`, `Cloud`, `FolderGit`, and `FolderGit2` assets. It is still a GPUI smoke screen: the full combobox, async git ref query, create-ref, PR checkout, and real environment switching paths remain missing.
 
 ## Current Settings Baseline
 
@@ -237,7 +240,7 @@ cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-empty-reference.png --actual reference\screenshots\r3code-settings-back-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 2
 ```
 
-Last measured result: `1.565%`.
+Last measured result: `1.571%`.
 
 ## Current Settings Theme Menu Baseline
 
@@ -273,7 +276,7 @@ cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-dark-reference.png --actual reference\screenshots\r3code-settings-dark-window.png --channel-tolerance 11 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
 ```
 
-Last measured result: `5.276%`.
+Last measured result: `5.275%`.
 
 The dark settings comparison uses a slightly higher channel tolerance because the Chromium reference and GPUI render the same dark text with different subpixel antialiasing, while the layout and pixel-percent gate remain unchanged.
 

@@ -4,7 +4,7 @@ R3Code is still an early static Rust/GPUI shell, not a full Rust port of T3 Code
 
 Reference commit: `8fc317939f5c8bbef4afbe309ae897abbc221631`
 
-Current local baseline: R3Code `main` after the settings/keybindings parity slice.
+Current local baseline: R3Code `main` after the branch/worktree toolbar state slice.
 
 ## Size Check
 
@@ -51,7 +51,7 @@ These T3 surfaces have no complete Rust implementation yet:
 | Pending approval and pending user input panels | `ChatComposer.tsx`, `ComposerPendingApproval*`, `pendingUserInput.ts` | Partial static GPUI smoke |
 | Terminal drawer and xterm integration | `ThreadTerminalDrawer.tsx`, `terminalStateStore.ts` | Partial static GPUI smoke |
 | Diff panel and changed-file browsing | `DiffPanel.tsx`, `diffRouteSearch.ts`, `turnDiffTree.ts` | Partial static GPUI smoke |
-| Branch/worktree toolbar | `BranchToolbar.tsx`, `BranchToolbar.logic.ts` | Missing |
+| Branch/worktree toolbar | `BranchToolbar.tsx`, `BranchToolbar.logic.ts`, `BranchToolbarBranchSelector.tsx` | Partial core logic + GPUI smoke |
 | Provider/model picker behavior | `ProviderModelPicker.tsx`, `ModelPickerContent.tsx`, `providerModels.ts` | Static footer only |
 | Project scripts and open-in-editor picker | `ProjectScriptsControl.tsx`, `OpenInPicker.tsx` | Missing |
 | Settings providers/connections diagnostics depth | `settings/*`, `Provider*`, `ConnectionsSettings.tsx` | Partial static |

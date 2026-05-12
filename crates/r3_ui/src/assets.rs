@@ -40,6 +40,10 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/chevron-right.svg"),
     ),
     (
+        "icons/cloud.svg",
+        include_bytes!("../assets/icons/cloud.svg"),
+    ),
+    (
         "icons/columns-2.svg",
         include_bytes!("../assets/icons/columns-2.svg"),
     ),
@@ -48,6 +52,14 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
     (
         "icons/file-json.svg",
         include_bytes!("../assets/icons/file-json.svg"),
+    ),
+    (
+        "icons/folder-git-2.svg",
+        include_bytes!("../assets/icons/folder-git-2.svg"),
+    ),
+    (
+        "icons/folder-git.svg",
+        include_bytes!("../assets/icons/folder-git.svg"),
     ),
     (
         "icons/folder.svg",
@@ -77,6 +89,10 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
     (
         "icons/minus.svg",
         include_bytes!("../assets/icons/minus.svg"),
+    ),
+    (
+        "icons/monitor.svg",
+        include_bytes!("../assets/icons/monitor.svg"),
     ),
     (
         "icons/pen-line.svg",
@@ -196,11 +212,15 @@ mod tests {
         for icon in [
             "check.svg",
             "chevron-left.svg",
+            "cloud.svg",
             "columns-2.svg",
             "diff.svg",
             "folder.svg",
+            "folder-git-2.svg",
+            "folder-git.svg",
             "lock.svg",
             "lock-open.svg",
+            "monitor.svg",
             "pen-line.svg",
             "pilcrow.svg",
             "rotate-ccw.svg",

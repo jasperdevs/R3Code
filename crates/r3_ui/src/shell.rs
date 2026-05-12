@@ -6,7 +6,7 @@ use gpui::{
 };
 use r3_core::{
     APP_NAME, ActivityTone, AppSnapshot, ChatMessage, DiffOpenValue, DiffRouteSearch,
-    MAX_TERMINALS_PER_GROUP, MAX_VISIBLE_WORK_LOG_ENTRIES, PendingApproval,
+    DraftThreadEnvMode, MAX_TERMINALS_PER_GROUP, MAX_VISIBLE_WORK_LOG_ENTRIES, PendingApproval,
     PendingUserInputProgress, ProjectSummary, TerminalEvent, ThreadStatus, TurnDiffFileChange,
     TurnDiffStat, TurnDiffSummary, TurnDiffTreeNode, WorkLogEntry, build_turn_diff_tree,
     close_thread_terminal, new_thread_terminal, parse_diff_route_search,
@@ -140,6 +140,7 @@ pub enum R3Screen {
     PendingUserInput,
     TerminalDrawer,
     DiffPanel,
+    BranchToolbar,
     Settings,
 }
 
@@ -444,7 +445,8 @@ impl Render for R3Shell {
             | R3Screen::PendingApproval
             | R3Screen::PendingUserInput
             | R3Screen::TerminalDrawer
-            | R3Screen::DiffPanel => root.child(self.sidebar(cx)).child(self.main_panel(cx)),
+            | R3Screen::DiffPanel
+            | R3Screen::BranchToolbar => root.child(self.sidebar(cx)).child(self.main_panel(cx)),
             R3Screen::Settings => root
                 .child(self.settings_sidebar(cx))
                 .child(self.settings_panel(cx)),
@@ -668,6 +670,9 @@ impl R3Shell {
 
         if self.snapshot.renders_chat_view() {
             panel = panel.child(self.composer(cx));
+            if self.snapshot.active_branch_toolbar_state().is_some() {
+                panel = panel.child(self.branch_toolbar(cx));
+            }
         }
 
         if self.snapshot.diff_open() {
@@ -2364,6 +2369,162 @@ impl R3Shell {
         }
 
         label
+    }
+
+    fn branch_toolbar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let state = self
+            .snapshot
+            .active_branch_toolbar_state()
+            .expect("branch toolbar should only render when state exists");
+        let toolbar_width = if self.snapshot.diff_open() {
+            440.0
+        } else {
+            832.0
+        };
+
+        let mut context_controls = div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .min_w_0()
+            .flex_shrink_0();
+
+        if state.show_environment_picker {
+            let environment_icon = if state.environment_is_primary {
+                "icons/monitor.svg"
+            } else {
+                "icons/cloud.svg"
+            };
+            context_controls = context_controls
+                .child(self.branch_toolbar_context_button(
+                    "branch-toolbar-environment",
+                    environment_icon,
+                    state.environment_label.clone(),
+                    state.env_locked,
+                    cx,
+                ))
+                .child(div().mx_0p5().h(px(14.0)).w(px(1.0)).bg(self.theme.border));
+        }
+
+        context_controls = context_controls.child(self.branch_toolbar_context_button(
+            "branch-toolbar-env-mode",
+            branch_toolbar_workspace_icon(
+                state.effective_env_mode,
+                state.active_worktree_path.as_deref(),
+            ),
+            state.workspace_label,
+            state.env_mode_locked,
+            cx,
+        ));
+
+        div()
+            .id("branch-toolbar")
+            .flex()
+            .items_center()
+            .justify_center()
+            .px_8()
+            .pb_3()
+            .pt_1()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .w(px(toolbar_width))
+                    .px_3()
+                    .child(context_controls)
+                    .child(div().flex_1())
+                    .child(self.branch_toolbar_branch_button(state.branch_label, cx)),
+            )
+    }
+
+    fn branch_toolbar_context_button(
+        &self,
+        id: &'static str,
+        icon_path: &'static str,
+        label: impl Into<SharedString>,
+        locked: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id(id)
+            .flex()
+            .items_center()
+            .gap_1()
+            .h(px(24.0))
+            .rounded(px(6.0))
+            .border_1()
+            .border_color(self.theme.background.alpha(0.0))
+            .px_2()
+            .text_size(px(12.0))
+            .font_weight(FontWeight(500.0))
+            .text_color(self.theme.muted_foreground.opacity(0.70))
+            .when(!locked, |button| button.cursor_pointer())
+            .on_click(cx.listener(move |this, _, _, cx| {
+                if id == "branch-toolbar-env-mode" && !locked {
+                    if let Some(toolbar) = this.snapshot.active_branch_toolbar_state() {
+                        this.snapshot
+                            .set_active_draft_env_mode(toolbar.effective_env_mode.toggled());
+                        cx.notify();
+                    }
+                }
+            }))
+            .child(
+                svg()
+                    .path(icon_path)
+                    .size_3()
+                    .text_color(self.theme.muted_foreground.opacity(0.70)),
+            )
+            .child(div().min_w_0().child(label.into()))
+    }
+
+    fn branch_toolbar_branch_button(
+        &self,
+        label: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id("branch-toolbar-branch")
+            .flex()
+            .items_center()
+            .gap_1()
+            .h(px(24.0))
+            .max_w(px(240.0))
+            .rounded(px(6.0))
+            .px_2()
+            .text_size(px(12.0))
+            .font_weight(FontWeight(500.0))
+            .text_color(self.theme.muted_foreground.opacity(0.70))
+            .cursor_pointer()
+            .on_click(cx.listener(|this, _, _, cx| {
+                if let Some(next_ref_name) = this.next_branch_toolbar_ref_name() {
+                    this.snapshot.select_branch_for_active_thread(next_ref_name);
+                    cx.notify();
+                }
+            }))
+            .child(div().min_w_0().overflow_hidden().child(label.into()))
+            .child(
+                svg()
+                    .path("icons/chevron-down.svg")
+                    .size_3()
+                    .flex_shrink_0()
+                    .text_color(self.theme.muted_foreground.opacity(0.50)),
+            )
+    }
+
+    fn next_branch_toolbar_ref_name(&self) -> Option<String> {
+        let toolbar = self.snapshot.active_branch_toolbar_state()?;
+        let refs = &self.snapshot.vcs_refs;
+        if refs.is_empty() {
+            return None;
+        }
+        let active_index = toolbar
+            .resolved_active_branch
+            .as_deref()
+            .and_then(|branch| refs.iter().position(|ref_name| ref_name.name == branch))
+            .unwrap_or(0);
+        refs.get((active_index + 1) % refs.len())
+            .map(|ref_name| ref_name.name.clone())
     }
 
     fn composer(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -6813,6 +6974,19 @@ fn theme_mode_for_index(index: usize) -> ThemeMode {
     }
 }
 
+fn branch_toolbar_workspace_icon(
+    mode: DraftThreadEnvMode,
+    active_worktree_path: Option<&str>,
+) -> &'static str {
+    if mode == DraftThreadEnvMode::Worktree {
+        "icons/folder-git-2.svg"
+    } else if active_worktree_path.is_some() {
+        "icons/folder-git.svg"
+    } else {
+        "icons/folder.svg"
+    }
+}
+
 fn pending_blue() -> gpui::Hsla {
     hsla(217.0 / 360.0, 0.91, 0.60, 1.0)
 }
@@ -7118,6 +7292,7 @@ pub fn open_main_window(cx: &mut App) {
         Ok("pending-user-input") | Ok("user-input") => (R3Screen::PendingUserInput, false),
         Ok("terminal-drawer") | Ok("terminal") => (R3Screen::TerminalDrawer, false),
         Ok("diff-panel") | Ok("diff") => (R3Screen::DiffPanel, false),
+        Ok("branch-toolbar") | Ok("branch") => (R3Screen::BranchToolbar, false),
         Ok("settings") => (R3Screen::Settings, false),
         _ => (R3Screen::Empty, false),
     };
@@ -7138,6 +7313,7 @@ pub fn open_main_window(cx: &mut App) {
                 R3Screen::PendingUserInput => AppSnapshot::pending_user_input_reference_state(),
                 R3Screen::TerminalDrawer => AppSnapshot::terminal_drawer_reference_state(),
                 R3Screen::DiffPanel => AppSnapshot::diff_panel_reference_state(),
+                R3Screen::BranchToolbar => AppSnapshot::branch_toolbar_reference_state(),
                 R3Screen::Empty | R3Screen::Settings => AppSnapshot::empty_reference_state(),
             };
             let shell = cx.new(|cx| {

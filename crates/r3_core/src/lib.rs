@@ -77,6 +77,299 @@ pub enum DraftThreadEnvMode {
     Worktree,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchToolbarEnvironmentOption {
+    pub environment_id: String,
+    pub project_id: String,
+    pub label: String,
+    pub is_primary: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VcsRef {
+    pub name: String,
+    pub current: bool,
+    pub is_default: bool,
+    pub is_remote: bool,
+    pub remote_name: Option<String>,
+    pub worktree_path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchSelectionTarget {
+    pub checkout_cwd: String,
+    pub next_worktree_path: Option<String>,
+    pub reuse_existing_worktree: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchToolbarState {
+    pub environment_id: String,
+    pub environment_label: String,
+    pub environment_is_primary: bool,
+    pub show_environment_picker: bool,
+    pub effective_env_mode: DraftThreadEnvMode,
+    pub env_locked: bool,
+    pub env_mode_locked: bool,
+    pub active_worktree_path: Option<String>,
+    pub workspace_label: &'static str,
+    pub branch_label: String,
+    pub resolved_active_branch: Option<String>,
+}
+
+impl DraftThreadEnvMode {
+    pub fn toggled(self) -> Self {
+        match self {
+            Self::Local => Self::Worktree,
+            Self::Worktree => Self::Local,
+        }
+    }
+}
+
+fn normalize_display_label(value: Option<&str>) -> Option<&str> {
+    value.and_then(|value| {
+        let trimmed = value.trim();
+        if trimmed.is_empty() {
+            None
+        } else {
+            Some(trimmed)
+        }
+    })
+}
+
+fn is_generic_local_environment_label(label: &str) -> bool {
+    matches!(
+        label.trim().to_ascii_lowercase().as_str(),
+        "local" | "local environment"
+    )
+}
+
+pub fn resolve_environment_option_label(
+    is_primary: bool,
+    environment_id: &str,
+    runtime_label: Option<&str>,
+    saved_label: Option<&str>,
+) -> String {
+    let runtime_label = normalize_display_label(runtime_label);
+    let saved_label = normalize_display_label(saved_label);
+
+    if is_primary {
+        return [runtime_label, saved_label]
+            .into_iter()
+            .flatten()
+            .find(|label| !is_generic_local_environment_label(label))
+            .unwrap_or("This device")
+            .to_string();
+    }
+
+    runtime_label
+        .or(saved_label)
+        .unwrap_or(environment_id)
+        .to_string()
+}
+
+pub fn resolve_env_mode_label(mode: DraftThreadEnvMode) -> &'static str {
+    match mode {
+        DraftThreadEnvMode::Local => "Current checkout",
+        DraftThreadEnvMode::Worktree => "New worktree",
+    }
+}
+
+pub fn resolve_current_workspace_label(active_worktree_path: Option<&str>) -> &'static str {
+    if active_worktree_path.is_some() {
+        "Current worktree"
+    } else {
+        resolve_env_mode_label(DraftThreadEnvMode::Local)
+    }
+}
+
+pub fn resolve_locked_workspace_label(active_worktree_path: Option<&str>) -> &'static str {
+    if active_worktree_path.is_some() {
+        "Worktree"
+    } else {
+        "Local checkout"
+    }
+}
+
+pub fn resolve_effective_env_mode(
+    active_worktree_path: Option<&str>,
+    has_server_thread: bool,
+    draft_thread_env_mode: Option<DraftThreadEnvMode>,
+) -> DraftThreadEnvMode {
+    if !has_server_thread {
+        if active_worktree_path.is_some() {
+            return DraftThreadEnvMode::Local;
+        }
+        return if draft_thread_env_mode == Some(DraftThreadEnvMode::Worktree) {
+            DraftThreadEnvMode::Worktree
+        } else {
+            DraftThreadEnvMode::Local
+        };
+    }
+
+    if active_worktree_path.is_some() {
+        DraftThreadEnvMode::Worktree
+    } else {
+        DraftThreadEnvMode::Local
+    }
+}
+
+pub fn resolve_draft_env_mode_after_branch_change(
+    next_worktree_path: Option<&str>,
+    current_worktree_path: Option<&str>,
+    effective_env_mode: DraftThreadEnvMode,
+) -> DraftThreadEnvMode {
+    if next_worktree_path.is_some() {
+        return DraftThreadEnvMode::Worktree;
+    }
+    if effective_env_mode == DraftThreadEnvMode::Worktree && current_worktree_path.is_none() {
+        return DraftThreadEnvMode::Worktree;
+    }
+    DraftThreadEnvMode::Local
+}
+
+pub fn resolve_branch_toolbar_value(
+    env_mode: DraftThreadEnvMode,
+    active_worktree_path: Option<&str>,
+    active_thread_branch: Option<&str>,
+    current_git_branch: Option<&str>,
+) -> Option<String> {
+    if env_mode == DraftThreadEnvMode::Worktree && active_worktree_path.is_none() {
+        return active_thread_branch
+            .or(current_git_branch)
+            .map(str::to_string);
+    }
+    current_git_branch
+        .or(active_thread_branch)
+        .map(str::to_string)
+}
+
+pub fn branch_toolbar_trigger_label(
+    active_worktree_path: Option<&str>,
+    effective_env_mode: DraftThreadEnvMode,
+    resolved_active_branch: Option<&str>,
+) -> String {
+    let Some(resolved_active_branch) = resolved_active_branch else {
+        return "Select ref".to_string();
+    };
+    if effective_env_mode == DraftThreadEnvMode::Worktree && active_worktree_path.is_none() {
+        return format!("From {resolved_active_branch}");
+    }
+    resolved_active_branch.to_string()
+}
+
+pub fn resolve_branch_selection_target(
+    active_project_cwd: &str,
+    active_worktree_path: Option<&str>,
+    ref_name: &VcsRef,
+) -> BranchSelectionTarget {
+    if let Some(worktree_path) = ref_name.worktree_path.as_deref() {
+        return BranchSelectionTarget {
+            checkout_cwd: worktree_path.to_string(),
+            next_worktree_path: if worktree_path == active_project_cwd {
+                None
+            } else {
+                Some(worktree_path.to_string())
+            },
+            reuse_existing_worktree: true,
+        };
+    }
+
+    let next_worktree_path = if active_worktree_path.is_some() && ref_name.is_default {
+        None
+    } else {
+        active_worktree_path.map(str::to_string)
+    };
+
+    BranchSelectionTarget {
+        checkout_cwd: next_worktree_path
+            .clone()
+            .unwrap_or_else(|| active_project_cwd.to_string()),
+        next_worktree_path,
+        reuse_existing_worktree: false,
+    }
+}
+
+pub fn derive_local_branch_name_from_remote_ref(branch_name: &str) -> String {
+    let Some(first_separator_index) = branch_name.find('/') else {
+        return branch_name.to_string();
+    };
+    if first_separator_index == 0 || first_separator_index == branch_name.len() - 1 {
+        return branch_name.to_string();
+    }
+    branch_name[first_separator_index + 1..].to_string()
+}
+
+fn derive_local_branch_name_candidates_from_remote_ref(
+    branch_name: &str,
+    remote_name: Option<&str>,
+) -> Vec<String> {
+    let mut candidates = Vec::new();
+    let first_slash_candidate = derive_local_branch_name_from_remote_ref(branch_name);
+    if !first_slash_candidate.is_empty() {
+        candidates.push(first_slash_candidate);
+    }
+
+    if let Some(remote_name) = remote_name {
+        let remote_prefix = format!("{remote_name}/");
+        if branch_name.starts_with(&remote_prefix) && branch_name.len() > remote_prefix.len() {
+            let candidate = branch_name[remote_prefix.len()..].to_string();
+            if !candidates.iter().any(|existing| existing == &candidate) {
+                candidates.push(candidate);
+            }
+        }
+    }
+
+    candidates
+}
+
+pub fn dedupe_remote_branches_with_local_matches(refs: &[VcsRef]) -> Vec<VcsRef> {
+    let local_branch_names = refs
+        .iter()
+        .filter(|ref_name| !ref_name.is_remote)
+        .map(|ref_name| ref_name.name.as_str())
+        .collect::<Vec<_>>();
+
+    refs.iter()
+        .filter(|ref_name| {
+            if !ref_name.is_remote {
+                return true;
+            }
+            if ref_name.remote_name.as_deref() != Some("origin") {
+                return true;
+            }
+            let local_branch_candidates = derive_local_branch_name_candidates_from_remote_ref(
+                &ref_name.name,
+                ref_name.remote_name.as_deref(),
+            );
+            !local_branch_candidates.iter().any(|candidate| {
+                local_branch_names
+                    .iter()
+                    .any(|local_name| *local_name == candidate.as_str())
+            })
+        })
+        .cloned()
+        .collect()
+}
+
+pub fn should_include_branch_picker_item(
+    item_value: &str,
+    normalized_query: &str,
+    create_branch_item_value: Option<&str>,
+    checkout_pull_request_item_value: Option<&str>,
+) -> bool {
+    if normalized_query.is_empty() {
+        return true;
+    }
+    if create_branch_item_value == Some(item_value) {
+        return true;
+    }
+    if checkout_pull_request_item_value == Some(item_value) {
+        return true;
+    }
+    item_value.to_ascii_lowercase().contains(normalized_query)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeMode {
     ApprovalRequired,
@@ -132,6 +425,8 @@ pub struct ThreadSummary {
     pub has_pending_approvals: bool,
     pub has_pending_user_input: bool,
     pub has_actionable_proposed_plan: bool,
+    pub branch: Option<String>,
+    pub worktree_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1917,6 +2212,10 @@ pub struct AppSnapshot {
     pub route: ChatRoute,
     pub projects: Vec<ProjectSummary>,
     pub threads: Vec<ThreadSummary>,
+    pub is_git_repo: bool,
+    pub available_environments: Vec<BranchToolbarEnvironmentOption>,
+    pub vcs_refs: Vec<VcsRef>,
+    pub current_git_branch: Option<String>,
     pub messages: Vec<ChatMessage>,
     pub activities: Vec<ThreadActivity>,
     pub draft_sessions: Vec<DraftSessionState>,
@@ -1933,11 +2232,82 @@ pub struct AppSnapshot {
 }
 
 impl AppSnapshot {
+    fn reference_environments() -> Vec<BranchToolbarEnvironmentOption> {
+        vec![
+            BranchToolbarEnvironmentOption {
+                environment_id: "local".to_string(),
+                project_id: "project-r3code".to_string(),
+                label: resolve_environment_option_label(
+                    true,
+                    "local",
+                    Some("Local environment"),
+                    Some("Local"),
+                ),
+                is_primary: true,
+            },
+            BranchToolbarEnvironmentOption {
+                environment_id: "environment-build-box".to_string(),
+                project_id: "project-r3code".to_string(),
+                label: resolve_environment_option_label(
+                    false,
+                    "environment-build-box",
+                    None,
+                    Some("Build box"),
+                ),
+                is_primary: false,
+            },
+        ]
+    }
+
+    fn reference_vcs_refs() -> Vec<VcsRef> {
+        dedupe_remote_branches_with_local_matches(&[
+            VcsRef {
+                name: "main".to_string(),
+                current: true,
+                is_default: true,
+                is_remote: false,
+                remote_name: None,
+                worktree_path: None,
+            },
+            VcsRef {
+                name: "feature/parity-branch-toolbar".to_string(),
+                current: false,
+                is_default: false,
+                is_remote: false,
+                remote_name: None,
+                worktree_path: Some(
+                    "C:\\Users\\bunny\\Downloads\\r3code\\.t3\\worktrees\\branch-toolbar"
+                        .to_string(),
+                ),
+            },
+            VcsRef {
+                name: "origin/main".to_string(),
+                current: false,
+                is_default: true,
+                is_remote: true,
+                remote_name: Some("origin".to_string()),
+                worktree_path: None,
+            },
+            VcsRef {
+                name: "origin/feature/remote-only".to_string(),
+                current: false,
+                is_default: false,
+                is_remote: true,
+                remote_name: Some("origin".to_string()),
+                worktree_path: None,
+            },
+        ])
+    }
+
     pub fn empty_reference_state() -> Self {
         Self {
             route: ChatRoute::Index,
             projects: Vec::new(),
             threads: Vec::new(),
+            is_git_repo: false,
+            available_environments: Vec::new(),
+            vcs_refs: Vec::new(),
+            current_git_branch: None,
             messages: Vec::new(),
             activities: Vec::new(),
             draft_sessions: Vec::new(),
@@ -1968,6 +2338,10 @@ impl AppSnapshot {
                 path: "C:\\Users\\bunny\\Downloads\\r3code".to_string(),
             }],
             threads: Vec::new(),
+            is_git_repo: false,
+            available_environments: Self::reference_environments(),
+            vcs_refs: Self::reference_vcs_refs(),
+            current_git_branch: Some("main".to_string()),
             messages: Vec::new(),
             activities: Vec::new(),
             draft_sessions: vec![DraftSessionState {
@@ -2005,6 +2379,10 @@ impl AppSnapshot {
                 name: "r3code".to_string(),
                 path: "C:\\Users\\bunny\\Downloads\\r3code".to_string(),
             }],
+            is_git_repo: true,
+            available_environments: Self::reference_environments(),
+            vcs_refs: Self::reference_vcs_refs(),
+            current_git_branch: Some("main".to_string()),
             threads: vec![
                 ThreadSummary {
                     title: "Port R3Code UI shell".to_string(),
@@ -2014,6 +2392,8 @@ impl AppSnapshot {
                     has_pending_approvals: false,
                     has_pending_user_input: false,
                     has_actionable_proposed_plan: false,
+                    branch: Some("main".to_string()),
+                    worktree_path: None,
                 },
                 ThreadSummary {
                     title: "Capture visual references".to_string(),
@@ -2023,6 +2403,11 @@ impl AppSnapshot {
                     has_pending_approvals: false,
                     has_pending_user_input: false,
                     has_actionable_proposed_plan: false,
+                    branch: Some("feature/parity-branch-toolbar".to_string()),
+                    worktree_path: Some(
+                        "C:\\Users\\bunny\\Downloads\\r3code\\.t3\\worktrees\\branch-toolbar"
+                            .to_string(),
+                    ),
                 },
             ],
             messages: vec![
@@ -2055,6 +2440,17 @@ impl AppSnapshot {
     pub fn active_chat_reference_state() -> Self {
         let mut snapshot = Self::mock_reference_state();
         snapshot.turn_diff_summaries = reference_turn_diff_summaries();
+        snapshot
+    }
+
+    pub fn branch_toolbar_reference_state() -> Self {
+        let mut snapshot = Self::draft_reference_state();
+        snapshot.is_git_repo = true;
+        if let Some(draft) = snapshot.draft_sessions.first_mut() {
+            draft.env_mode = DraftThreadEnvMode::Worktree;
+            draft.branch = None;
+            draft.worktree_path = None;
+        }
         snapshot
     }
 
@@ -2296,6 +2692,145 @@ impl AppSnapshot {
         self.projects.first().map(|project| project.name.as_str())
     }
 
+    pub fn active_draft_session(&self) -> Option<&DraftSessionState> {
+        match &self.route {
+            ChatRoute::Thread(ThreadRouteTarget::Draft { draft_id }) => self
+                .draft_sessions
+                .iter()
+                .find(|draft| &draft.draft_id == draft_id),
+            _ => None,
+        }
+    }
+
+    pub fn active_thread_branch(&self) -> Option<&str> {
+        self.active_draft_session()
+            .and_then(|draft| draft.branch.as_deref())
+            .or_else(|| {
+                self.active_thread_summary()
+                    .and_then(|thread| thread.branch.as_deref())
+            })
+    }
+
+    pub fn active_worktree_path(&self) -> Option<&str> {
+        self.active_draft_session()
+            .and_then(|draft| draft.worktree_path.as_deref())
+            .or_else(|| {
+                self.active_thread_summary()
+                    .and_then(|thread| thread.worktree_path.as_deref())
+            })
+    }
+
+    pub fn active_branch_toolbar_state(&self) -> Option<BranchToolbarState> {
+        if !self.renders_chat_view() || !self.is_git_repo {
+            return None;
+        }
+
+        let environment = self
+            .available_environments
+            .first()
+            .cloned()
+            .unwrap_or_else(|| BranchToolbarEnvironmentOption {
+                environment_id: "local".to_string(),
+                project_id: "project-local".to_string(),
+                label: "This device".to_string(),
+                is_primary: true,
+            });
+        let active_worktree_path = self.active_worktree_path().map(str::to_string);
+        let has_server_thread = matches!(
+            self.route,
+            ChatRoute::Thread(ThreadRouteTarget::Server { .. })
+        ) && self.active_thread_summary().is_some();
+        let draft_thread_env_mode = self.active_draft_session().map(|draft| draft.env_mode);
+        let effective_env_mode = resolve_effective_env_mode(
+            active_worktree_path.as_deref(),
+            has_server_thread,
+            draft_thread_env_mode,
+        );
+        let resolved_active_branch = resolve_branch_toolbar_value(
+            effective_env_mode,
+            active_worktree_path.as_deref(),
+            self.active_thread_branch(),
+            self.current_git_branch.as_deref(),
+        );
+        let env_mode_locked = has_server_thread && active_worktree_path.is_some();
+        let workspace_label = if env_mode_locked {
+            resolve_locked_workspace_label(active_worktree_path.as_deref())
+        } else if effective_env_mode == DraftThreadEnvMode::Worktree {
+            resolve_env_mode_label(DraftThreadEnvMode::Worktree)
+        } else {
+            resolve_current_workspace_label(active_worktree_path.as_deref())
+        };
+        let branch_label = branch_toolbar_trigger_label(
+            active_worktree_path.as_deref(),
+            effective_env_mode,
+            resolved_active_branch.as_deref(),
+        );
+
+        Some(BranchToolbarState {
+            environment_id: environment.environment_id,
+            environment_label: environment.label,
+            environment_is_primary: environment.is_primary,
+            show_environment_picker: self.available_environments.len() > 1,
+            effective_env_mode,
+            env_locked: false,
+            env_mode_locked,
+            active_worktree_path,
+            workspace_label,
+            branch_label,
+            resolved_active_branch,
+        })
+    }
+
+    pub fn set_active_draft_env_mode(&mut self, mode: DraftThreadEnvMode) {
+        let ChatRoute::Thread(ThreadRouteTarget::Draft { draft_id }) = &self.route else {
+            return;
+        };
+        if let Some(draft) = self
+            .draft_sessions
+            .iter_mut()
+            .find(|draft| &draft.draft_id == draft_id)
+        {
+            draft.env_mode = mode;
+            if mode == DraftThreadEnvMode::Worktree && draft.branch.is_none() {
+                draft.branch = self.current_git_branch.clone();
+            }
+        }
+    }
+
+    pub fn select_branch_for_active_thread(&mut self, branch: impl Into<String>) {
+        let branch = branch.into();
+        if let Some(ref_name) = self
+            .vcs_refs
+            .iter()
+            .find(|ref_name| ref_name.name == branch)
+        {
+            self.current_git_branch = Some(if ref_name.is_remote {
+                derive_local_branch_name_from_remote_ref(&ref_name.name)
+            } else {
+                ref_name.name.clone()
+            });
+            if let ChatRoute::Thread(ThreadRouteTarget::Draft { draft_id }) = &self.route {
+                if let Some(draft) = self
+                    .draft_sessions
+                    .iter_mut()
+                    .find(|draft| &draft.draft_id == draft_id)
+                {
+                    let next_env_mode = resolve_draft_env_mode_after_branch_change(
+                        ref_name.worktree_path.as_deref(),
+                        draft.worktree_path.as_deref(),
+                        draft.env_mode,
+                    );
+                    draft.branch = self.current_git_branch.clone();
+                    draft.worktree_path = ref_name.worktree_path.clone();
+                    draft.env_mode = next_env_mode;
+                }
+            } else if let Some(thread) = self.threads.first_mut() {
+                thread.branch = self.current_git_branch.clone();
+                thread.worktree_path = ref_name.worktree_path.clone();
+            }
+        }
+    }
+
     pub fn active_pending_approval(&self) -> Option<&PendingApproval> {
         self.pending_approvals.first()
     }
@@ -2489,6 +3024,203 @@ mod tests {
                 .any(|summary| summary.assistant_message_id.as_deref()
                     == Some(assistant_message.id.as_str()))
         );
+    }
+
+    #[test]
+    fn branch_toolbar_labels_match_upstream_logic() {
+        assert_eq!(
+            resolve_env_mode_label(DraftThreadEnvMode::Local),
+            "Current checkout"
+        );
+        assert_eq!(
+            resolve_env_mode_label(DraftThreadEnvMode::Worktree),
+            "New worktree"
+        );
+        assert_eq!(resolve_current_workspace_label(None), "Current checkout");
+        assert_eq!(
+            resolve_current_workspace_label(Some("/repo/.t3/worktrees/feature-a")),
+            "Current worktree"
+        );
+        assert_eq!(resolve_locked_workspace_label(None), "Local checkout");
+        assert_eq!(
+            resolve_locked_workspace_label(Some("/repo/.t3/worktrees/feature-a")),
+            "Worktree"
+        );
+        assert_eq!(
+            resolve_environment_option_label(
+                true,
+                "environment-local",
+                Some("Local environment"),
+                Some("Local")
+            ),
+            "This device"
+        );
+        assert_eq!(
+            resolve_environment_option_label(false, "environment-remote", None, Some("Build box")),
+            "Build box"
+        );
+    }
+
+    #[test]
+    fn branch_toolbar_env_mode_and_value_match_upstream_logic() {
+        assert_eq!(
+            resolve_effective_env_mode(
+                Some("/repo/.t3/worktrees/feature-a"),
+                false,
+                Some(DraftThreadEnvMode::Worktree)
+            ),
+            DraftThreadEnvMode::Local
+        );
+        assert_eq!(
+            resolve_effective_env_mode(None, false, Some(DraftThreadEnvMode::Worktree)),
+            DraftThreadEnvMode::Worktree
+        );
+        assert_eq!(
+            resolve_draft_env_mode_after_branch_change(
+                None,
+                Some("/repo/.t3/worktrees/feature-a"),
+                DraftThreadEnvMode::Worktree
+            ),
+            DraftThreadEnvMode::Local
+        );
+        assert_eq!(
+            resolve_draft_env_mode_after_branch_change(None, None, DraftThreadEnvMode::Worktree),
+            DraftThreadEnvMode::Worktree
+        );
+        assert_eq!(
+            resolve_branch_toolbar_value(DraftThreadEnvMode::Worktree, None, None, Some("main")),
+            Some("main".to_string())
+        );
+        assert_eq!(
+            resolve_branch_toolbar_value(
+                DraftThreadEnvMode::Worktree,
+                None,
+                Some("feature/base"),
+                Some("main")
+            ),
+            Some("feature/base".to_string())
+        );
+        assert_eq!(
+            resolve_branch_toolbar_value(
+                DraftThreadEnvMode::Local,
+                None,
+                Some("feature/base"),
+                Some("main")
+            ),
+            Some("main".to_string())
+        );
+        assert_eq!(
+            branch_toolbar_trigger_label(None, DraftThreadEnvMode::Worktree, Some("main")),
+            "From main"
+        );
+    }
+
+    #[test]
+    fn branch_selection_target_matches_upstream_worktree_rules() {
+        assert_eq!(
+            resolve_branch_selection_target(
+                "/repo",
+                Some("/repo/.t3/worktrees/feature-a"),
+                &vcs_ref("feature-b", false, Some("/repo/.t3/worktrees/feature-b"))
+            ),
+            BranchSelectionTarget {
+                checkout_cwd: "/repo/.t3/worktrees/feature-b".to_string(),
+                next_worktree_path: Some("/repo/.t3/worktrees/feature-b".to_string()),
+                reuse_existing_worktree: true,
+            }
+        );
+        assert_eq!(
+            resolve_branch_selection_target(
+                "/repo",
+                Some("/repo/.t3/worktrees/feature-a"),
+                &vcs_ref("main", true, Some("/repo"))
+            ),
+            BranchSelectionTarget {
+                checkout_cwd: "/repo".to_string(),
+                next_worktree_path: None,
+                reuse_existing_worktree: true,
+            }
+        );
+        assert_eq!(
+            resolve_branch_selection_target(
+                "/repo",
+                Some("/repo/.t3/worktrees/feature-a"),
+                &vcs_ref("main", true, None)
+            ),
+            BranchSelectionTarget {
+                checkout_cwd: "/repo".to_string(),
+                next_worktree_path: None,
+                reuse_existing_worktree: false,
+            }
+        );
+        assert_eq!(
+            resolve_branch_selection_target(
+                "/repo",
+                Some("/repo/.t3/worktrees/feature-a"),
+                &vcs_ref("feature-a", false, None)
+            ),
+            BranchSelectionTarget {
+                checkout_cwd: "/repo/.t3/worktrees/feature-a".to_string(),
+                next_worktree_path: Some("/repo/.t3/worktrees/feature-a".to_string()),
+                reuse_existing_worktree: false,
+            }
+        );
+    }
+
+    #[test]
+    fn branch_picker_helpers_match_upstream_filtering() {
+        assert_eq!(
+            derive_local_branch_name_from_remote_ref("origin/feature/demo"),
+            "feature/demo"
+        );
+        assert_eq!(
+            derive_local_branch_name_from_remote_ref("my-org/upstream/feature/demo"),
+            "upstream/feature/demo"
+        );
+        assert_eq!(
+            derive_local_branch_name_from_remote_ref("origin/"),
+            "origin/"
+        );
+        assert_eq!(
+            dedupe_remote_branches_with_local_matches(&[
+                vcs_ref("feature/demo", false, None),
+                remote_vcs_ref("origin/feature/demo", "origin"),
+                remote_vcs_ref("origin/feature/remote-only", "origin"),
+            ])
+            .iter()
+            .map(|ref_name| ref_name.name.as_str())
+            .collect::<Vec<_>>(),
+            vec!["feature/demo", "origin/feature/remote-only"]
+        );
+        assert!(should_include_branch_picker_item(
+            "__checkout_pull_request__:1359",
+            "gh pr checkout 1359",
+            Some("__create_new_branch__:gh pr checkout 1359"),
+            Some("__checkout_pull_request__:1359")
+        ));
+        assert!(should_include_branch_picker_item(
+            "__create_new_branch__:feature/demo",
+            "feature/demo",
+            Some("__create_new_branch__:feature/demo"),
+            None
+        ));
+        assert!(!should_include_branch_picker_item(
+            "main",
+            "gh pr checkout 1359",
+            Some("__create_new_branch__:gh pr checkout 1359"),
+            Some("__checkout_pull_request__:1359")
+        ));
+    }
+
+    #[test]
+    fn branch_toolbar_reference_state_exposes_new_worktree_context() {
+        let snapshot = AppSnapshot::branch_toolbar_reference_state();
+        let toolbar = snapshot.active_branch_toolbar_state().unwrap();
+
+        assert_eq!(toolbar.effective_env_mode, DraftThreadEnvMode::Worktree);
+        assert_eq!(toolbar.workspace_label, "New worktree");
+        assert_eq!(toolbar.branch_label, "From main");
+        assert!(toolbar.show_environment_picker);
     }
 
     #[test]
@@ -3191,6 +3923,28 @@ mod tests {
         let state = EnvironmentState::default();
 
         assert!(get_thread_from_environment_state(&state, "missing-thread").is_none());
+    }
+
+    fn vcs_ref(name: &str, is_default: bool, worktree_path: Option<&str>) -> VcsRef {
+        VcsRef {
+            name: name.to_string(),
+            current: false,
+            is_default,
+            is_remote: false,
+            remote_name: None,
+            worktree_path: worktree_path.map(str::to_string),
+        }
+    }
+
+    fn remote_vcs_ref(name: &str, remote_name: &str) -> VcsRef {
+        VcsRef {
+            name: name.to_string(),
+            current: false,
+            is_default: false,
+            is_remote: true,
+            remote_name: Some(remote_name.to_string()),
+            worktree_path: None,
+        }
     }
 
     fn diff_file(path: &str, additions: Option<u32>, deletions: Option<u32>) -> TurnDiffFileChange {
