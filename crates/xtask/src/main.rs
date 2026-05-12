@@ -112,7 +112,7 @@ fn print_usage() {
         "Usage:
   cargo run -p xtask -- check-parity --allow-window-capture [--refresh-reference]
   cargo run -p xtask -- compare-screenshots --expected <png> --actual <png> [--channel-tolerance <n>] [--ignore-rect x,y,w,h] [--max-different-pixels-percent <n>]
-  cargo run -p xtask -- capture-r3code-window --allow-window-capture [--screen draft|composer-focused|composer-menu|composer-inline-tokens|active-chat|running-turn|pending-approval|pending-user-input|terminal-drawer|diff-panel|branch-toolbar|provider-model-picker|settings|settings-diagnostics|command-palette|settings-theme-menu|settings-dark|settings-back|settings-keybindings|settings-providers|settings-source-control|settings-connections|settings-archive] [--theme light|dark|system] [--output <png>]
+  cargo run -p xtask -- capture-r3code-window --allow-window-capture [--screen draft|composer-focused|composer-menu|composer-inline-tokens|active-chat|project-scripts-menu|running-turn|pending-approval|pending-user-input|terminal-drawer|diff-panel|branch-toolbar|open-in-menu|provider-model-picker|settings|settings-diagnostics|command-palette|settings-theme-menu|settings-dark|settings-back|settings-keybindings|settings-providers|settings-source-control|settings-connections|settings-archive] [--theme light|dark|system] [--output <png>]
   cargo run -p xtask -- capture-reference-browser"
     );
 }
@@ -281,6 +281,28 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
     })?;
 
     capture_r3code_window(CaptureR3CodeOptions {
+        screen: Some("project-scripts-menu".to_string()),
+        theme: Some("light".to_string()),
+        output: resolve_repo_path("reference/screenshots/r3code-project-scripts-menu-window.png"),
+        allow_window_capture: true,
+        ..CaptureR3CodeOptions::default()
+    })?;
+    compare_screenshots(CompareOptions {
+        expected: resolve_repo_path(
+            "reference/screenshots/upstream-project-scripts-menu-reference.png",
+        ),
+        actual: resolve_repo_path("reference/screenshots/r3code-project-scripts-menu-window.png"),
+        max_different_pixels_percent: 6.0,
+        channel_tolerance: 8,
+        ignore_rects: vec![Rect {
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 45,
+        }],
+    })?;
+
+    capture_r3code_window(CaptureR3CodeOptions {
         screen: Some("composer-menu".to_string()),
         theme: Some("light".to_string()),
         output: resolve_repo_path("reference/screenshots/r3code-composer-menu-window.png"),
@@ -436,6 +458,26 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
     compare_screenshots(CompareOptions {
         expected: resolve_repo_path("reference/screenshots/upstream-branch-toolbar-reference.png"),
         actual: resolve_repo_path("reference/screenshots/r3code-branch-toolbar-window.png"),
+        max_different_pixels_percent: 3.0,
+        channel_tolerance: 8,
+        ignore_rects: vec![Rect {
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 45,
+        }],
+    })?;
+
+    capture_r3code_window(CaptureR3CodeOptions {
+        screen: Some("open-in-menu".to_string()),
+        theme: Some("light".to_string()),
+        output: resolve_repo_path("reference/screenshots/r3code-open-in-menu-window.png"),
+        allow_window_capture: true,
+        ..CaptureR3CodeOptions::default()
+    })?;
+    compare_screenshots(CompareOptions {
+        expected: resolve_repo_path("reference/screenshots/upstream-open-in-menu-reference.png"),
+        actual: resolve_repo_path("reference/screenshots/r3code-open-in-menu-window.png"),
         max_different_pixels_percent: 3.0,
         channel_tolerance: 8,
         ignore_rects: vec![Rect {
@@ -1483,7 +1525,7 @@ fn capture_reference_browser(options: CaptureReferenceOptions) -> Result<()> {
         fs::write(
             options.output_dir.join("CAPTURE_MANIFEST.txt"),
             format!(
-                "Upstream reference repository: {}\nReference commit: {}\nIsolated reference home: {}\nOutput directory: {}\nCaptured:\n- upstream-empty-reference.png\n- upstream-command-palette-reference.png\n- upstream-draft-reference.png\n- upstream-composer-focused-reference.png\n- upstream-composer-menu-reference.png\n- upstream-composer-inline-tokens-reference.png\n- upstream-provider-model-picker-reference.png\n- upstream-branch-toolbar-reference.png\n- upstream-active-chat-reference.png\n- upstream-running-turn-reference.png\n- upstream-terminal-drawer-reference.png\n- upstream-diff-panel-reference.png\n- upstream-pending-user-input-reference.png\n- upstream-pending-approval-reference.png\n- upstream-settings-reference.png\n- upstream-settings-keybindings-reference.png\n- upstream-settings-providers-reference.png\n- upstream-settings-source-control-reference.png\n- upstream-settings-connections-reference.png\n- upstream-settings-diagnostics-reference.png\n- upstream-settings-archive-reference.png\n- upstream-settings-theme-menu-reference.png\n- upstream-settings-dark-reference.png\n- upstream-empty-dark-reference.png\n",
+                "Upstream reference repository: {}\nReference commit: {}\nIsolated reference home: {}\nOutput directory: {}\nCaptured:\n- upstream-empty-reference.png\n- upstream-command-palette-reference.png\n- upstream-draft-reference.png\n- upstream-composer-focused-reference.png\n- upstream-composer-menu-reference.png\n- upstream-composer-inline-tokens-reference.png\n- upstream-provider-model-picker-reference.png\n- upstream-branch-toolbar-reference.png\n- upstream-open-in-menu-reference.png\n- upstream-active-chat-reference.png\n- upstream-project-scripts-menu-reference.png\n- upstream-running-turn-reference.png\n- upstream-terminal-drawer-reference.png\n- upstream-diff-panel-reference.png\n- upstream-pending-user-input-reference.png\n- upstream-pending-approval-reference.png\n- upstream-settings-reference.png\n- upstream-settings-keybindings-reference.png\n- upstream-settings-providers-reference.png\n- upstream-settings-source-control-reference.png\n- upstream-settings-connections-reference.png\n- upstream-settings-diagnostics-reference.png\n- upstream-settings-archive-reference.png\n- upstream-settings-theme-menu-reference.png\n- upstream-settings-dark-reference.png\n- upstream-empty-dark-reference.png\n",
                 options.repo.display(),
                 commit.trim(),
                 options.home.display(),
@@ -2321,6 +2363,12 @@ const path = require("path");
   await page.waitForTimeout(350);
   await dismissUpdatesToast();
   await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-branch-toolbar-reference.png"), fullPage: true });
+  await page.getByRole("button", { name: "Copy options" }).last().click();
+  await page.locator('[data-slot="menu-popup"]').last().waitFor({ timeout: 15000 });
+  await page.waitForTimeout(350);
+  await dismissUpdatesToast();
+  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-open-in-menu-reference.png"), fullPage: true });
+  await page.keyboard.press("Escape");
   await page.goto(new URL("/local/thread-r3code-ui-shell", appOrigin).toString(), { waitUntil: "domcontentloaded", timeout: 30000 });
   await seedActiveChatReference();
   await page.getByRole("heading", { name: "Port R3Code UI shell" }).waitFor({ timeout: 15000 });
@@ -2329,6 +2377,15 @@ const path = require("path");
   await page.waitForTimeout(350);
   await dismissUpdatesToast();
   await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-active-chat-reference.png"), fullPage: true });
+  await page.getByRole("button", { name: "Script actions" }).click();
+  await page.locator('[data-slot="menu-popup"]').last().waitFor({ timeout: 15000 });
+  await page.getByText("test", { exact: true }).last().waitFor({ timeout: 15000 });
+  await page.getByText("parity", { exact: true }).last().waitFor({ timeout: 15000 });
+  await page.getByText("Add action", { exact: true }).last().waitFor({ timeout: 15000 });
+  await page.waitForTimeout(350);
+  await dismissUpdatesToast();
+  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-project-scripts-menu-reference.png"), fullPage: true });
+  await page.keyboard.press("Escape");
   await page.goto(new URL("/local/thread-r3code-ui-shell", appOrigin).toString(), { waitUntil: "domcontentloaded", timeout: 30000 });
   await seedRunningTurnReference();
   await page.getByText("Run the parity harness and fix any failures.").waitFor({ timeout: 15000 });

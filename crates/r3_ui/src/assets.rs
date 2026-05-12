@@ -99,6 +99,10 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/git-branch.svg"),
     ),
     (
+        "icons/git-commit.svg",
+        include_bytes!("../assets/icons/git-commit.svg"),
+    ),
+    (
         "icons/git-pull-request.svg",
         include_bytes!("../assets/icons/git-pull-request.svg"),
     ),
@@ -215,9 +219,14 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/triangle-alert.svg"),
     ),
     (
+        "icons/visual-studio-code.svg",
+        include_bytes!("../assets/icons/visual-studio-code.svg"),
+    ),
+    (
         "icons/wrench.svg",
         include_bytes!("../assets/icons/wrench.svg"),
     ),
+    ("icons/zed.svg", include_bytes!("../assets/icons/zed.svg")),
 ];
 
 impl AssetSource for R3Assets {
@@ -293,6 +302,7 @@ mod tests {
             "folder.svg",
             "folder-git-2.svg",
             "folder-git.svg",
+            "git-commit.svg",
             "hammer.svg",
             "list-checks.svg",
             "lock.svg",
@@ -315,7 +325,9 @@ mod tests {
             "text-wrap.svg",
             "triangle-alert.svg",
             "trash-2.svg",
+            "visual-studio-code.svg",
             "wrench.svg",
+            "zed.svg",
         ] {
             assert!(icons.iter().any(|listed| listed == icon), "{icon}");
         }

@@ -7465,18 +7465,18 @@ impl AppSnapshot {
     fn reference_project_scripts() -> Vec<ProjectScript> {
         vec![
             ProjectScript {
-                id: "test".to_string(),
-                name: "Test".to_string(),
+                id: "script-test".to_string(),
+                name: "test".to_string(),
                 command: "cargo test --workspace".to_string(),
                 icon: ProjectScriptIcon::Test,
                 run_on_worktree_create: false,
             },
             ProjectScript {
-                id: "setup".to_string(),
-                name: "Setup".to_string(),
-                command: "cargo fetch".to_string(),
-                icon: ProjectScriptIcon::Configure,
-                run_on_worktree_create: true,
+                id: "script-parity".to_string(),
+                name: "parity".to_string(),
+                command: "cargo run -p xtask -- check-parity --allow-window-capture".to_string(),
+                icon: ProjectScriptIcon::Play,
+                run_on_worktree_create: false,
             },
         ]
     }
@@ -7779,7 +7779,7 @@ impl AppSnapshot {
             vcs_refs: Self::reference_vcs_refs(),
             current_git_branch: Some("main".to_string()),
             primary_environment_id: Some("local".to_string()),
-            available_editors: vec![EditorId::VsCode, EditorId::FileManager],
+            available_editors: vec![EditorId::VsCode, EditorId::Zed, EditorId::FileManager],
             preferred_editor: Some(EditorId::VsCode),
             providers: Self::reference_providers(),
             selected_provider_instance_id: "codex".to_string(),
@@ -7829,8 +7829,8 @@ impl AppSnapshot {
             available_environments: Self::reference_environments(),
             vcs_refs: Self::reference_vcs_refs(),
             current_git_branch: Some("main".to_string()),
-            primary_environment_id: Some("local".to_string()),
-            available_editors: vec![EditorId::VsCode, EditorId::FileManager],
+            primary_environment_id: Some("primary-local".to_string()),
+            available_editors: vec![EditorId::VsCode, EditorId::Zed, EditorId::FileManager],
             preferred_editor: Some(EditorId::VsCode),
             providers: Self::reference_providers(),
             selected_provider_instance_id: "codex".to_string(),
@@ -9978,6 +9978,32 @@ mod tests {
                 .map(|option| option.label)
                 .collect::<Vec<_>>(),
             vec!["VS Code Insiders", "VSCodium", "Explorer"]
+        );
+    }
+
+    #[test]
+    fn seeded_header_menu_states_match_upstream_reference_captures() {
+        let draft = AppSnapshot::branch_toolbar_reference_state();
+        assert!(draft.open_in_picker_visible());
+        assert_eq!(
+            resolve_editor_options("Windows", &draft.available_editors)
+                .iter()
+                .map(|option| option.label)
+                .collect::<Vec<_>>(),
+            vec!["VS Code", "Zed", "Explorer"]
+        );
+
+        let active = AppSnapshot::active_chat_reference_state();
+        assert!(!active.open_in_picker_visible());
+        assert_eq!(
+            active
+                .active_project()
+                .unwrap()
+                .scripts
+                .iter()
+                .map(|script| script.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["test", "parity"]
         );
     }
 

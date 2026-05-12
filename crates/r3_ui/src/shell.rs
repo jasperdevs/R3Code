@@ -29,10 +29,10 @@ use r3_core::{
     group_composer_command_items, new_thread_terminal, nudge_composer_menu_highlight,
     ordered_turn_diff_files, parse_diff_route_search, primary_project_script,
     provider_instance_initials, replace_text_range, resolve_composer_command_selection,
-    resolve_composer_menu_active_item_id, resolve_model_picker_state, resolve_selectable_model,
-    set_pending_user_input_custom_answer, set_thread_active_terminal, set_thread_terminal_open,
-    shorten_trace_id, split_prompt_into_composer_segments, split_thread_terminal,
-    summarize_turn_diff_stats, toggle_pending_user_input_option_selection,
+    resolve_composer_menu_active_item_id, resolve_editor_options, resolve_model_picker_state,
+    resolve_selectable_model, set_pending_user_input_custom_answer, set_thread_active_terminal,
+    set_thread_terminal_open, shorten_trace_id, split_prompt_into_composer_segments,
+    split_thread_terminal, summarize_turn_diff_stats, toggle_pending_user_input_option_selection,
 };
 
 use crate::theme::{FONT_FAMILY, MONO_FONT_FAMILY, SIDEBAR_MIN_WIDTH, Theme, ThemeMode};
@@ -83,7 +83,9 @@ pub struct R3Shell {
     source_control_account_revealed: bool,
     source_control_provider_enabled: [bool; 3],
     project_script_run_count: usize,
+    project_script_menu_open: bool,
     opened_editor_count: usize,
+    open_in_menu_open: bool,
     providers_refresh_requested: bool,
     providers_add_dialog_open: bool,
     expanded_provider_index: Option<usize>,
@@ -150,7 +152,9 @@ impl R3Shell {
             source_control_account_revealed: false,
             source_control_provider_enabled: [true, false, false],
             project_script_run_count: 0,
+            project_script_menu_open: screen == R3Screen::ProjectScriptsMenu,
             opened_editor_count: 0,
+            open_in_menu_open: screen == R3Screen::OpenInMenu,
             providers_refresh_requested: false,
             providers_add_dialog_open: false,
             expanded_provider_index: Some(0),
@@ -211,6 +215,8 @@ pub enum R3Screen {
     TerminalDrawer,
     DiffPanel,
     BranchToolbar,
+    ProjectScriptsMenu,
+    OpenInMenu,
     ProviderModelPicker,
     Settings,
     SettingsDiagnostics,
@@ -481,6 +487,8 @@ impl Render for R3Shell {
             | R3Screen::TerminalDrawer
             | R3Screen::DiffPanel
             | R3Screen::BranchToolbar
+            | R3Screen::ProjectScriptsMenu
+            | R3Screen::OpenInMenu
             | R3Screen::ProviderModelPicker => {
                 root.child(self.sidebar(cx)).child(self.main_panel(cx))
             }
@@ -495,6 +503,14 @@ impl Render for R3Shell {
 
         if self.model_picker_open && self.snapshot.renders_chat_view() {
             root = root.child(self.model_picker_popup(cx));
+        }
+
+        if self.project_script_menu_open && self.snapshot.renders_chat_view() {
+            root = root.child(self.project_scripts_menu_popup(cx));
+        }
+
+        if self.open_in_menu_open && self.snapshot.open_in_picker_visible() {
+            root = root.child(self.open_in_menu_popup(cx));
         }
 
         root
@@ -791,6 +807,9 @@ impl R3Shell {
                     .child(self.project_scripts_control(cx))
                     .when(self.snapshot.open_in_picker_visible(), |actions| {
                         actions.child(self.open_in_picker(cx))
+                    })
+                    .when(self.snapshot.is_git_repo, |actions| {
+                        actions.child(self.git_actions_control(cx))
                     })
                     .child(self.toolbar_icon_button(
                         "thread-terminal",
@@ -2536,7 +2555,8 @@ impl R3Shell {
             .text_color(self.theme.muted_foreground)
             .cursor_pointer()
             .on_click(cx.listener(|this, _, _, cx| {
-                this.project_script_run_count = this.project_script_run_count.saturating_add(1);
+                this.project_script_menu_open = !this.project_script_menu_open;
+                this.open_in_menu_open = false;
                 cx.notify();
             }))
             .child(
@@ -2560,6 +2580,7 @@ impl R3Shell {
             .cursor_pointer()
             .on_click(cx.listener(|this, _, _, cx| {
                 this.composer_prompt = "Add action".to_string();
+                this.project_script_menu_open = false;
                 cx.notify();
             }))
             .child(
@@ -2579,7 +2600,6 @@ impl R3Shell {
                 label: "Explorer",
                 id: r3_core::EditorId::FileManager,
             });
-        let label = option.label;
 
         div()
             .id("open-in-picker")
@@ -2603,6 +2623,7 @@ impl R3Shell {
                     .cursor_pointer()
                     .on_click(cx.listener(|this, _, _, cx| {
                         this.opened_editor_count = this.opened_editor_count.saturating_add(1);
+                        this.open_in_menu_open = false;
                         cx.notify();
                     }))
                     .child(
@@ -2625,8 +2646,8 @@ impl R3Shell {
                     .text_color(self.theme.muted_foreground)
                     .cursor_pointer()
                     .on_click(cx.listener(move |this, _, _, cx| {
-                        this.opened_editor_count = this.opened_editor_count.saturating_add(1);
-                        this.composer_prompt = format!("Open in {label}");
+                        this.open_in_menu_open = !this.open_in_menu_open;
+                        this.project_script_menu_open = false;
                         cx.notify();
                     }))
                     .child(
@@ -2636,6 +2657,276 @@ impl R3Shell {
                             .text_color(self.theme.muted_foreground),
                     ),
             )
+    }
+
+    fn git_actions_control(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("git-actions-control")
+            .flex()
+            .items_center()
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.background)
+            .overflow_hidden()
+            .child(
+                div()
+                    .id("git-action-primary")
+                    .flex()
+                    .items_center()
+                    .gap_1p5()
+                    .h(px(28.0))
+                    .px_2()
+                    .text_size(px(12.0))
+                    .text_color(self.theme.muted_foreground)
+                    .opacity(0.64)
+                    .cursor_pointer()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.composer_prompt = "Commit".to_string();
+                        cx.notify();
+                    }))
+                    .child(
+                        svg()
+                            .path("icons/git-commit.svg")
+                            .size_3p5()
+                            .text_color(self.theme.muted_foreground),
+                    )
+                    .child("Commit"),
+            )
+            .child(div().h(px(18.0)).w(px(1.0)).bg(self.theme.border))
+            .child(
+                div()
+                    .id("git-action-menu")
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .h(px(28.0))
+                    .w(px(28.0))
+                    .text_color(self.theme.muted_foreground)
+                    .cursor_pointer()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.composer_prompt = "Git action options".to_string();
+                        cx.notify();
+                    }))
+                    .child(
+                        svg()
+                            .path("icons/chevron-down.svg")
+                            .size_4()
+                            .text_color(self.theme.muted_foreground),
+                    ),
+            )
+    }
+
+    fn project_scripts_menu_popup(&self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(project) = self.snapshot.active_project() else {
+            return div().into_any_element();
+        };
+
+        let mut popup = div()
+            .id("project-script-menu-popup")
+            .absolute()
+            .top(px(42.0))
+            .right(px(206.0))
+            .flex()
+            .flex_col()
+            .w(px(126.0))
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.background)
+            .p_1()
+            .text_color(self.theme.foreground)
+            .shadow(self.header_menu_shadow());
+
+        for script in &project.scripts {
+            popup = popup.child(self.project_scripts_menu_item(script, cx));
+        }
+
+        popup
+            .child(
+                self.header_menu_row(
+                    "project-script-menu-add".to_string(),
+                    "icons/plus.svg",
+                    "Add action".to_string(),
+                    None,
+                    None,
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.composer_prompt = "Add action".to_string();
+                    this.project_script_menu_open = false;
+                    cx.notify();
+                })),
+            )
+            .into_any_element()
+    }
+
+    fn project_scripts_menu_item(
+        &self,
+        script: &ProjectScript,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let icon = project_script_icon_path(script.icon);
+        let label = if script.run_on_worktree_create {
+            format!("{} (setup)", script.name)
+        } else {
+            script.name.clone()
+        };
+        let command = script.command.clone();
+
+        self.header_menu_row(
+            format!("project-script-menu-item-{}", script.id),
+            icon,
+            label,
+            Some("icons/settings-2.svg"),
+            None,
+        )
+        .on_click(cx.listener(move |this, _, _, cx| {
+            this.project_script_run_count = this.project_script_run_count.saturating_add(1);
+            this.composer_prompt = command.clone();
+            this.project_script_menu_open = false;
+            cx.notify();
+        }))
+    }
+
+    fn open_in_menu_popup(&self, cx: &mut Context<Self>) -> AnyElement {
+        let options = resolve_editor_options("Windows", &self.snapshot.available_editors);
+        let preferred_editor = self.snapshot.preferred_editor;
+        let mut popup = div()
+            .id("open-in-menu-popup")
+            .absolute()
+            .top(px(42.0))
+            .right(px(206.0))
+            .flex()
+            .flex_col()
+            .w(px(154.0))
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.background)
+            .p_1()
+            .text_color(self.theme.foreground)
+            .shadow(self.header_menu_shadow());
+
+        if options.is_empty() {
+            popup = popup.child(
+                div()
+                    .flex()
+                    .items_center()
+                    .h(px(32.0))
+                    .rounded(px(6.0))
+                    .px_2()
+                    .text_size(px(13.0))
+                    .text_color(self.theme.muted_foreground)
+                    .child("No installed editors found"),
+            );
+        } else {
+            for option in options {
+                let label = option.label.to_string();
+                popup = popup.child(
+                    self.header_menu_row(
+                        format!(
+                            "open-in-menu-item-{}",
+                            label.to_ascii_lowercase().replace(' ', "-")
+                        ),
+                        editor_option_icon_path(option),
+                        label.clone(),
+                        None,
+                        if Some(option.id) == preferred_editor {
+                            Some("Ctrl+O")
+                        } else {
+                            None
+                        },
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.opened_editor_count = this.opened_editor_count.saturating_add(1);
+                        this.composer_prompt = format!("Open in {label}");
+                        this.open_in_menu_open = false;
+                        cx.notify();
+                    })),
+                );
+            }
+        }
+
+        popup.into_any_element()
+    }
+
+    fn header_menu_row(
+        &self,
+        id: String,
+        icon: &'static str,
+        label: String,
+        trailing_icon: Option<&'static str>,
+        trailing_text: Option<&'static str>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let mut row = div()
+            .id(SharedString::from(id))
+            .flex()
+            .items_center()
+            .gap_2()
+            .h(px(32.0))
+            .rounded(px(6.0))
+            .px_2()
+            .text_size(px(13.0))
+            .text_color(self.theme.foreground)
+            .cursor_pointer()
+            .child(
+                svg()
+                    .path(icon)
+                    .size_4()
+                    .text_color(self.theme.muted_foreground),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .child(label),
+            );
+
+        row = if let Some(text) = trailing_text {
+            row.child(
+                div()
+                    .ml_auto()
+                    .h(px(24.0))
+                    .min_w(px(44.0))
+                    .text_align(TextAlign::Right)
+                    .text_size(px(12.0))
+                    .font_weight(FontWeight(500.0))
+                    .text_color(self.theme.muted_foreground.opacity(0.72))
+                    .child(text),
+            )
+        } else if let Some(icon) = trailing_icon {
+            row.child(
+                div()
+                    .ml_auto()
+                    .flex()
+                    .h(px(24.0))
+                    .min_w(px(24.0))
+                    .items_center()
+                    .justify_end()
+                    .opacity(0.0)
+                    .child(
+                        svg()
+                            .path(icon)
+                            .size_3p5()
+                            .text_color(self.theme.muted_foreground),
+                    ),
+            )
+        } else {
+            row
+        };
+
+        row
+    }
+
+    fn header_menu_shadow(&self) -> Vec<BoxShadow> {
+        vec![BoxShadow {
+            color: hsla(0.0, 0.0, 0.0, 0.05),
+            offset: point(px(0.0), px(10.0)),
+            blur_radius: px(15.0),
+            spread_radius: px(-3.0),
+        }]
     }
 
     fn composer(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -8718,7 +9009,10 @@ fn project_script_icon_path(icon: ProjectScriptIcon) -> &'static str {
 
 fn editor_option_icon_path(option: EditorOption) -> &'static str {
     match option.id {
+        r3_core::EditorId::Cursor => "icons/cursor.svg",
         r3_core::EditorId::FileManager => "icons/folder-closed.svg",
+        r3_core::EditorId::VsCode => "icons/visual-studio-code.svg",
+        r3_core::EditorId::Zed => "icons/zed.svg",
         _ => "icons/terminal.svg",
     }
 }
@@ -9185,6 +9479,8 @@ pub fn open_main_window(cx: &mut App) {
         Ok("terminal-drawer") | Ok("terminal") => (R3Screen::TerminalDrawer, false),
         Ok("diff-panel") | Ok("diff") => (R3Screen::DiffPanel, false),
         Ok("branch-toolbar") | Ok("branch") => (R3Screen::BranchToolbar, false),
+        Ok("project-scripts-menu") | Ok("scripts-menu") => (R3Screen::ProjectScriptsMenu, false),
+        Ok("open-in-menu") | Ok("editor-menu") => (R3Screen::OpenInMenu, false),
         Ok("provider-model-picker") | Ok("model-picker") => (R3Screen::ProviderModelPicker, false),
         Ok("settings-diagnostics") | Ok("diagnostics") => (R3Screen::SettingsDiagnostics, false),
         Ok("settings") => (R3Screen::Settings, false),
@@ -9211,6 +9507,8 @@ pub fn open_main_window(cx: &mut App) {
                 R3Screen::TerminalDrawer => AppSnapshot::terminal_drawer_reference_state(),
                 R3Screen::DiffPanel => AppSnapshot::diff_panel_reference_state(),
                 R3Screen::BranchToolbar => AppSnapshot::branch_toolbar_reference_state(),
+                R3Screen::ProjectScriptsMenu => AppSnapshot::active_chat_reference_state(),
+                R3Screen::OpenInMenu => AppSnapshot::branch_toolbar_reference_state(),
                 R3Screen::ProviderModelPicker => {
                     AppSnapshot::provider_model_picker_reference_state()
                 }
