@@ -14,7 +14,8 @@ use r3_core::{
     TerminalEvent, ThreadStatus, TurnDiffFileChange, TurnDiffStat, TurnDiffSummary,
     TurnDiffTreeNode, WorkLogEntry, build_project_action_items, build_root_command_palette_groups,
     build_thread_action_items, build_turn_diff_tree, close_thread_terminal,
-    filter_command_palette_groups, get_display_model_name, new_thread_terminal,
+    filter_command_palette_groups, get_display_model_name, get_provider_summary,
+    get_provider_version_advisory_presentation, get_provider_version_label, new_thread_terminal,
     parse_diff_route_search, primary_project_script, provider_instance_initials,
     resolve_model_picker_state, resolve_selectable_model, set_pending_user_input_custom_answer,
     set_thread_active_terminal, set_thread_terminal_open, split_thread_terminal,
@@ -56,7 +57,7 @@ pub struct R3Shell {
     providers_refresh_requested: bool,
     providers_add_dialog_open: bool,
     expanded_provider_index: Option<usize>,
-    provider_enabled: [bool; 4],
+    provider_enabled: [bool; 5],
     connections_network_accessible: bool,
     connections_add_dialog_open: bool,
     connections_mode: ConnectionMode,
@@ -121,7 +122,7 @@ impl R3Shell {
             providers_refresh_requested: false,
             providers_add_dialog_open: false,
             expanded_provider_index: Some(0),
-            provider_enabled: [true, true, false, true],
+            provider_enabled: [true, true, true, false, true],
             connections_network_accessible: false,
             connections_add_dialog_open: false,
             connections_mode: ConnectionMode::Remote,
@@ -256,14 +257,19 @@ struct KeybindingRow {
     when: &'static str,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ProviderInstanceRow {
-    label: &'static str,
-    id: &'static str,
-    driver: &'static str,
+    label: String,
+    id: String,
+    driver: String,
     status: ProviderStatus,
-    badge: Option<&'static str>,
-    description: &'static str,
+    badge: Option<String>,
+    description: String,
+    enabled: bool,
+    version_label: Option<String>,
+    advisory_detail: Option<String>,
+    model_count: usize,
+    accent_color: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -4265,7 +4271,7 @@ impl R3Shell {
     }
 
     fn settings_providers_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let rows = provider_instance_rows();
+        let rows = self.provider_instance_rows();
         let mut card = div()
             .relative()
             .overflow_hidden()
@@ -4275,9 +4281,9 @@ impl R3Shell {
             .bg(self.theme.card);
 
         for (index, row) in rows.iter().enumerate() {
-            card = card.child(self.provider_instance_row(index, *row, cx));
+            card = card.child(self.provider_instance_row(index, row, cx));
             if self.expanded_provider_index == Some(index) {
-                card = card.child(self.provider_instance_details(*row));
+                card = card.child(self.provider_instance_details(row));
             }
         }
 
@@ -4313,6 +4319,44 @@ impl R3Shell {
         }
 
         content
+    }
+
+    fn provider_instance_rows(&self) -> Vec<ProviderInstanceRow> {
+        self.snapshot
+            .providers
+            .iter()
+            .map(|provider| {
+                let summary = get_provider_summary(Some(provider));
+                let advisory =
+                    get_provider_version_advisory_presentation(provider.version_advisory.as_ref());
+                let status = if !provider.enabled || !provider.installed {
+                    ProviderStatus::NotConfigured
+                } else if provider.status == r3_core::ServerProviderState::Warning {
+                    ProviderStatus::EarlyAccess
+                } else {
+                    ProviderStatus::Ready
+                };
+                ProviderInstanceRow {
+                    label: provider
+                        .display_name
+                        .clone()
+                        .unwrap_or_else(|| provider.driver.clone()),
+                    id: format!("provider-row-{}", provider.instance_id),
+                    driver: provider.driver.clone(),
+                    status,
+                    badge: provider
+                        .badge_label
+                        .clone()
+                        .or_else(|| advisory.as_ref().map(|_| "Update".to_string())),
+                    description: summary.detail.unwrap_or(summary.headline),
+                    enabled: provider.enabled,
+                    version_label: get_provider_version_label(provider.version.as_deref()),
+                    advisory_detail: advisory.map(|advisory| advisory.detail),
+                    model_count: provider.models.len(),
+                    accent_color: provider.accent_color.clone(),
+                }
+            })
+            .collect()
     }
 
     fn providers_header_actions(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -4375,12 +4419,12 @@ impl R3Shell {
     fn provider_instance_row(
         &self,
         index: usize,
-        row: ProviderInstanceRow,
+        row: &ProviderInstanceRow,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let expanded = self.expanded_provider_index == Some(index);
         div()
-            .id(row.id)
+            .id(SharedString::from(row.id.clone()))
             .flex()
             .items_center()
             .justify_between()
@@ -4415,10 +4459,10 @@ impl R3Shell {
                                         div()
                                             .text_size(px(13.0))
                                             .font_weight(FontWeight(650.0))
-                                            .child(row.label),
+                                            .child(row.label.clone()),
                                     )
                                     .child(self.provider_status_badge(row.status))
-                                    .child(match row.badge {
+                                    .child(match row.badge.as_deref() {
                                         Some(label) => {
                                             self.provider_warning_badge(label).into_any_element()
                                         }
@@ -4429,7 +4473,7 @@ impl R3Shell {
                                 div()
                                     .text_size(px(12.0))
                                     .text_color(self.theme.muted_foreground.opacity(0.82))
-                                    .child(row.description),
+                                    .child(row.description.clone()),
                             ),
                     ),
             )
@@ -4438,15 +4482,12 @@ impl R3Shell {
                     .flex()
                     .items_center()
                     .gap_3()
-                    .child(self.provider_enabled_switch(index, cx))
+                    .child(self.provider_enabled_switch(index, row, cx))
                     .child(
                         div()
-                            .id(match index {
-                                0 => "provider-expand-codex",
-                                1 => "provider-expand-claude",
-                                2 => "provider-expand-cursor",
-                                _ => "provider-expand-opencode",
-                            })
+                            .id(SharedString::from(
+                                row.id.replace("provider-row", "provider-expand"),
+                            ))
                             .flex()
                             .items_center()
                             .justify_center()
@@ -4479,7 +4520,12 @@ impl R3Shell {
             )
     }
 
-    fn provider_instance_details(&self, row: ProviderInstanceRow) -> impl IntoElement {
+    fn provider_instance_details(&self, row: &ProviderInstanceRow) -> impl IntoElement {
+        let models_label = if row.model_count == 1 {
+            "1 model".to_string()
+        } else {
+            format!("{} models", row.model_count)
+        };
         div()
             .border_t_1()
             .border_color(self.theme.border)
@@ -4491,14 +4537,32 @@ impl R3Shell {
                     .grid()
                     .grid_cols(2)
                     .gap_3()
-                    .child(self.provider_detail_cell("Driver", row.driver))
-                    .child(self.provider_detail_cell("Models", "Default list"))
+                    .child(self.provider_detail_cell("Driver", row.driver.clone()))
+                    .child(self.provider_detail_cell("Models", models_label))
                     .child(self.provider_detail_cell("Environment", "No overrides"))
-                    .child(self.provider_detail_cell("Accent color", "Default")),
+                    .child(
+                        self.provider_detail_cell(
+                            "Version",
+                            row.version_label
+                                .clone()
+                                .unwrap_or_else(|| "Unknown".to_string()),
+                        ),
+                    )
+                    .when_some(row.accent_color.clone(), |grid, color| {
+                        grid.child(self.provider_detail_cell("Accent color", color))
+                    })
+                    .when_some(row.advisory_detail.clone(), |grid, advisory| {
+                        grid.child(self.provider_detail_cell("Update", advisory))
+                    }),
             )
     }
 
-    fn provider_detail_cell(&self, label: &'static str, value: &'static str) -> impl IntoElement {
+    fn provider_detail_cell(
+        &self,
+        label: &'static str,
+        value: impl Into<String>,
+    ) -> impl IntoElement {
+        let value = value.into();
         div()
             .rounded(px(8.0))
             .border_1()
@@ -4517,11 +4581,12 @@ impl R3Shell {
                     .mt_1()
                     .text_size(px(13.0))
                     .font_weight(FontWeight(550.0))
+                    .line_height(px(18.0))
                     .child(value),
             )
     }
 
-    fn provider_instance_icon(&self, row: ProviderInstanceRow) -> impl IntoElement {
+    fn provider_instance_icon(&self, row: &ProviderInstanceRow) -> impl IntoElement {
         div()
             .flex()
             .items_center()
@@ -4562,7 +4627,7 @@ impl R3Shell {
             .child(label)
     }
 
-    fn provider_warning_badge(&self, label: &'static str) -> impl IntoElement {
+    fn provider_warning_badge(&self, label: &str) -> impl IntoElement {
         div()
             .rounded(px(9.0))
             .border_1()
@@ -4572,18 +4637,24 @@ impl R3Shell {
             .py_0p5()
             .text_size(px(11.0))
             .text_color(hsla(36.0 / 360.0, 1.0, 0.42, 1.0))
-            .child(label)
+            .child(label.to_string())
     }
 
-    fn provider_enabled_switch(&self, index: usize, cx: &mut Context<Self>) -> impl IntoElement {
-        let enabled = self.provider_enabled[index];
+    fn provider_enabled_switch(
+        &self,
+        index: usize,
+        row: &ProviderInstanceRow,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let enabled = self
+            .provider_enabled
+            .get(index)
+            .copied()
+            .unwrap_or(row.enabled);
         div()
-            .id(match index {
-                0 => "provider-toggle-codex",
-                1 => "provider-toggle-claude",
-                2 => "provider-toggle-cursor",
-                _ => "provider-toggle-opencode",
-            })
+            .id(SharedString::from(
+                row.id.replace("provider-row", "provider-toggle"),
+            ))
             .relative()
             .w(px(30.0))
             .h(px(18.0))
@@ -8109,43 +8180,6 @@ fn work_log_tone_color(tone: ActivityTone, theme: Theme) -> gpui::Hsla {
         ActivityTone::Thinking => theme.muted_foreground.opacity(0.50),
         ActivityTone::Info | ActivityTone::Approval => theme.muted_foreground.opacity(0.55),
     }
-}
-
-fn provider_instance_rows() -> &'static [ProviderInstanceRow] {
-    &[
-        ProviderInstanceRow {
-            label: "Codex",
-            id: "provider-row-codex",
-            driver: "codex",
-            status: ProviderStatus::Ready,
-            badge: None,
-            description: "Default code agent provider.",
-        },
-        ProviderInstanceRow {
-            label: "Claude",
-            id: "provider-row-claude",
-            driver: "claudeAgent",
-            status: ProviderStatus::NotConfigured,
-            badge: None,
-            description: "Claude agent bridge.",
-        },
-        ProviderInstanceRow {
-            label: "Cursor",
-            id: "provider-row-cursor",
-            driver: "cursor",
-            status: ProviderStatus::EarlyAccess,
-            badge: Some("Early Access"),
-            description: "Cursor integration for existing desktop sessions.",
-        },
-        ProviderInstanceRow {
-            label: "OpenCode",
-            id: "provider-row-opencode",
-            driver: "opencode",
-            status: ProviderStatus::Ready,
-            badge: None,
-            description: "OpenCode CLI provider.",
-        },
-    ]
 }
 
 fn keybinding_rows() -> &'static [KeybindingRow] {

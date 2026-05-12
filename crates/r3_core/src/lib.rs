@@ -487,6 +487,21 @@ pub enum ServerProviderAvailability {
     Unavailable,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServerProviderAuthStatus {
+    Authenticated,
+    Unauthenticated,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerProviderAuth {
+    pub status: ServerProviderAuthStatus,
+    pub kind: Option<String>,
+    pub label: Option<String>,
+    pub email: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerProviderModel {
     pub slug: String,
@@ -496,18 +511,63 @@ pub struct ServerProviderModel {
     pub is_custom: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServerProviderVersionAdvisoryStatus {
+    Unknown,
+    Current,
+    BehindLatest,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerProviderVersionAdvisory {
+    pub status: ServerProviderVersionAdvisoryStatus,
+    pub current_version: Option<String>,
+    pub latest_version: Option<String>,
+    pub update_command: Option<String>,
+    pub can_update: bool,
+    pub checked_at: Option<String>,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderVersionAdvisoryEmphasis {
+    Normal,
+    Strong,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderStatusSummary {
+    pub headline: String,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderVersionAdvisoryPresentation {
+    pub detail: String,
+    pub update_command: Option<String>,
+    pub emphasis: ProviderVersionAdvisoryEmphasis,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerProvider {
     pub instance_id: String,
     pub driver: String,
     pub display_name: Option<String>,
     pub accent_color: Option<String>,
+    pub badge_label: Option<String>,
     pub continuation_group_key: Option<String>,
+    pub show_interaction_mode_toggle: bool,
     pub enabled: bool,
     pub installed: bool,
+    pub version: Option<String>,
     pub status: ServerProviderState,
+    pub auth: ServerProviderAuth,
+    pub checked_at: String,
+    pub message: Option<String>,
     pub availability: ServerProviderAvailability,
+    pub unavailable_reason: Option<String>,
     pub models: Vec<ServerProviderModel>,
+    pub version_advisory: Option<ServerProviderVersionAdvisory>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -608,6 +668,127 @@ pub fn provider_display_name(driver: &str) -> String {
         "opencode" => "OpenCode".to_string(),
         _ => format_provider_driver_kind_label(driver),
     }
+}
+
+pub fn get_provider_summary(provider: Option<&ServerProvider>) -> ProviderStatusSummary {
+    let Some(provider) = provider else {
+        return ProviderStatusSummary {
+            headline: "Checking provider status".to_string(),
+            detail: Some(
+                "Waiting for the server to report installation and authentication details."
+                    .to_string(),
+            ),
+        };
+    };
+
+    if !provider.enabled {
+        return ProviderStatusSummary {
+            headline: "Disabled".to_string(),
+            detail: Some(provider.message.clone().unwrap_or_else(|| {
+                format!(
+                    "This provider is installed but disabled for new sessions in {}.",
+                    APP_NAME
+                )
+            })),
+        };
+    }
+
+    if !provider.installed {
+        return ProviderStatusSummary {
+            headline: "Not found".to_string(),
+            detail: Some(
+                provider
+                    .message
+                    .clone()
+                    .unwrap_or_else(|| "CLI not detected on PATH.".to_string()),
+            ),
+        };
+    }
+
+    if provider.auth.status == ServerProviderAuthStatus::Authenticated {
+        let auth_label = provider
+            .auth
+            .label
+            .as_deref()
+            .or(provider.auth.kind.as_deref());
+        return ProviderStatusSummary {
+            headline: auth_label
+                .map(|label| format!("Authenticated · {label}"))
+                .unwrap_or_else(|| "Authenticated".to_string()),
+            detail: provider.message.clone(),
+        };
+    }
+
+    if provider.auth.status == ServerProviderAuthStatus::Unauthenticated {
+        return ProviderStatusSummary {
+            headline: "Not authenticated".to_string(),
+            detail: provider.message.clone(),
+        };
+    }
+
+    if provider.status == ServerProviderState::Warning {
+        return ProviderStatusSummary {
+            headline: "Needs attention".to_string(),
+            detail: Some(provider.message.clone().unwrap_or_else(|| {
+                "The provider is installed, but the server could not fully verify it.".to_string()
+            })),
+        };
+    }
+
+    if provider.status == ServerProviderState::Error {
+        return ProviderStatusSummary {
+            headline: "Unavailable".to_string(),
+            detail: Some(
+                provider
+                    .message
+                    .clone()
+                    .unwrap_or_else(|| "The provider failed its startup checks.".to_string()),
+            ),
+        };
+    }
+
+    ProviderStatusSummary {
+        headline: "Available".to_string(),
+        detail: Some(provider.message.clone().unwrap_or_else(|| {
+            "Installed and ready, but authentication could not be verified.".to_string()
+        })),
+    }
+}
+
+pub fn get_provider_version_label(version: Option<&str>) -> Option<String> {
+    let version = version?;
+    if version.is_empty() {
+        None
+    } else if version.starts_with('v') {
+        Some(version.to_string())
+    } else {
+        Some(format!("v{version}"))
+    }
+}
+
+pub fn get_provider_version_advisory_presentation(
+    advisory: Option<&ServerProviderVersionAdvisory>,
+) -> Option<ProviderVersionAdvisoryPresentation> {
+    let advisory = advisory?;
+    if matches!(
+        advisory.status,
+        ServerProviderVersionAdvisoryStatus::Current | ServerProviderVersionAdvisoryStatus::Unknown
+    ) {
+        return None;
+    }
+
+    let version_label = get_provider_version_label(advisory.latest_version.as_deref());
+    Some(ProviderVersionAdvisoryPresentation {
+        detail: advisory.message.clone().unwrap_or_else(|| {
+            version_label
+                .map(|label| format!("Update available: install {label}."))
+                .unwrap_or_else(|| {
+                    "Update available: install the latest provider version.".to_string()
+                })
+        }),
+        update_command: advisory.update_command.clone(),
+        emphasis: ProviderVersionAdvisoryEmphasis::Normal,
+    })
 }
 
 pub fn format_provider_driver_kind_label(provider: &str) -> String {
@@ -3967,11 +4148,23 @@ impl AppSnapshot {
                 driver: "codex".to_string(),
                 display_name: Some("Codex".to_string()),
                 accent_color: None,
+                badge_label: None,
                 continuation_group_key: Some("codex-default".to_string()),
+                show_interaction_mode_toggle: true,
                 enabled: true,
                 installed: true,
+                version: Some("0.49.0".to_string()),
                 status: ServerProviderState::Ready,
+                auth: ServerProviderAuth {
+                    status: ServerProviderAuthStatus::Authenticated,
+                    kind: Some("codex".to_string()),
+                    label: Some("Codex CLI".to_string()),
+                    email: Some("dev@example.com".to_string()),
+                },
+                checked_at: "2026-03-04T12:00:00.000Z".to_string(),
+                message: None,
                 availability: ServerProviderAvailability::Available,
+                unavailable_reason: None,
                 models: vec![
                     ServerProviderModel {
                         slug: "gpt-5.4".to_string(),
@@ -3995,17 +4188,38 @@ impl AppSnapshot {
                         is_custom: false,
                     },
                 ],
+                version_advisory: Some(ServerProviderVersionAdvisory {
+                    status: ServerProviderVersionAdvisoryStatus::BehindLatest,
+                    current_version: Some("0.49.0".to_string()),
+                    latest_version: Some("0.50.0".to_string()),
+                    update_command: Some("npm install -g @openai/codex@latest".to_string()),
+                    can_update: true,
+                    checked_at: Some("2026-03-04T12:00:00.000Z".to_string()),
+                    message: None,
+                }),
             },
             ServerProvider {
                 instance_id: "codex_personal".to_string(),
                 driver: "codex".to_string(),
                 display_name: Some("Codex".to_string()),
                 accent_color: Some("#2563EB".to_string()),
+                badge_label: Some("Personal".to_string()),
                 continuation_group_key: Some("codex-personal".to_string()),
+                show_interaction_mode_toggle: true,
                 enabled: true,
                 installed: true,
+                version: Some("0.50.0".to_string()),
                 status: ServerProviderState::Ready,
+                auth: ServerProviderAuth {
+                    status: ServerProviderAuthStatus::Authenticated,
+                    kind: Some("codex".to_string()),
+                    label: Some("Personal".to_string()),
+                    email: Some("personal@example.com".to_string()),
+                },
+                checked_at: "2026-03-04T12:00:00.000Z".to_string(),
+                message: None,
                 availability: ServerProviderAvailability::Available,
+                unavailable_reason: None,
                 models: vec![
                     ServerProviderModel {
                         slug: "gpt-5.4".to_string(),
@@ -4022,17 +4236,38 @@ impl AppSnapshot {
                         is_custom: true,
                     },
                 ],
+                version_advisory: Some(ServerProviderVersionAdvisory {
+                    status: ServerProviderVersionAdvisoryStatus::Current,
+                    current_version: Some("0.50.0".to_string()),
+                    latest_version: Some("0.50.0".to_string()),
+                    update_command: None,
+                    can_update: false,
+                    checked_at: Some("2026-03-04T12:00:00.000Z".to_string()),
+                    message: None,
+                }),
             },
             ServerProvider {
                 instance_id: "claudeAgent".to_string(),
                 driver: "claudeAgent".to_string(),
                 display_name: Some("Claude".to_string()),
                 accent_color: None,
+                badge_label: None,
                 continuation_group_key: Some("claude-default".to_string()),
+                show_interaction_mode_toggle: false,
                 enabled: true,
                 installed: true,
+                version: Some("1.2.3".to_string()),
                 status: ServerProviderState::Ready,
+                auth: ServerProviderAuth {
+                    status: ServerProviderAuthStatus::Authenticated,
+                    kind: Some("oauth".to_string()),
+                    label: Some("Claude Max".to_string()),
+                    email: None,
+                },
+                checked_at: "2026-03-04T12:00:00.000Z".to_string(),
+                message: None,
                 availability: ServerProviderAvailability::Available,
+                unavailable_reason: None,
                 models: vec![
                     ServerProviderModel {
                         slug: "claude-sonnet-4-6".to_string(),
@@ -4049,17 +4284,30 @@ impl AppSnapshot {
                         is_custom: false,
                     },
                 ],
+                version_advisory: None,
             },
             ServerProvider {
                 instance_id: "cursor".to_string(),
                 driver: "cursor".to_string(),
                 display_name: Some("Cursor".to_string()),
                 accent_color: None,
+                badge_label: None,
                 continuation_group_key: None,
+                show_interaction_mode_toggle: false,
                 enabled: false,
                 installed: false,
+                version: None,
                 status: ServerProviderState::Disabled,
+                auth: ServerProviderAuth {
+                    status: ServerProviderAuthStatus::Unknown,
+                    kind: None,
+                    label: None,
+                    email: None,
+                },
+                checked_at: "2026-03-04T12:00:00.000Z".to_string(),
+                message: Some("Cursor CLI not detected on PATH.".to_string()),
                 availability: ServerProviderAvailability::Unavailable,
+                unavailable_reason: Some("Driver unavailable in this build.".to_string()),
                 models: vec![ServerProviderModel {
                     slug: "composer-2".to_string(),
                     name: "Composer 2".to_string(),
@@ -4067,17 +4315,30 @@ impl AppSnapshot {
                     sub_provider: None,
                     is_custom: false,
                 }],
+                version_advisory: None,
             },
             ServerProvider {
                 instance_id: "opencode".to_string(),
                 driver: "opencode".to_string(),
                 display_name: Some("OpenCode".to_string()),
                 accent_color: None,
+                badge_label: Some("Preview".to_string()),
                 continuation_group_key: None,
+                show_interaction_mode_toggle: false,
                 enabled: true,
                 installed: true,
+                version: Some("0.8.1".to_string()),
                 status: ServerProviderState::Warning,
+                auth: ServerProviderAuth {
+                    status: ServerProviderAuthStatus::Unknown,
+                    kind: None,
+                    label: None,
+                    email: None,
+                },
+                checked_at: "2026-03-04T12:00:00.000Z".to_string(),
+                message: Some("Server could not verify OpenCode authentication.".to_string()),
                 availability: ServerProviderAvailability::Available,
+                unavailable_reason: None,
                 models: vec![ServerProviderModel {
                     slug: "openai/gpt-5".to_string(),
                     name: "OpenAI GPT-5".to_string(),
@@ -4085,6 +4346,7 @@ impl AppSnapshot {
                     sub_provider: Some("OpenAI".to_string()),
                     is_custom: false,
                 }],
+                version_advisory: None,
             },
         ]
     }
@@ -4876,6 +5138,36 @@ mod tests {
         }
     }
 
+    fn make_server_provider(overrides: impl FnOnce(&mut ServerProvider)) -> ServerProvider {
+        let mut provider = ServerProvider {
+            instance_id: "codex".to_string(),
+            driver: "codex".to_string(),
+            display_name: Some("Codex".to_string()),
+            accent_color: None,
+            badge_label: None,
+            continuation_group_key: None,
+            show_interaction_mode_toggle: true,
+            enabled: true,
+            installed: true,
+            version: Some("1.2.3".to_string()),
+            status: ServerProviderState::Ready,
+            auth: ServerProviderAuth {
+                status: ServerProviderAuthStatus::Unknown,
+                kind: None,
+                label: None,
+                email: None,
+            },
+            checked_at: "2026-03-04T12:00:00.000Z".to_string(),
+            message: None,
+            availability: ServerProviderAvailability::Available,
+            unavailable_reason: None,
+            models: Vec::new(),
+            version_advisory: None,
+        };
+        overrides(&mut provider);
+        provider
+    }
+
     #[test]
     fn resolves_server_route_before_draft_route() {
         let target = resolve_thread_route_target(Some("env-1"), Some("thread-1"), Some("draft-1"));
@@ -5064,6 +5356,122 @@ mod tests {
                 .map(|group| group.value.as_str())
                 .collect::<Vec<_>>(),
             vec!["actions", "projects-search", "threads-search"]
+        );
+    }
+
+    #[test]
+    fn provider_status_summary_matches_upstream_precedence() {
+        let missing = get_provider_summary(None);
+        assert_eq!(missing.headline, "Checking provider status");
+        assert_eq!(
+            missing.detail.as_deref(),
+            Some("Waiting for the server to report installation and authentication details.")
+        );
+
+        let disabled = make_server_provider(|provider| {
+            provider.enabled = false;
+            provider.message = None;
+        });
+        assert_eq!(get_provider_summary(Some(&disabled)).headline, "Disabled");
+
+        let not_found = make_server_provider(|provider| {
+            provider.installed = false;
+            provider.message = Some("Binary missing.".to_string());
+        });
+        assert_eq!(get_provider_summary(Some(&not_found)).headline, "Not found");
+        assert_eq!(
+            get_provider_summary(Some(&not_found)).detail.as_deref(),
+            Some("Binary missing.")
+        );
+
+        let authenticated = make_server_provider(|provider| {
+            provider.auth = ServerProviderAuth {
+                status: ServerProviderAuthStatus::Authenticated,
+                kind: Some("oauth".to_string()),
+                label: Some("Codex Pro".to_string()),
+                email: None,
+            };
+        });
+        assert_eq!(
+            get_provider_summary(Some(&authenticated)).headline,
+            "Authenticated · Codex Pro"
+        );
+
+        let unauthenticated = make_server_provider(|provider| {
+            provider.auth.status = ServerProviderAuthStatus::Unauthenticated;
+        });
+        assert_eq!(
+            get_provider_summary(Some(&unauthenticated)).headline,
+            "Not authenticated"
+        );
+
+        let warning = make_server_provider(|provider| {
+            provider.status = ServerProviderState::Warning;
+            provider.auth.status = ServerProviderAuthStatus::Unknown;
+        });
+        assert_eq!(
+            get_provider_summary(Some(&warning)).headline,
+            "Needs attention"
+        );
+
+        let error = make_server_provider(|provider| {
+            provider.status = ServerProviderState::Error;
+            provider.auth.status = ServerProviderAuthStatus::Unknown;
+        });
+        assert_eq!(get_provider_summary(Some(&error)).headline, "Unavailable");
+    }
+
+    #[test]
+    fn provider_version_labels_and_advisories_match_upstream_logic() {
+        assert_eq!(get_provider_version_label(None), None);
+        assert_eq!(
+            get_provider_version_label(Some("1.2.3")),
+            Some("v1.2.3".to_string())
+        );
+        assert_eq!(
+            get_provider_version_label(Some("v1.2.3")),
+            Some("v1.2.3".to_string())
+        );
+
+        let current = ServerProviderVersionAdvisory {
+            status: ServerProviderVersionAdvisoryStatus::Current,
+            current_version: Some("1.2.3".to_string()),
+            latest_version: Some("1.2.3".to_string()),
+            update_command: None,
+            can_update: false,
+            checked_at: None,
+            message: None,
+        };
+        assert_eq!(
+            get_provider_version_advisory_presentation(Some(&current)),
+            None
+        );
+
+        let behind = ServerProviderVersionAdvisory {
+            status: ServerProviderVersionAdvisoryStatus::BehindLatest,
+            current_version: Some("1.2.3".to_string()),
+            latest_version: Some("1.2.4".to_string()),
+            update_command: Some("npm install -g provider@latest".to_string()),
+            can_update: true,
+            checked_at: Some("2026-03-04T12:00:00.000Z".to_string()),
+            message: None,
+        };
+        let presentation = get_provider_version_advisory_presentation(Some(&behind)).unwrap();
+        assert_eq!(presentation.detail, "Update available: install v1.2.4.");
+        assert_eq!(
+            presentation.update_command.as_deref(),
+            Some("npm install -g provider@latest")
+        );
+
+        let custom_message = ServerProviderVersionAdvisory {
+            message: Some("Use your package manager to update.".to_string()),
+            ..behind
+        };
+        assert_eq!(
+            get_provider_version_advisory_presentation(Some(&custom_message))
+                .unwrap()
+                .detail,
+            "Use your package manager to update."
         );
     }
 
