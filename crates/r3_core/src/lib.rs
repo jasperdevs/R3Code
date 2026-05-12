@@ -283,6 +283,212 @@ pub struct PendingUserInput {
     pub questions: Vec<UserInputQuestion>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PendingUserInputDraftAnswer {
+    pub selected_option_labels: Vec<String>,
+    pub custom_answer: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PendingUserInputAnswer {
+    Text(String),
+    Multiple(Vec<String>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PendingUserInputProgress {
+    pub question_index: usize,
+    pub active_question: Option<UserInputQuestion>,
+    pub active_draft: Option<PendingUserInputDraftAnswer>,
+    pub selected_option_labels: Vec<String>,
+    pub custom_answer: String,
+    pub resolved_answer: Option<PendingUserInputAnswer>,
+    pub using_custom_answer: bool,
+    pub answered_question_count: usize,
+    pub is_last_question: bool,
+    pub is_complete: bool,
+    pub can_advance: bool,
+}
+
+fn normalize_draft_answer(value: Option<&str>) -> Option<String> {
+    let trimmed = value?.trim();
+    if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn normalize_selected_option_labels(value: &[String]) -> Vec<String> {
+    let mut normalized = Vec::new();
+    for label in value {
+        let trimmed = label.trim();
+        if trimmed.is_empty() || normalized.iter().any(|entry| entry == trimmed) {
+            continue;
+        }
+        normalized.push(trimmed.to_string());
+    }
+    normalized
+}
+
+pub fn resolve_pending_user_input_answer(
+    question: &UserInputQuestion,
+    draft: Option<&PendingUserInputDraftAnswer>,
+) -> Option<PendingUserInputAnswer> {
+    if let Some(custom_answer) =
+        normalize_draft_answer(draft.and_then(|draft| draft.custom_answer.as_deref()))
+    {
+        return Some(PendingUserInputAnswer::Text(custom_answer));
+    }
+
+    let selected_option_labels = draft
+        .map(|draft| normalize_selected_option_labels(&draft.selected_option_labels))
+        .unwrap_or_default();
+    if question.multi_select {
+        return if selected_option_labels.is_empty() {
+            None
+        } else {
+            Some(PendingUserInputAnswer::Multiple(selected_option_labels))
+        };
+    }
+
+    selected_option_labels
+        .first()
+        .cloned()
+        .map(PendingUserInputAnswer::Text)
+}
+
+pub fn set_pending_user_input_custom_answer(
+    draft: Option<&PendingUserInputDraftAnswer>,
+    custom_answer: impl Into<String>,
+) -> PendingUserInputDraftAnswer {
+    let custom_answer = custom_answer.into();
+    let selected_option_labels = if custom_answer.trim().is_empty() {
+        draft
+            .map(|draft| normalize_selected_option_labels(&draft.selected_option_labels))
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    PendingUserInputDraftAnswer {
+        selected_option_labels,
+        custom_answer: Some(custom_answer),
+    }
+}
+
+pub fn toggle_pending_user_input_option_selection(
+    question: &UserInputQuestion,
+    draft: Option<&PendingUserInputDraftAnswer>,
+    option_label: impl Into<String>,
+) -> PendingUserInputDraftAnswer {
+    let option_label = option_label.into();
+    if question.multi_select {
+        let mut selected_option_labels = draft
+            .map(|draft| normalize_selected_option_labels(&draft.selected_option_labels))
+            .unwrap_or_default();
+        if selected_option_labels
+            .iter()
+            .any(|label| label == &option_label)
+        {
+            selected_option_labels.retain(|label| label != &option_label);
+        } else {
+            selected_option_labels.push(option_label);
+        }
+
+        return PendingUserInputDraftAnswer {
+            selected_option_labels,
+            custom_answer: Some(String::new()),
+        };
+    }
+
+    PendingUserInputDraftAnswer {
+        selected_option_labels: vec![option_label],
+        custom_answer: Some(String::new()),
+    }
+}
+
+pub fn build_pending_user_input_answers(
+    questions: &[UserInputQuestion],
+    draft_answers: &BTreeMap<String, PendingUserInputDraftAnswer>,
+) -> Option<BTreeMap<String, PendingUserInputAnswer>> {
+    let mut answers = BTreeMap::new();
+
+    for question in questions {
+        let answer = resolve_pending_user_input_answer(question, draft_answers.get(&question.id))?;
+        answers.insert(question.id.clone(), answer);
+    }
+
+    Some(answers)
+}
+
+pub fn count_answered_pending_user_input_questions(
+    questions: &[UserInputQuestion],
+    draft_answers: &BTreeMap<String, PendingUserInputDraftAnswer>,
+) -> usize {
+    questions
+        .iter()
+        .filter(|question| {
+            resolve_pending_user_input_answer(question, draft_answers.get(&question.id)).is_some()
+        })
+        .count()
+}
+
+pub fn find_first_unanswered_pending_user_input_question_index(
+    questions: &[UserInputQuestion],
+    draft_answers: &BTreeMap<String, PendingUserInputDraftAnswer>,
+) -> usize {
+    questions
+        .iter()
+        .position(|question| {
+            resolve_pending_user_input_answer(question, draft_answers.get(&question.id)).is_none()
+        })
+        .unwrap_or_else(|| questions.len().saturating_sub(1))
+}
+
+pub fn derive_pending_user_input_progress(
+    questions: &[UserInputQuestion],
+    draft_answers: &BTreeMap<String, PendingUserInputDraftAnswer>,
+    question_index: usize,
+) -> PendingUserInputProgress {
+    let normalized_question_index = if questions.is_empty() {
+        0
+    } else {
+        question_index.min(questions.len() - 1)
+    };
+    let active_question = questions.get(normalized_question_index).cloned();
+    let active_draft = active_question
+        .as_ref()
+        .and_then(|question| draft_answers.get(&question.id).cloned());
+    let resolved_answer = active_question
+        .as_ref()
+        .and_then(|question| resolve_pending_user_input_answer(question, active_draft.as_ref()));
+    let custom_answer = active_draft
+        .as_ref()
+        .and_then(|draft| draft.custom_answer.clone())
+        .unwrap_or_default();
+    let answered_question_count =
+        count_answered_pending_user_input_questions(questions, draft_answers);
+    let is_last_question = questions.is_empty() || normalized_question_index >= questions.len() - 1;
+
+    PendingUserInputProgress {
+        question_index: normalized_question_index,
+        active_question,
+        selected_option_labels: active_draft
+            .as_ref()
+            .map(|draft| normalize_selected_option_labels(&draft.selected_option_labels))
+            .unwrap_or_default(),
+        active_draft,
+        using_custom_answer: custom_answer.trim().len() > 0,
+        custom_answer,
+        can_advance: resolved_answer.is_some(),
+        resolved_answer,
+        answered_question_count,
+        is_last_question,
+        is_complete: build_pending_user_input_answers(questions, draft_answers).is_some(),
+    }
+}
+
 fn activity_lifecycle_rank(kind: &str) -> i32 {
     if kind.ends_with(".started") || kind == "tool.started" {
         return 0;
@@ -954,6 +1160,25 @@ mod tests {
         }
     }
 
+    fn multi_select_question(id: &str) -> UserInputQuestion {
+        UserInputQuestion {
+            id: id.to_string(),
+            header: "Areas".to_string(),
+            question: "Which areas should this change cover?".to_string(),
+            options: vec![
+                UserInputQuestionOption {
+                    label: "Server".to_string(),
+                    description: "Server".to_string(),
+                },
+                UserInputQuestionOption {
+                    label: "Web".to_string(),
+                    description: "Web".to_string(),
+                },
+            ],
+            multi_select: true,
+        }
+    }
+
     #[test]
     fn derives_pending_approvals_and_removes_resolved_requests() {
         let activities = vec![
@@ -1121,5 +1346,201 @@ mod tests {
         ];
 
         assert_eq!(derive_pending_user_inputs(&activities), Vec::new());
+    }
+
+    #[test]
+    fn pending_user_input_answer_prefers_custom_text() {
+        let question = user_input_question("scope");
+        let draft = PendingUserInputDraftAnswer {
+            selected_option_labels: vec!["Tight".to_string()],
+            custom_answer: Some("Keep the existing envelope for one release".to_string()),
+        };
+
+        assert_eq!(
+            resolve_pending_user_input_answer(&question, Some(&draft)),
+            Some(PendingUserInputAnswer::Text(
+                "Keep the existing envelope for one release".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn pending_user_input_answer_returns_multi_select_arrays() {
+        let question = multi_select_question("areas");
+        let draft = PendingUserInputDraftAnswer {
+            selected_option_labels: vec!["Server".to_string(), "Web".to_string()],
+            custom_answer: None,
+        };
+
+        assert_eq!(
+            resolve_pending_user_input_answer(&question, Some(&draft)),
+            Some(PendingUserInputAnswer::Multiple(vec![
+                "Server".to_string(),
+                "Web".to_string(),
+            ]))
+        );
+    }
+
+    #[test]
+    fn setting_custom_answer_clears_selected_options_when_non_empty() {
+        let draft = PendingUserInputDraftAnswer {
+            selected_option_labels: vec!["Server".to_string(), "Web".to_string()],
+            custom_answer: None,
+        };
+
+        assert_eq!(
+            set_pending_user_input_custom_answer(Some(&draft), "doesn't matter"),
+            PendingUserInputDraftAnswer {
+                selected_option_labels: Vec::new(),
+                custom_answer: Some("doesn't matter".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn toggling_pending_user_input_options_matches_select_mode() {
+        let multi = multi_select_question("areas");
+        let selected = toggle_pending_user_input_option_selection(&multi, None, "Server");
+        assert_eq!(
+            selected,
+            PendingUserInputDraftAnswer {
+                selected_option_labels: vec!["Server".to_string()],
+                custom_answer: Some(String::new()),
+            }
+        );
+
+        let removed = toggle_pending_user_input_option_selection(
+            &multi,
+            Some(&PendingUserInputDraftAnswer {
+                selected_option_labels: vec!["Server".to_string(), "Web".to_string()],
+                custom_answer: None,
+            }),
+            "Server",
+        );
+        assert_eq!(
+            removed,
+            PendingUserInputDraftAnswer {
+                selected_option_labels: vec!["Web".to_string()],
+                custom_answer: Some(String::new()),
+            }
+        );
+
+        let single = user_input_question("scope");
+        assert_eq!(
+            toggle_pending_user_input_option_selection(&single, None, "Tight"),
+            PendingUserInputDraftAnswer {
+                selected_option_labels: vec!["Tight".to_string()],
+                custom_answer: Some(String::new()),
+            }
+        );
+    }
+
+    #[test]
+    fn builds_pending_user_input_answer_map_only_when_complete() {
+        let scope = user_input_question("scope");
+        let compat = user_input_question("compat");
+        let mut answers = BTreeMap::new();
+        answers.insert(
+            "scope".to_string(),
+            PendingUserInputDraftAnswer {
+                selected_option_labels: vec!["Tight".to_string()],
+                custom_answer: None,
+            },
+        );
+
+        assert_eq!(
+            build_pending_user_input_answers(&[scope.clone(), compat.clone()], &answers),
+            None
+        );
+
+        answers.insert(
+            "compat".to_string(),
+            PendingUserInputDraftAnswer {
+                selected_option_labels: Vec::new(),
+                custom_answer: Some("Keep the current envelope for one release window".to_string()),
+            },
+        );
+
+        assert_eq!(
+            build_pending_user_input_answers(&[scope, compat], &answers),
+            Some(BTreeMap::from([
+                (
+                    "compat".to_string(),
+                    PendingUserInputAnswer::Text(
+                        "Keep the current envelope for one release window".to_string()
+                    ),
+                ),
+                (
+                    "scope".to_string(),
+                    PendingUserInputAnswer::Text("Tight".to_string()),
+                ),
+            ]))
+        );
+    }
+
+    #[test]
+    fn derives_pending_user_input_question_progress() {
+        let questions = vec![user_input_question("scope"), user_input_question("compat")];
+        let draft_answers = BTreeMap::from([(
+            "scope".to_string(),
+            PendingUserInputDraftAnswer {
+                selected_option_labels: vec!["Tight".to_string()],
+                custom_answer: None,
+            },
+        )]);
+
+        let progress = derive_pending_user_input_progress(&questions, &draft_answers, 0);
+
+        assert_eq!(progress.question_index, 0);
+        assert_eq!(progress.active_question, Some(questions[0].clone()));
+        assert_eq!(progress.selected_option_labels, vec!["Tight"]);
+        assert_eq!(
+            progress.resolved_answer,
+            Some(PendingUserInputAnswer::Text("Tight".to_string()))
+        );
+        assert_eq!(progress.answered_question_count, 1);
+        assert!(!progress.is_last_question);
+        assert!(!progress.is_complete);
+        assert!(progress.can_advance);
+        assert_eq!(
+            find_first_unanswered_pending_user_input_question_index(&questions, &draft_answers),
+            1
+        );
+    }
+
+    #[test]
+    fn completed_pending_user_input_progress_uses_last_question_index() {
+        let questions = vec![user_input_question("scope"), user_input_question("compat")];
+        let draft_answers = BTreeMap::from([
+            (
+                "scope".to_string(),
+                PendingUserInputDraftAnswer {
+                    selected_option_labels: vec!["Tight".to_string()],
+                    custom_answer: None,
+                },
+            ),
+            (
+                "compat".to_string(),
+                PendingUserInputDraftAnswer {
+                    selected_option_labels: Vec::new(),
+                    custom_answer: Some("Keep it for one release window".to_string()),
+                },
+            ),
+        ]);
+
+        assert_eq!(
+            find_first_unanswered_pending_user_input_question_index(&questions, &draft_answers),
+            1
+        );
+        assert_eq!(
+            count_answered_pending_user_input_questions(&questions, &draft_answers),
+            2
+        );
+
+        let progress = derive_pending_user_input_progress(&questions, &draft_answers, 9);
+
+        assert_eq!(progress.question_index, 1);
+        assert!(progress.is_last_question);
+        assert!(progress.is_complete);
     }
 }
