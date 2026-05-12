@@ -168,6 +168,50 @@ pub struct InlineTerminalContextRemoval {
     pub cursor: usize,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ComposerPromptSegment {
+    Text {
+        text: String,
+    },
+    Mention {
+        path: String,
+    },
+    Skill {
+        name: String,
+    },
+    TerminalContext {
+        context: Option<TerminalContextDraft>,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComposerTriggerKind {
+    Path,
+    SlashCommand,
+    Skill,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComposerSlashCommand {
+    Model,
+    Plan,
+    Default,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComposerTrigger {
+    pub kind: ComposerTriggerKind,
+    pub query: String,
+    pub range_start: usize,
+    pub range_end: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextRangeReplacement {
+    pub text: String,
+    pub cursor: usize,
+}
+
 pub fn normalize_terminal_context_text(text: &str) -> String {
     text.replace("\r\n", "\n").trim_matches('\n').to_string()
 }
@@ -564,6 +608,564 @@ pub fn remove_inline_terminal_context_placeholder(
     InlineTerminalContextRemoval {
         prompt: prompt.to_string(),
         cursor: prompt.chars().count(),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum InlineTokenMatch {
+    Mention {
+        value: String,
+        start: usize,
+        end: usize,
+    },
+    Skill {
+        value: String,
+        start: usize,
+        end: usize,
+    },
+}
+
+impl InlineTokenMatch {
+    fn start(&self) -> usize {
+        match self {
+            Self::Mention { start, .. } | Self::Skill { start, .. } => *start,
+        }
+    }
+}
+
+fn push_composer_text_segment(segments: &mut Vec<ComposerPromptSegment>, text: &str) {
+    if text.is_empty() {
+        return;
+    }
+    if let Some(ComposerPromptSegment::Text {
+        text: previous_text,
+    }) = segments.last_mut()
+    {
+        previous_text.push_str(text);
+        return;
+    }
+    segments.push(ComposerPromptSegment::Text {
+        text: text.to_string(),
+    });
+}
+
+fn is_prompt_token_boundary(text_chars: &[char], index: usize) -> bool {
+    index == 0 || text_chars[index - 1].is_whitespace()
+}
+
+fn find_mention_match_at(text_chars: &[char], index: usize) -> Option<InlineTokenMatch> {
+    if text_chars.get(index) != Some(&'@') || !is_prompt_token_boundary(text_chars, index) {
+        return None;
+    }
+
+    let mut end = index + 1;
+    while let Some(character) = text_chars.get(end) {
+        if character.is_whitespace() || *character == '@' {
+            break;
+        }
+        end += 1;
+    }
+    if end == index + 1
+        || !text_chars
+            .get(end)
+            .is_some_and(|character| character.is_whitespace())
+    {
+        return None;
+    }
+    Some(InlineTokenMatch::Mention {
+        value: text_chars[index + 1..end].iter().collect(),
+        start: index,
+        end,
+    })
+}
+
+fn is_skill_name_start(character: char) -> bool {
+    character.is_ascii_alphabetic()
+}
+
+fn is_skill_name_continue(character: char) -> bool {
+    character.is_ascii_alphanumeric() || matches!(character, ':' | '_' | '-')
+}
+
+fn find_skill_match_at(text_chars: &[char], index: usize) -> Option<InlineTokenMatch> {
+    if text_chars.get(index) != Some(&'$') || !is_prompt_token_boundary(text_chars, index) {
+        return None;
+    }
+
+    let Some(first_name_char) = text_chars.get(index + 1).copied() else {
+        return None;
+    };
+    if !is_skill_name_start(first_name_char) {
+        return None;
+    }
+
+    let mut end = index + 2;
+    while let Some(character) = text_chars.get(end).copied() {
+        if !is_skill_name_continue(character) {
+            break;
+        }
+        end += 1;
+    }
+    if !text_chars
+        .get(end)
+        .is_some_and(|character| character.is_whitespace())
+    {
+        return None;
+    }
+    Some(InlineTokenMatch::Skill {
+        value: text_chars[index + 1..end].iter().collect(),
+        start: index,
+        end,
+    })
+}
+
+fn collect_inline_token_matches(text: &str) -> Vec<InlineTokenMatch> {
+    let text_chars = text.chars().collect::<Vec<_>>();
+    let mut matches = Vec::new();
+
+    for index in 0..text_chars.len() {
+        if let Some(token_match) = find_mention_match_at(&text_chars, index) {
+            matches.push(token_match);
+        }
+        if let Some(token_match) = find_skill_match_at(&text_chars, index) {
+            matches.push(token_match);
+        }
+    }
+
+    matches.sort_by_key(InlineTokenMatch::start);
+    matches
+}
+
+fn split_prompt_text_into_composer_segments(text: &str) -> Vec<ComposerPromptSegment> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+
+    let token_matches = collect_inline_token_matches(text);
+    let mut segments = Vec::new();
+    let mut cursor = 0;
+
+    for token_match in token_matches {
+        if token_match.start() < cursor {
+            continue;
+        }
+
+        if token_match.start() > cursor {
+            let start_byte = char_to_byte_index(text, cursor);
+            let end_byte = char_to_byte_index(text, token_match.start());
+            push_composer_text_segment(&mut segments, &text[start_byte..end_byte]);
+        }
+
+        match token_match {
+            InlineTokenMatch::Mention { value, end, .. } => {
+                segments.push(ComposerPromptSegment::Mention { path: value });
+                cursor = end;
+            }
+            InlineTokenMatch::Skill { value, end, .. } => {
+                segments.push(ComposerPromptSegment::Skill { name: value });
+                cursor = end;
+            }
+        }
+    }
+
+    let text_len = text.chars().count();
+    if cursor < text_len {
+        let cursor_byte = char_to_byte_index(text, cursor);
+        push_composer_text_segment(&mut segments, &text[cursor_byte..]);
+    }
+
+    segments
+}
+
+fn split_prompt_into_composer_segments_with_contexts(
+    prompt: &str,
+    terminal_contexts: &[TerminalContextDraft],
+) -> Vec<ComposerPromptSegment> {
+    if prompt.is_empty() {
+        return Vec::new();
+    }
+
+    let mut segments = Vec::new();
+    let mut text_start = 0;
+    let mut terminal_context_index = 0;
+
+    for (char_index, (byte_index, character)) in prompt.char_indices().enumerate() {
+        if character != INLINE_TERMINAL_CONTEXT_PLACEHOLDER {
+            continue;
+        }
+
+        if char_index > text_start {
+            let text_start_byte = char_to_byte_index(prompt, text_start);
+            segments.extend(split_prompt_text_into_composer_segments(
+                &prompt[text_start_byte..byte_index],
+            ));
+        }
+
+        segments.push(ComposerPromptSegment::TerminalContext {
+            context: terminal_contexts.get(terminal_context_index).cloned(),
+        });
+        terminal_context_index += 1;
+        text_start = char_index + 1;
+    }
+
+    if text_start < prompt.chars().count() {
+        let text_start_byte = char_to_byte_index(prompt, text_start);
+        segments.extend(split_prompt_text_into_composer_segments(
+            &prompt[text_start_byte..],
+        ));
+    }
+
+    segments
+}
+
+pub fn split_prompt_into_composer_segments(prompt: &str) -> Vec<ComposerPromptSegment> {
+    split_prompt_into_composer_segments_with_contexts(prompt, &[])
+}
+
+pub fn split_prompt_into_composer_segments_for_terminal_contexts(
+    prompt: &str,
+    terminal_contexts: &[TerminalContextDraft],
+) -> Vec<ComposerPromptSegment> {
+    split_prompt_into_composer_segments_with_contexts(prompt, terminal_contexts)
+}
+
+pub fn selection_touches_mention_boundary(prompt: &str, start: usize, end: usize) -> bool {
+    if prompt.is_empty() || start >= end {
+        return false;
+    }
+
+    let mut text_start = 0;
+    let prompt_len = prompt.chars().count();
+
+    for (char_index, (byte_index, character)) in prompt.char_indices().enumerate() {
+        if character != INLINE_TERMINAL_CONTEXT_PLACEHOLDER {
+            continue;
+        }
+        if char_index > text_start {
+            let text_start_byte = char_to_byte_index(prompt, text_start);
+            if text_slice_selection_touches_mention_boundary(
+                prompt,
+                &prompt[text_start_byte..byte_index],
+                text_start,
+                start,
+                end,
+            ) {
+                return true;
+            }
+        }
+        text_start = char_index + 1;
+    }
+
+    if text_start < prompt_len {
+        let text_start_byte = char_to_byte_index(prompt, text_start);
+        return text_slice_selection_touches_mention_boundary(
+            prompt,
+            &prompt[text_start_byte..],
+            text_start,
+            start,
+            end,
+        );
+    }
+
+    false
+}
+
+fn text_slice_selection_touches_mention_boundary(
+    prompt: &str,
+    text: &str,
+    prompt_offset: usize,
+    start: usize,
+    end: usize,
+) -> bool {
+    collect_inline_token_matches(text)
+        .into_iter()
+        .any(|token_match| match token_match {
+            InlineTokenMatch::Mention {
+                start: mention_start,
+                end: mention_end,
+                ..
+            } => {
+                let mention_start = prompt_offset + mention_start;
+                let mention_end = prompt_offset + mention_end;
+                let before_mention_index = mention_start.checked_sub(1);
+                let touches_before = before_mention_index.is_some_and(|index| {
+                    char_at(prompt, index).is_some_and(char::is_whitespace)
+                        && start <= index
+                        && index < end
+                });
+                let touches_after = mention_end < prompt.chars().count()
+                    && char_at(prompt, mention_end).is_some_and(char::is_whitespace)
+                    && start <= mention_end
+                    && mention_end < end;
+                touches_before || touches_after
+            }
+            InlineTokenMatch::Skill { .. } => false,
+        })
+}
+
+fn composer_text_len(text: &str) -> usize {
+    text.chars().count()
+}
+
+fn clamp_composer_cursor(text: &str, cursor_input: f64) -> usize {
+    let text_len = composer_text_len(text);
+    if !cursor_input.is_finite() {
+        return text_len;
+    }
+    cursor_input.floor().max(0.0).min(text_len as f64) as usize
+}
+
+fn is_composer_whitespace(character: Option<char>) -> bool {
+    matches!(
+        character,
+        Some(' ' | '\n' | '\t' | '\r' | INLINE_TERMINAL_CONTEXT_PLACEHOLDER)
+    )
+}
+
+fn token_start_for_cursor(text: &str, cursor: usize) -> usize {
+    let mut index = cursor;
+    while index > 0 && !is_composer_whitespace(char_at(text, index - 1)) {
+        index -= 1;
+    }
+    index
+}
+
+fn is_inline_token_segment(segment: &ComposerPromptSegment) -> bool {
+    !matches!(segment, ComposerPromptSegment::Text { .. })
+}
+
+fn expanded_inline_token_length(segment: &ComposerPromptSegment) -> usize {
+    match segment {
+        ComposerPromptSegment::Mention { path } => composer_text_len(path) + 1,
+        ComposerPromptSegment::Skill { name } => composer_text_len(name) + 1,
+        ComposerPromptSegment::TerminalContext { .. } => 1,
+        ComposerPromptSegment::Text { text } => composer_text_len(text),
+    }
+}
+
+fn collapsed_segment_length(segment: &ComposerPromptSegment) -> usize {
+    match segment {
+        ComposerPromptSegment::Text { text } => composer_text_len(text),
+        ComposerPromptSegment::Mention { .. }
+        | ComposerPromptSegment::Skill { .. }
+        | ComposerPromptSegment::TerminalContext { .. } => 1,
+    }
+}
+
+pub fn expand_collapsed_composer_cursor(text: &str, cursor_input: f64) -> usize {
+    let collapsed_cursor = clamp_composer_cursor(text, cursor_input);
+    let segments = split_prompt_into_composer_segments(text);
+    if segments.is_empty() {
+        return collapsed_cursor;
+    }
+
+    let mut remaining = collapsed_cursor;
+    let mut expanded_cursor = 0;
+
+    for segment in segments {
+        if is_inline_token_segment(&segment) {
+            let expanded_length = expanded_inline_token_length(&segment);
+            if remaining <= 1 {
+                return expanded_cursor + if remaining == 0 { 0 } else { expanded_length };
+            }
+            remaining -= 1;
+            expanded_cursor += expanded_length;
+            continue;
+        }
+
+        let segment_length = collapsed_segment_length(&segment);
+        if remaining <= segment_length {
+            return expanded_cursor + remaining;
+        }
+        remaining -= segment_length;
+        expanded_cursor += segment_length;
+    }
+
+    expanded_cursor
+}
+
+fn clamp_collapsed_composer_cursor_for_segments(
+    segments: &[ComposerPromptSegment],
+    cursor_input: f64,
+) -> usize {
+    let collapsed_length = segments.iter().map(collapsed_segment_length).sum::<usize>();
+    if !cursor_input.is_finite() {
+        return collapsed_length;
+    }
+    cursor_input.floor().max(0.0).min(collapsed_length as f64) as usize
+}
+
+pub fn clamp_collapsed_composer_cursor(text: &str, cursor_input: f64) -> usize {
+    clamp_collapsed_composer_cursor_for_segments(
+        &split_prompt_into_composer_segments(text),
+        cursor_input,
+    )
+}
+
+pub fn collapse_expanded_composer_cursor(text: &str, cursor_input: f64) -> usize {
+    let expanded_cursor = clamp_composer_cursor(text, cursor_input);
+    let segments = split_prompt_into_composer_segments(text);
+    if segments.is_empty() {
+        return expanded_cursor;
+    }
+
+    let mut remaining = expanded_cursor;
+    let mut collapsed_cursor = 0;
+
+    for segment in segments {
+        if is_inline_token_segment(&segment) {
+            let expanded_length = expanded_inline_token_length(&segment);
+            if remaining == 0 {
+                return collapsed_cursor;
+            }
+            if remaining <= expanded_length {
+                return collapsed_cursor + 1;
+            }
+            remaining -= expanded_length;
+            collapsed_cursor += 1;
+            continue;
+        }
+
+        let segment_length = collapsed_segment_length(&segment);
+        if remaining <= segment_length {
+            return collapsed_cursor + remaining;
+        }
+        remaining -= segment_length;
+        collapsed_cursor += segment_length;
+    }
+
+    collapsed_cursor
+}
+
+pub fn is_collapsed_cursor_adjacent_to_inline_token(
+    text: &str,
+    cursor_input: f64,
+    direction: ComposerCursorAdjacencyDirection,
+) -> bool {
+    let segments = split_prompt_into_composer_segments(text);
+    if !segments.iter().any(is_inline_token_segment) {
+        return false;
+    }
+
+    let cursor = clamp_collapsed_composer_cursor_for_segments(&segments, cursor_input);
+    let mut collapsed_offset = 0;
+
+    for segment in segments {
+        if is_inline_token_segment(&segment) {
+            if direction == ComposerCursorAdjacencyDirection::Left && cursor == collapsed_offset + 1
+            {
+                return true;
+            }
+            if direction == ComposerCursorAdjacencyDirection::Right && cursor == collapsed_offset {
+                return true;
+            }
+        }
+        collapsed_offset += collapsed_segment_length(&segment);
+    }
+
+    false
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComposerCursorAdjacencyDirection {
+    Left,
+    Right,
+}
+
+pub fn is_collapsed_cursor_adjacent_to_mention(
+    text: &str,
+    cursor_input: f64,
+    direction: ComposerCursorAdjacencyDirection,
+) -> bool {
+    is_collapsed_cursor_adjacent_to_inline_token(text, cursor_input, direction)
+}
+
+fn slice_chars(text: &str, start: usize, end: usize) -> &str {
+    if start >= end {
+        let end_byte = char_to_byte_index(text, end);
+        return &text[end_byte..end_byte];
+    }
+    let start_byte = char_to_byte_index(text, start);
+    let end_byte = char_to_byte_index(text, end);
+    &text[start_byte..end_byte]
+}
+
+fn last_newline_before_or_at(text: &str, end_index: usize) -> Option<usize> {
+    text.chars()
+        .enumerate()
+        .take(end_index.saturating_add(1))
+        .filter_map(|(index, character)| (character == '\n').then_some(index))
+        .last()
+}
+
+pub fn detect_composer_trigger(text: &str, cursor_input: f64) -> Option<ComposerTrigger> {
+    let cursor = clamp_composer_cursor(text, cursor_input);
+    let line_search_end = cursor.saturating_sub(1);
+    let line_start = last_newline_before_or_at(text, line_search_end)
+        .map(|index| index + 1)
+        .unwrap_or(0);
+    let line_prefix = slice_chars(text, line_start, cursor);
+
+    if let Some(command_query) = line_prefix.strip_prefix('/') {
+        if command_query
+            .chars()
+            .all(|character| !character.is_whitespace())
+        {
+            return Some(ComposerTrigger {
+                kind: ComposerTriggerKind::SlashCommand,
+                query: command_query.to_string(),
+                range_start: line_start,
+                range_end: cursor,
+            });
+        }
+    }
+
+    let token_start = token_start_for_cursor(text, cursor);
+    let token = slice_chars(text, token_start, cursor);
+    if let Some(query) = token.strip_prefix('$') {
+        return Some(ComposerTrigger {
+            kind: ComposerTriggerKind::Skill,
+            query: query.to_string(),
+            range_start: token_start,
+            range_end: cursor,
+        });
+    }
+    token.strip_prefix('@').map(|query| ComposerTrigger {
+        kind: ComposerTriggerKind::Path,
+        query: query.to_string(),
+        range_start: token_start,
+        range_end: cursor,
+    })
+}
+
+pub fn parse_standalone_composer_slash_command(text: &str) -> Option<ComposerSlashCommand> {
+    match text.trim().to_ascii_lowercase().as_str() {
+        "/plan" => Some(ComposerSlashCommand::Plan),
+        "/default" => Some(ComposerSlashCommand::Default),
+        _ => None,
+    }
+}
+
+pub fn replace_text_range(
+    text: &str,
+    range_start: f64,
+    range_end: f64,
+    replacement: &str,
+) -> TextRangeReplacement {
+    let safe_start = clamp_composer_cursor(text, range_start);
+    let safe_end = clamp_composer_cursor(text, range_end).max(safe_start);
+    let start_byte = char_to_byte_index(text, safe_start);
+    let end_byte = char_to_byte_index(text, safe_end);
+    let next_text = format!(
+        "{}{}{}",
+        &text[..start_byte],
+        replacement,
+        &text[end_byte..]
+    );
+
+    TextRangeReplacement {
+        text: next_text,
+        cursor: safe_start + composer_text_len(replacement),
     }
 }
 
@@ -9165,6 +9767,414 @@ mod tests {
                 description: "Re-add it if you want that terminal output included.",
             }
         );
+    }
+
+    #[test]
+    fn composer_segment_parser_matches_upstream_contract() {
+        let placeholder = INLINE_TERMINAL_CONTEXT_PLACEHOLDER;
+
+        assert_eq!(
+            split_prompt_into_composer_segments("Inspect @AGENTS.md please"),
+            vec![
+                ComposerPromptSegment::Text {
+                    text: "Inspect ".to_string(),
+                },
+                ComposerPromptSegment::Mention {
+                    path: "AGENTS.md".to_string(),
+                },
+                ComposerPromptSegment::Text {
+                    text: " please".to_string(),
+                },
+            ]
+        );
+        assert_eq!(
+            split_prompt_into_composer_segments("Inspect @AGENTS.md"),
+            vec![ComposerPromptSegment::Text {
+                text: "Inspect @AGENTS.md".to_string(),
+            }]
+        );
+        assert_eq!(
+            split_prompt_into_composer_segments("one\n@src/index.ts \ntwo"),
+            vec![
+                ComposerPromptSegment::Text {
+                    text: "one\n".to_string(),
+                },
+                ComposerPromptSegment::Mention {
+                    path: "src/index.ts".to_string(),
+                },
+                ComposerPromptSegment::Text {
+                    text: " \ntwo".to_string(),
+                },
+            ]
+        );
+        assert_eq!(
+            split_prompt_into_composer_segments("Use $review-follow-up please"),
+            vec![
+                ComposerPromptSegment::Text {
+                    text: "Use ".to_string(),
+                },
+                ComposerPromptSegment::Skill {
+                    name: "review-follow-up".to_string(),
+                },
+                ComposerPromptSegment::Text {
+                    text: " please".to_string(),
+                },
+            ]
+        );
+        assert_eq!(
+            split_prompt_into_composer_segments("Use $review-follow-up"),
+            vec![ComposerPromptSegment::Text {
+                text: "Use $review-follow-up".to_string(),
+            }]
+        );
+        assert_eq!(
+            split_prompt_into_composer_segments(&format!("Inspect {placeholder}@AGENTS.md please")),
+            vec![
+                ComposerPromptSegment::Text {
+                    text: "Inspect ".to_string(),
+                },
+                ComposerPromptSegment::TerminalContext { context: None },
+                ComposerPromptSegment::Mention {
+                    path: "AGENTS.md".to_string(),
+                },
+                ComposerPromptSegment::Text {
+                    text: " please".to_string(),
+                },
+            ]
+        );
+        assert_eq!(
+            split_prompt_into_composer_segments(&format!("{placeholder}{placeholder}tail")),
+            vec![
+                ComposerPromptSegment::TerminalContext { context: None },
+                ComposerPromptSegment::TerminalContext { context: None },
+                ComposerPromptSegment::Text {
+                    text: "tail".to_string(),
+                },
+            ]
+        );
+        assert_eq!(
+            split_prompt_into_composer_segments(&format!(
+                "Inspect {placeholder}$review-follow-up after @AGENTS.md "
+            )),
+            vec![
+                ComposerPromptSegment::Text {
+                    text: "Inspect ".to_string(),
+                },
+                ComposerPromptSegment::TerminalContext { context: None },
+                ComposerPromptSegment::Skill {
+                    name: "review-follow-up".to_string(),
+                },
+                ComposerPromptSegment::Text {
+                    text: " after ".to_string(),
+                },
+                ComposerPromptSegment::Mention {
+                    path: "AGENTS.md".to_string(),
+                },
+                ComposerPromptSegment::Text {
+                    text: " ".to_string(),
+                },
+            ]
+        );
+
+        let context = make_terminal_context(|_| {});
+        assert_eq!(
+            split_prompt_into_composer_segments_for_terminal_contexts(
+                &placeholder.to_string(),
+                std::slice::from_ref(&context),
+            ),
+            vec![ComposerPromptSegment::TerminalContext {
+                context: Some(context),
+            }]
+        );
+    }
+
+    #[test]
+    fn composer_selection_boundary_detection_matches_upstream_contract() {
+        let placeholder = INLINE_TERMINAL_CONTEXT_PLACEHOLDER;
+
+        assert!(selection_touches_mention_boundary(
+            "hi @package.json there",
+            "hi @package.json".chars().count(),
+            "hi @package.json there".chars().count(),
+        ));
+        assert!(selection_touches_mention_boundary(
+            "hi there @package.json later",
+            "hi there".chars().count(),
+            "hi there ".chars().count(),
+        ));
+        assert!(!selection_touches_mention_boundary(
+            "hi @package.json there",
+            "hi @package.json ".chars().count(),
+            "hi @package.json there".chars().count(),
+        ));
+
+        let prompt = format!("{placeholder}@AGENTS.md there");
+        assert!(selection_touches_mention_boundary(
+            &prompt,
+            format!("{placeholder}@AGENTS.md").chars().count(),
+            prompt.chars().count(),
+        ));
+    }
+
+    #[test]
+    fn composer_trigger_detection_matches_upstream_contract() {
+        let text = "Please check @src/com";
+        assert_eq!(
+            detect_composer_trigger(text, text.chars().count() as f64),
+            Some(ComposerTrigger {
+                kind: ComposerTriggerKind::Path,
+                query: "src/com".to_string(),
+                range_start: "Please check ".chars().count(),
+                range_end: text.chars().count(),
+            })
+        );
+
+        for (text, query) in [
+            ("/mo", "mo"),
+            ("/model", "model"),
+            ("/pl", "pl"),
+            ("/rev", "rev"),
+        ] {
+            assert_eq!(
+                detect_composer_trigger(text, text.chars().count() as f64),
+                Some(ComposerTrigger {
+                    kind: ComposerTriggerKind::SlashCommand,
+                    query: query.to_string(),
+                    range_start: 0,
+                    range_end: text.chars().count(),
+                })
+            );
+        }
+
+        assert_eq!(
+            detect_composer_trigger("/model spark", "/model spark".chars().count() as f64),
+            None
+        );
+
+        let text = "Use $gh-fi";
+        assert_eq!(
+            detect_composer_trigger(text, text.chars().count() as f64),
+            Some(ComposerTrigger {
+                kind: ComposerTriggerKind::Skill,
+                query: "gh-fi".to_string(),
+                range_start: "Use ".chars().count(),
+                range_end: text.chars().count(),
+            })
+        );
+
+        let text = "Please inspect @in this sentence";
+        let cursor_after_at = "Please inspect @".chars().count();
+        assert_eq!(
+            detect_composer_trigger(text, cursor_after_at as f64),
+            Some(ComposerTrigger {
+                kind: ComposerTriggerKind::Path,
+                query: String::new(),
+                range_start: "Please inspect ".chars().count(),
+                range_end: cursor_after_at,
+            })
+        );
+
+        let text = "Please inspect @srin this sentence";
+        let cursor_after_query = "Please inspect @sr".chars().count();
+        assert_eq!(
+            detect_composer_trigger(text, cursor_after_query as f64),
+            Some(ComposerTrigger {
+                kind: ComposerTriggerKind::Path,
+                query: "sr".to_string(),
+                range_start: "Please inspect ".chars().count(),
+                range_end: cursor_after_query,
+            })
+        );
+    }
+
+    #[test]
+    fn composer_cursor_transforms_match_upstream_contract() {
+        assert_eq!(expand_collapsed_composer_cursor("plain text", 5.0), 5);
+        assert_eq!(collapse_expanded_composer_cursor("plain text", 5.0), 5);
+
+        let text = "what's in my @AGENTS.md fsfdas";
+        let collapsed_cursor_after_mention = "what's in my ".chars().count() + 2;
+        let expanded_cursor_after_mention = "what's in my @AGENTS.md ".chars().count();
+        assert_eq!(
+            expand_collapsed_composer_cursor(text, collapsed_cursor_after_mention as f64),
+            expanded_cursor_after_mention
+        );
+        assert_eq!(
+            collapse_expanded_composer_cursor(text, expanded_cursor_after_mention as f64),
+            collapsed_cursor_after_mention
+        );
+
+        let text = "what's in my @AGENTS.md ";
+        let expanded_cursor =
+            expand_collapsed_composer_cursor(text, collapsed_cursor_after_mention as f64);
+        assert_eq!(detect_composer_trigger(text, expanded_cursor as f64), None);
+
+        let text = "run $review-follow-up then";
+        let collapsed_cursor_after_skill = "run ".chars().count() + 2;
+        let expanded_cursor_after_skill = "run $review-follow-up ".chars().count();
+        assert_eq!(
+            expand_collapsed_composer_cursor(text, collapsed_cursor_after_skill as f64),
+            expanded_cursor_after_skill
+        );
+        assert_eq!(
+            collapse_expanded_composer_cursor(text, expanded_cursor_after_skill as f64),
+            collapsed_cursor_after_skill
+        );
+
+        let text = "open @AGENTS.md then @src/index.ts ";
+        let expanded_cursor = text.chars().count();
+        let collapsed_cursor = collapse_expanded_composer_cursor(text, expanded_cursor as f64);
+        assert_eq!(
+            collapsed_cursor,
+            "open ".chars().count() + 1 + " then ".chars().count() + 2
+        );
+        assert_eq!(
+            expand_collapsed_composer_cursor(text, collapsed_cursor as f64),
+            expanded_cursor
+        );
+
+        let text = "open @AGENTS.md then ";
+        assert_eq!(
+            clamp_collapsed_composer_cursor(text, text.chars().count() as f64),
+            "open ".chars().count() + 1 + " then ".chars().count()
+        );
+        assert_eq!(
+            clamp_collapsed_composer_cursor(text, f64::INFINITY),
+            "open ".chars().count() + 1 + " then ".chars().count()
+        );
+    }
+
+    #[test]
+    fn composer_inline_token_adjacency_matches_upstream_contract() {
+        use ComposerCursorAdjacencyDirection::{Left, Right};
+
+        assert!(!is_collapsed_cursor_adjacent_to_inline_token(
+            "plain text",
+            6.0,
+            Left
+        ));
+        assert!(!is_collapsed_cursor_adjacent_to_inline_token(
+            "plain text",
+            6.0,
+            Right
+        ));
+
+        let text = "hello @pac";
+        assert!(!is_collapsed_cursor_adjacent_to_inline_token(
+            text,
+            text.chars().count() as f64,
+            Left
+        ));
+        assert!(!is_collapsed_cursor_adjacent_to_inline_token(
+            text,
+            text.chars().count() as f64,
+            Right
+        ));
+
+        let text = "open @AGENTS.md next";
+        let mention_start = "open ".chars().count();
+        let mention_end = mention_start + 1;
+        assert!(is_collapsed_cursor_adjacent_to_inline_token(
+            text,
+            mention_end as f64,
+            Left
+        ));
+        assert!(!is_collapsed_cursor_adjacent_to_inline_token(
+            text,
+            mention_start as f64,
+            Left
+        ));
+        assert!(!is_collapsed_cursor_adjacent_to_inline_token(
+            text,
+            (mention_end + 1) as f64,
+            Left
+        ));
+        assert!(is_collapsed_cursor_adjacent_to_inline_token(
+            text,
+            mention_start as f64,
+            Right
+        ));
+        assert!(!is_collapsed_cursor_adjacent_to_inline_token(
+            text,
+            mention_end as f64,
+            Right
+        ));
+        assert!(!is_collapsed_cursor_adjacent_to_inline_token(
+            text,
+            (mention_start - 1) as f64,
+            Right
+        ));
+
+        let placeholder = INLINE_TERMINAL_CONTEXT_PLACEHOLDER;
+        let text = format!("open {placeholder} next");
+        let token_start = "open ".chars().count();
+        let token_end = token_start + 1;
+        assert!(is_collapsed_cursor_adjacent_to_inline_token(
+            &text,
+            token_end as f64,
+            Left
+        ));
+        assert!(is_collapsed_cursor_adjacent_to_inline_token(
+            &text,
+            token_start as f64,
+            Right
+        ));
+
+        let text = "run $review-follow-up next";
+        let token_start = "run ".chars().count();
+        let token_end = token_start + 1;
+        assert!(is_collapsed_cursor_adjacent_to_inline_token(
+            text,
+            token_end as f64,
+            Left
+        ));
+        assert!(is_collapsed_cursor_adjacent_to_inline_token(
+            text,
+            token_start as f64,
+            Right
+        ));
+    }
+
+    #[test]
+    fn composer_slash_command_and_replacement_match_upstream_contract() {
+        assert_eq!(
+            replace_text_range("hello @src", 6.0, 10.0, ""),
+            TextRangeReplacement {
+                text: "hello ".to_string(),
+                cursor: 6,
+            }
+        );
+
+        let text = "and then @AG summarize";
+        let range_start = "and then ".chars().count();
+        let range_end = "and then @AG".chars().count();
+        assert_eq!(
+            replace_text_range(text, range_start as f64, range_end as f64, "@AGENTS.md ").text,
+            "and then @AGENTS.md  summarize"
+        );
+        let extended_end = if char_at(text, range_end) == Some(' ') {
+            range_end + 1
+        } else {
+            range_end
+        };
+        assert_eq!(
+            replace_text_range(text, range_start as f64, extended_end as f64, "@AGENTS.md ").text,
+            "and then @AGENTS.md summarize"
+        );
+
+        assert_eq!(
+            parse_standalone_composer_slash_command(" /plan "),
+            Some(ComposerSlashCommand::Plan)
+        );
+        assert_eq!(
+            parse_standalone_composer_slash_command("/default"),
+            Some(ComposerSlashCommand::Default)
+        );
+        assert_eq!(
+            parse_standalone_composer_slash_command("/plan explain this"),
+            None
+        );
+        assert_eq!(parse_standalone_composer_slash_command("/model"), None);
     }
 
     #[test]
