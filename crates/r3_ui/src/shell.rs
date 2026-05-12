@@ -1,10 +1,10 @@
-use gpui::prelude::{InteractiveElement, StatefulInteractiveElement};
+use gpui::prelude::{FluentBuilder, InteractiveElement, StatefulInteractiveElement};
 use gpui::{
     App, AppContext, BoxShadow, Context, CursorStyle, FocusHandle, Focusable, FontWeight,
     IntoElement, KeyDownEvent, ParentElement, Render, SharedString, Styled, TextAlign, Window, div,
     hsla, point, px, svg,
 };
-use r3_core::{APP_NAME, AppSnapshot, ProjectSummary, ThreadStatus};
+use r3_core::{APP_NAME, AppSnapshot, ChatMessage, ProjectSummary, ThreadStatus};
 
 use crate::theme::{FONT_FAMILY, MONO_FONT_FAMILY, SIDEBAR_MIN_WIDTH, Theme, ThemeMode};
 
@@ -120,6 +120,7 @@ impl R3Shell {
 pub enum R3Screen {
     Empty,
     Draft,
+    ActiveChat,
     Settings,
 }
 
@@ -398,7 +399,7 @@ impl Render for R3Shell {
             .font_family(SharedString::from(FONT_FAMILY));
 
         root = match self.screen {
-            R3Screen::Empty | R3Screen::Draft => {
+            R3Screen::Empty | R3Screen::Draft | R3Screen::ActiveChat => {
                 root.child(self.sidebar(cx)).child(self.main_panel(cx))
             }
             R3Screen::Settings => root
@@ -627,6 +628,12 @@ impl R3Shell {
 
     fn toolbar(&self) -> impl IntoElement {
         let renders_chat_view = self.snapshot.renders_chat_view();
+        let toolbar_title = if renders_chat_view {
+            self.snapshot.active_thread_title().to_string()
+        } else {
+            "No active thread".to_string()
+        };
+        let project_name = self.snapshot.active_project_name().map(str::to_string);
         let mut toolbar = div()
             .flex()
             .items_center()
@@ -641,6 +648,10 @@ impl R3Shell {
             .border_color(self.theme.border)
             .child(
                 div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .min_w_0()
                     .text_size(px(14.0))
                     .font_weight(if renders_chat_view {
                         FontWeight(500.0)
@@ -652,10 +663,19 @@ impl R3Shell {
                     } else {
                         self.theme.muted_foreground
                     })
-                    .child(if renders_chat_view {
-                        "New thread"
-                    } else {
-                        "No active thread"
+                    .child(toolbar_title)
+                    .when_some(project_name, |header, project_name| {
+                        header.child(
+                            div()
+                                .rounded(px(6.0))
+                                .border_1()
+                                .border_color(self.theme.border)
+                                .px_2()
+                                .py_0p5()
+                                .text_size(px(12.0))
+                                .text_color(self.theme.muted_foreground)
+                                .child(project_name),
+                        )
                     }),
             );
 
@@ -674,6 +694,10 @@ impl R3Shell {
     }
 
     fn timeline(&self) -> impl IntoElement {
+        if !self.snapshot.messages.is_empty() {
+            return self.messages_timeline().into_any_element();
+        }
+
         let mut timeline = div()
             .flex()
             .flex_col()
@@ -744,6 +768,88 @@ impl R3Shell {
         }
 
         timeline.into_any_element()
+    }
+
+    fn messages_timeline(&self) -> impl IntoElement {
+        let mut content = div().flex().flex_col().gap_4().w(px(760.0));
+
+        for message in &self.snapshot.messages {
+            content = content.child(self.timeline_message(message));
+        }
+
+        div()
+            .id("messages-timeline-scroll")
+            .flex()
+            .flex_col()
+            .items_center()
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .px_5()
+            .pt_4()
+            .pb_4()
+            .child(content)
+    }
+
+    fn timeline_message(&self, message: &ChatMessage) -> impl IntoElement {
+        match message.role {
+            r3_core::MessageRole::User => self.user_timeline_message(message).into_any_element(),
+            r3_core::MessageRole::Assistant | r3_core::MessageRole::System => {
+                self.assistant_timeline_message(message).into_any_element()
+            }
+        }
+    }
+
+    fn user_timeline_message(&self, message: &ChatMessage) -> impl IntoElement {
+        div().flex().justify_end().child(
+            div()
+                .rounded(px(16.0))
+                .border_1()
+                .border_color(self.theme.border)
+                .bg(self.theme.accent)
+                .px_4()
+                .py_3()
+                .w(px(520.0))
+                .child(
+                    div()
+                        .text_size(px(14.0))
+                        .text_color(self.theme.foreground)
+                        .child(message.text.clone()),
+                )
+                .child(
+                    div()
+                        .mt_2()
+                        .flex()
+                        .justify_end()
+                        .text_size(px(11.0))
+                        .text_color(self.theme.muted_foreground.opacity(0.50))
+                        .child("12:00 PM"),
+                ),
+        )
+    }
+
+    fn assistant_timeline_message(&self, message: &ChatMessage) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .gap_1p5()
+            .px_1()
+            .py_0p5()
+            .child(
+                div()
+                    .text_size(px(14.0))
+                    .text_color(self.theme.foreground)
+                    .child(message.text.clone()),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .text_size(px(10.0))
+                    .text_color(self.theme.muted_foreground.opacity(0.30))
+                    .child("12:00 PM"),
+            )
     }
 
     fn composer(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -4738,6 +4844,7 @@ pub fn open_main_window(cx: &mut App) {
     let (screen, command_palette_open) = match std::env::var("R3CODE_SCREEN").as_deref() {
         Ok("command-palette") => (R3Screen::Empty, true),
         Ok("draft") | Ok("chat-composer") => (R3Screen::Draft, false),
+        Ok("active-chat") | Ok("chat") => (R3Screen::ActiveChat, false),
         Ok("settings") => (R3Screen::Settings, false),
         _ => (R3Screen::Empty, false),
     };
@@ -4752,6 +4859,7 @@ pub fn open_main_window(cx: &mut App) {
         move |window, cx| {
             let snapshot = match screen {
                 R3Screen::Draft => AppSnapshot::draft_reference_state(),
+                R3Screen::ActiveChat => AppSnapshot::mock_reference_state(),
                 R3Screen::Empty | R3Screen::Settings => AppSnapshot::empty_reference_state(),
             };
             let shell = cx.new(|cx| {

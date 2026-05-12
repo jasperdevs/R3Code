@@ -112,7 +112,7 @@ fn print_usage() {
         "Usage:
   cargo run -p xtask -- check-parity --allow-window-capture [--refresh-reference]
   cargo run -p xtask -- compare-screenshots --expected <png> --actual <png> [--channel-tolerance <n>] [--ignore-rect x,y,w,h] [--max-different-pixels-percent <n>]
-  cargo run -p xtask -- capture-r3code-window --allow-window-capture [--screen draft|settings|command-palette|settings-theme-menu|settings-dark|settings-back|settings-keybindings|settings-source-control|settings-archive] [--theme light|dark|system] [--output <png>]
+  cargo run -p xtask -- capture-r3code-window --allow-window-capture [--screen draft|active-chat|settings|command-palette|settings-theme-menu|settings-dark|settings-back|settings-keybindings|settings-source-control|settings-archive] [--theme light|dark|system] [--output <png>]
   cargo run -p xtask -- capture-reference-browser"
     );
 }
@@ -236,6 +236,14 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
             width: 120,
             height: 45,
         }],
+    })?;
+
+    capture_r3code_window(CaptureR3CodeOptions {
+        screen: Some("active-chat".to_string()),
+        theme: Some("light".to_string()),
+        output: resolve_repo_path("reference/screenshots/r3code-active-chat-window.png"),
+        allow_window_capture: true,
+        ..CaptureR3CodeOptions::default()
     })?;
 
     capture_r3code_window(CaptureR3CodeOptions {
@@ -915,6 +923,7 @@ fn find_window_for_pid(pid: u32) -> Result<HWND> {
     struct Search {
         pid: u32,
         hwnd: HWND,
+        area: i32,
     }
 
     unsafe extern "system" fn enum_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
@@ -924,8 +933,21 @@ fn find_window_for_pid(pid: u32) -> Result<HWND> {
             GetWindowThreadProcessId(hwnd, Some(&mut window_pid));
         }
         if window_pid == search.pid && unsafe { IsWindowVisible(hwnd).as_bool() } {
+            let mut rect = RECT::default();
+            if unsafe { GetClientRect(hwnd, &mut rect) }.is_err() {
+                return BOOL(1);
+            }
+            let width = rect.right - rect.left;
+            let height = rect.bottom - rect.top;
+            if width <= 0 || height <= 0 {
+                return BOOL(1);
+            }
+            let area = width.saturating_mul(height);
+            if area <= search.area {
+                return BOOL(1);
+            }
             search.hwnd = hwnd;
-            return BOOL(0);
+            search.area = area;
         }
         BOOL(1)
     }
@@ -933,6 +955,7 @@ fn find_window_for_pid(pid: u32) -> Result<HWND> {
     let mut search = Search {
         pid,
         hwnd: HWND(std::ptr::null_mut()),
+        area: 0,
     };
     unsafe {
         let _ = EnumWindows(

@@ -123,6 +123,18 @@ Last measured result: `1.691%`.
 
 The upstream draft reference is produced by the real T3 command-palette add-project flow, which creates a `/draft/$draftId` route and captures the active empty chat surface after dismissing unrelated provider-update toast chrome.
 
+## Current Active Chat Smoke Baseline
+
+R3Code capture: `reference/screenshots/r3code-active-chat-window.png`
+
+Command:
+
+```text
+cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen active-chat --output reference\screenshots\r3code-active-chat-window.png
+```
+
+This is a native Rust/GPUI smoke capture for the first server-thread state: active header title/project badge, sidebar thread row, user/assistant timeline rows, and composer chrome. It is intentionally not a parity comparison yet because the current upstream reference harness has deterministic captures for empty/draft/settings, but not a full active server-thread route with persisted messages. The next parity step is to add a source-backed upstream fixture capture for the same `ChatView.browser.tsx` message state.
+
 ## Current Settings Baseline
 
 Reference: `reference/screenshots/upstream-settings-reference.png`

@@ -701,6 +701,20 @@ impl AppSnapshot {
     pub fn renders_chat_view(&self) -> bool {
         self.route.renders_chat_view()
     }
+
+    pub fn active_thread_summary(&self) -> Option<&ThreadSummary> {
+        self.threads.first()
+    }
+
+    pub fn active_thread_title(&self) -> &str {
+        self.active_thread_summary()
+            .map(|thread| thread.title.as_str())
+            .unwrap_or("New thread")
+    }
+
+    pub fn active_project_name(&self) -> Option<&str> {
+        self.projects.first().map(|project| project.name.as_str())
+    }
 }
 
 #[cfg(test)]
@@ -743,6 +757,16 @@ mod tests {
         assert!(snapshot.renders_chat_view());
         assert_eq!(snapshot.draft_sessions.len(), 1);
         assert_eq!(snapshot.messages, Vec::new());
+        assert_eq!(snapshot.active_thread_title(), "New thread");
+        assert_eq!(snapshot.active_project_name(), Some("server"));
+    }
+
+    #[test]
+    fn mock_reference_state_exposes_active_thread_header_data() {
+        let snapshot = AppSnapshot::mock_reference_state();
+
+        assert_eq!(snapshot.active_thread_title(), "Port R3Code UI shell");
+        assert_eq!(snapshot.active_project_name(), Some("r3code"));
     }
 
     #[test]
