@@ -435,10 +435,10 @@ Current measured diff:
 
 ```text
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen provider-model-picker --output reference\screenshots\r3code-provider-model-picker-window.png
-cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-provider-model-picker-reference.png --actual reference\screenshots\r3code-provider-model-picker-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 4.45
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-provider-model-picker-reference.png --actual reference\screenshots\r3code-provider-model-picker-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 4.4
 ```
 
-Last measured result: `4.369%`.
+Last measured result: `4.346%`.
 
 ## Current Settings Baseline
 

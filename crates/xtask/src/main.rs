@@ -544,7 +544,7 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
             "reference/screenshots/upstream-provider-model-picker-reference.png",
         ),
         actual: resolve_repo_path("reference/screenshots/r3code-provider-model-picker-window.png"),
-        max_different_pixels_percent: 4.45,
+        max_different_pixels_percent: 4.4,
         channel_tolerance: 8,
         ignore_rects: vec![Rect {
             x: 0,
