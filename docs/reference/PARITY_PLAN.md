@@ -167,13 +167,13 @@ Current measured diff:
 
 ```text
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen active-chat --output reference\screenshots\r3code-active-chat-window.png
-cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-active-chat-reference.png --actual reference\screenshots\r3code-active-chat-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 4.2
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-active-chat-reference.png --actual reference\screenshots\r3code-active-chat-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 4.1
 ```
 
-Last measured result: `4.030%`.
+Last measured result: `4.014%`.
 
 The upstream active-chat reference seeds the real T3 Code app store with a deterministic server thread, then captures the actual `/$environmentId/$threadId` route from pinned commit `8fc317939f5c8bbef4afbe309ae897abbc221631`.
-The R3Code sidebar now renders the seeded active thread as a project-scoped row under the matching project, with source-backed status pill priority and deterministic reference relative-time text. The message timeline now ports upstream content-sized user bubbles, assistant metadata ordering after changed-files cards, and deterministic working-row timer formatting for seeded running states. Multi-select, hover archive controls, context menus, show-more/show-less, live sidebar grouping, and live timer updates remain incomplete.
+The R3Code sidebar now renders the seeded active thread as a project-scoped row under the matching project, with source-backed status pill priority and deterministic reference relative-time text. The message timeline now ports upstream content-sized user bubbles, assistant metadata ordering after changed-files cards, deterministic working-row timer formatting for seeded running states, and the active reference composer model defaults to upstream `gpt-5.4`. Multi-select, hover archive controls, context menus, show-more/show-less, live sidebar grouping, and live timer updates remain incomplete.
 
 ## Current Native Captures
 
@@ -332,12 +332,12 @@ Current measured diff:
 
 ```text
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen diff-panel --output reference\screenshots\r3code-diff-panel-window.png
-cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-diff-panel-reference.png --actual reference\screenshots\r3code-diff-panel-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 9.0
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-diff-panel-reference.png --actual reference\screenshots\r3code-diff-panel-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 8.8
 ```
 
-Last measured result: `8.835%`.
+Last measured result: `8.669%`.
 
-The diff panel capture ports the upstream diff route parser, turn-diff summary ordering, changed-file tree/stat contracts, inline `DiffPanelShell` header controls, selected-turn/selected-file route state, path-normalized file ordering, `@pierre/diffs`-style panel width, file header height, modified-file icon color, metadata stat shape/order, hunk separator spacing, unified single-gutter patch rows, and a deterministic parsed-patch-style syntax palette. It is now compared against a seeded upstream `DiffPanel` reference, but the Rust side still lacks the real checkpoint-diff query and the full `@pierre/diffs` renderer. The 9.0% threshold is a provisional gate for the simplified Rust patch renderer and should tighten after the renderer is replaced with a closer `@pierre/diffs` equivalent.
+The diff panel capture ports the upstream diff route parser, turn-diff summary ordering, changed-file tree/stat contracts, inline `DiffPanelShell` header controls, selected-turn/selected-file route state, path-normalized file ordering, `@pierre/diffs`-style panel width, compact composer footer/form width, compact Mode/Access menu, file header height, modified-file icon color, metadata stat shape/order, hunk separator spacing, unified single-gutter patch rows, and a deterministic parsed-patch-style syntax palette. It is now compared against a seeded upstream `DiffPanel` reference, but the Rust side still lacks the real checkpoint-diff query, compact footer traits/plan-sidebar behavior, and the full `@pierre/diffs` renderer. The 8.8% threshold is a provisional gate for the simplified Rust patch renderer and should tighten after the renderer is replaced with a closer `@pierre/diffs` equivalent.
 ## Current Branch Toolbar Baseline
 
 Reference: `reference/screenshots/upstream-branch-toolbar-reference.png`

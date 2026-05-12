@@ -67,6 +67,10 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
     ),
     ("icons/diff.svg", include_bytes!("../assets/icons/diff.svg")),
     (
+        "icons/ellipsis.svg",
+        include_bytes!("../assets/icons/ellipsis.svg"),
+    ),
+    (
         "icons/file-json.svg",
         include_bytes!("../assets/icons/file-json.svg"),
     ),
@@ -301,6 +305,7 @@ mod tests {
             "columns-2.svg",
             "cursor.svg",
             "diff.svg",
+            "ellipsis.svg",
             "file-type-light-agents.svg",
             "flask-conical.svg",
             "folder-closed.svg",

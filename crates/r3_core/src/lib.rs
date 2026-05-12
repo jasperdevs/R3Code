@@ -8111,6 +8111,7 @@ impl AppSnapshot {
 
     pub fn active_chat_reference_state() -> Self {
         let mut snapshot = Self::mock_reference_state();
+        snapshot.selected_model = DEFAULT_MODEL.to_string();
         snapshot.turn_diff_summaries = reference_turn_diff_summaries();
         snapshot
     }
@@ -9886,6 +9887,7 @@ mod tests {
 
         assert_eq!(snapshot.threads.len(), 1);
         assert_eq!(snapshot.threads[0].status, ThreadStatus::Idle);
+        assert_eq!(snapshot.selected_model, DEFAULT_MODEL);
         assert_eq!(snapshot.turn_diff_summaries.len(), 2);
         assert!(
             snapshot

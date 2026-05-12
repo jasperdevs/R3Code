@@ -270,7 +270,7 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
     compare_screenshots(CompareOptions {
         expected: resolve_repo_path("reference/screenshots/upstream-active-chat-reference.png"),
         actual: resolve_repo_path("reference/screenshots/r3code-active-chat-window.png"),
-        max_different_pixels_percent: 4.2,
+        max_different_pixels_percent: 4.1,
         channel_tolerance: 8,
         ignore_rects: vec![Rect {
             x: 0,
@@ -438,7 +438,7 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
     compare_screenshots(CompareOptions {
         expected: resolve_repo_path("reference/screenshots/upstream-diff-panel-reference.png"),
         actual: resolve_repo_path("reference/screenshots/r3code-diff-panel-window.png"),
-        max_different_pixels_percent: 9.0,
+        max_different_pixels_percent: 8.8,
         channel_tolerance: 8,
         ignore_rects: vec![Rect {
             x: 0,

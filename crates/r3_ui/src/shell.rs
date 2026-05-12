@@ -112,6 +112,7 @@ pub struct R3Shell {
     model_picker_open: bool,
     model_picker_query: String,
     model_picker_selected_instance: ModelPickerSelectedInstance,
+    composer_compact_controls_menu_open: bool,
     composer_runtime_index: usize,
     composer_plan_mode: bool,
     composer_submitted_count: usize,
@@ -197,6 +198,7 @@ impl R3Shell {
             } else {
                 ModelPickerSelectedInstance::Favorites
             },
+            composer_compact_controls_menu_open: false,
             composer_runtime_index: 2,
             composer_plan_mode: screen == R3Screen::PendingUserInput,
             composer_submitted_count: 0,
@@ -517,6 +519,10 @@ impl Render for R3Shell {
 
         if self.model_picker_open && self.snapshot.renders_chat_view() {
             root = root.child(self.model_picker_popup(cx));
+        }
+
+        if self.composer_compact_controls_menu_open && self.snapshot.renders_chat_view() {
+            root = root.child(self.composer_compact_controls_menu_popup(cx));
         }
 
         if self.project_script_menu_open && self.snapshot.renders_chat_view() {
@@ -3143,7 +3149,7 @@ impl R3Shell {
         let active_pending_approval = self.snapshot.active_pending_approval();
         let active_pending_user_input_progress = self.snapshot.active_pending_user_input_progress();
         let composer_width = if self.snapshot.diff_open() {
-            440.0
+            548.0
         } else {
             832.0
         };
@@ -3869,6 +3875,28 @@ impl R3Shell {
             self.runtime_mode().label
         };
 
+        if compact {
+            return div()
+                .id("chat-composer-footer")
+                .flex()
+                .items_center()
+                .justify_between()
+                .gap_2()
+                .px_3()
+                .pb_3()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_1p5()
+                        .min_w_0()
+                        .child(self.composer_model_picker(cx))
+                        .child(self.composer_compact_controls_button(cx)),
+                )
+                .child(self.composer_send_button(cx))
+                .into_any_element();
+        }
+
         div()
             .id("chat-composer-footer")
             .flex()
@@ -3911,6 +3939,170 @@ impl R3Shell {
             )
             .child(self.composer_send_button(cx))
             .into_any_element()
+    }
+
+    fn composer_compact_controls_button(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .id("chat-composer-compact-controls")
+            .flex()
+            .items_center()
+            .justify_center()
+            .h(px(32.0))
+            .rounded(px(8.0))
+            .px_2()
+            .text_color(self.theme.muted_foreground.opacity(0.70))
+            .cursor_pointer()
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.composer_compact_controls_menu_open =
+                    !this.composer_compact_controls_menu_open;
+                if this.composer_compact_controls_menu_open {
+                    this.model_picker_open = false;
+                    this.project_script_menu_open = false;
+                    this.open_in_menu_open = false;
+                    this.git_actions_menu_open = false;
+                }
+                cx.notify();
+            }))
+            .child(
+                svg()
+                    .path("icons/ellipsis.svg")
+                    .size_4()
+                    .text_color(self.theme.muted_foreground.opacity(0.70)),
+            )
+    }
+
+    fn composer_compact_controls_menu_popup(&self, cx: &mut Context<Self>) -> AnyElement {
+        let show_interaction_mode_toggle = self
+            .snapshot
+            .providers
+            .iter()
+            .find(|provider| provider.instance_id == self.snapshot.selected_provider_instance_id)
+            .map(|provider| provider.show_interaction_mode_toggle)
+            .unwrap_or(false);
+
+        let mut popup = div()
+            .id("chat-composer-compact-controls-menu")
+            .absolute()
+            .bottom(px(88.0))
+            .right(px(332.0))
+            .flex()
+            .flex_col()
+            .w(px(208.0))
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.background)
+            .p_1()
+            .text_color(self.theme.foreground)
+            .shadow(self.header_menu_shadow());
+
+        if show_interaction_mode_toggle {
+            popup = popup
+                .child(self.composer_compact_menu_heading("Mode"))
+                .child(self.composer_compact_mode_item("Chat", !self.composer_plan_mode, cx))
+                .child(self.composer_compact_mode_item("Plan", self.composer_plan_mode, cx))
+                .child(self.menu_divider());
+        }
+
+        popup = popup.child(self.composer_compact_menu_heading("Access"));
+        for (index, mode) in COMPOSER_RUNTIME_MODES.iter().enumerate() {
+            popup = popup.child(self.composer_compact_access_item(index, *mode, cx));
+        }
+
+        popup.into_any_element()
+    }
+
+    fn composer_compact_menu_heading(&self, label: &'static str) -> impl IntoElement {
+        div()
+            .px_2()
+            .py_1p5()
+            .text_size(px(12.0))
+            .font_weight(FontWeight(500.0))
+            .text_color(self.theme.muted_foreground)
+            .child(label)
+    }
+
+    fn menu_divider(&self) -> impl IntoElement {
+        div().my_1().h(px(1.0)).bg(self.theme.border.opacity(0.72))
+    }
+
+    fn composer_compact_mode_item(
+        &self,
+        label: &'static str,
+        selected: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let plan_mode = label == "Plan";
+        self.composer_compact_radio_item_base(
+            format!("chat-composer-compact-mode-{}", label.to_ascii_lowercase()),
+            label,
+            selected,
+        )
+        .on_click(cx.listener(move |this, _, _, cx| {
+            if this.composer_plan_mode != plan_mode {
+                this.composer_plan_mode = plan_mode;
+            }
+            this.composer_compact_controls_menu_open = false;
+            cx.notify();
+        }))
+    }
+
+    fn composer_compact_access_item(
+        &self,
+        index: usize,
+        mode: ComposerRuntimeMode,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        self.composer_compact_radio_item_base(
+            format!(
+                "chat-composer-compact-access-{}",
+                mode.label.to_ascii_lowercase().replace(' ', "-")
+            ),
+            mode.label,
+            self.composer_runtime_index % COMPOSER_RUNTIME_MODES.len() == index,
+        )
+        .on_click(cx.listener(move |this, _, _, cx| {
+            this.composer_runtime_index = index;
+            this.composer_compact_controls_menu_open = false;
+            cx.notify();
+        }))
+    }
+
+    fn composer_compact_radio_item_base(
+        &self,
+        id: String,
+        label: &'static str,
+        selected: bool,
+    ) -> gpui::Stateful<gpui::Div> {
+        div()
+            .id(SharedString::from(id))
+            .flex()
+            .items_center()
+            .gap_2()
+            .h(px(30.0))
+            .rounded(px(6.0))
+            .px_2()
+            .text_size(px(13.0))
+            .text_color(self.theme.foreground)
+            .cursor_pointer()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .w(px(16.0))
+                    .h(px(16.0))
+                    .child(if selected {
+                        svg()
+                            .path("icons/check.svg")
+                            .size_3p5()
+                            .text_color(self.theme.foreground)
+                            .into_any_element()
+                    } else {
+                        div().into_any_element()
+                    }),
+            )
+            .child(label)
     }
 
     fn composer_pending_user_input_footer(
@@ -4152,6 +4344,7 @@ impl R3Shell {
             .cursor_pointer()
             .on_click(cx.listener(|this, _, _, cx| {
                 this.model_picker_open = !this.model_picker_open;
+                this.composer_compact_controls_menu_open = false;
                 if this.model_picker_open {
                     this.model_picker_query.clear();
                 }
