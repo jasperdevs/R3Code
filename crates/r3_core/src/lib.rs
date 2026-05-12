@@ -1,6 +1,9 @@
 pub const APP_NAME: &str = "R3Code";
 
-use std::collections::BTreeMap;
+use std::{
+    cmp::Ordering,
+    collections::{BTreeMap, BTreeSet},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ScopedThreadRef {
@@ -2974,6 +2977,73 @@ pub fn build_model_picker_search_text(model: &ModelPickerItem) -> String {
     )
 }
 
+const MAX_WHEN_EXPRESSION_DEPTH: usize = 64;
+const KEYBINDING_WHEN_PARSE_ERROR: &str = "Use variables with !, &&, ||, and parentheses.";
+const CORE_WHEN_VARIABLES: &[&str] = &["terminalFocus", "terminalOpen", "true", "false"];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeybindingShortcut {
+    pub key: String,
+    pub meta_key: bool,
+    pub ctrl_key: bool,
+    pub shift_key: bool,
+    pub alt_key: bool,
+    pub mod_key: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeybindingKeyboardEvent<'a> {
+    pub key: &'a str,
+    pub meta_key: bool,
+    pub ctrl_key: bool,
+    pub shift_key: bool,
+    pub alt_key: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum KeybindingWhenNode {
+    Identifier {
+        name: String,
+    },
+    Not {
+        node: Box<KeybindingWhenNode>,
+    },
+    And {
+        left: Box<KeybindingWhenNode>,
+        right: Box<KeybindingWhenNode>,
+    },
+    Or {
+        left: Box<KeybindingWhenNode>,
+        right: Box<KeybindingWhenNode>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedKeybindingRule {
+    pub command: String,
+    pub shortcut: KeybindingShortcut,
+    pub when_ast: Option<KeybindingWhenNode>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeybindingSource {
+    Default,
+    Custom,
+    Project,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeybindingRow {
+    pub id: String,
+    pub command: String,
+    pub key: String,
+    pub when: String,
+    pub source: KeybindingSource,
+    pub default_key: Option<String>,
+    pub default_when: String,
+    pub conflicts: Vec<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KeybindingRule {
     pub command: &'static str,
@@ -3149,6 +3219,603 @@ const DEFAULT_KEYBINDING_RULES: &[KeybindingRule] = &[
 
 pub fn default_keybinding_rules() -> &'static [KeybindingRule] {
     DEFAULT_KEYBINDING_RULES
+}
+
+fn normalize_key_token(token: &str) -> String {
+    match token {
+        "space" => " ".to_string(),
+        "esc" => "escape".to_string(),
+        value => value.to_string(),
+    }
+}
+
+pub fn parse_keybinding_shortcut(value: &str) -> Option<KeybindingShortcut> {
+    let mut tokens = value
+        .to_ascii_lowercase()
+        .split('+')
+        .map(str::trim)
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+
+    let mut trailing_empty_count = 0;
+    while tokens.last().is_some_and(|token| token.is_empty()) {
+        trailing_empty_count += 1;
+        tokens.pop();
+    }
+    if trailing_empty_count > 0 {
+        tokens.push("+".to_string());
+    }
+    if tokens.is_empty() || tokens.iter().any(|token| token.is_empty()) {
+        return None;
+    }
+
+    let mut key = None;
+    let mut meta_key = false;
+    let mut ctrl_key = false;
+    let mut shift_key = false;
+    let mut alt_key = false;
+    let mut mod_key = false;
+
+    for token in tokens {
+        match token.as_str() {
+            "cmd" | "command" | "meta" => meta_key = true,
+            "ctrl" | "control" => ctrl_key = true,
+            "shift" => shift_key = true,
+            "alt" | "option" => alt_key = true,
+            "mod" => mod_key = true,
+            _ => {
+                if key.is_some() {
+                    return None;
+                }
+                key = Some(normalize_key_token(&token));
+            }
+        }
+    }
+
+    Some(KeybindingShortcut {
+        key: key?,
+        meta_key,
+        ctrl_key,
+        shift_key,
+        alt_key,
+        mod_key,
+    })
+}
+
+pub fn shortcut_to_keybinding_input(shortcut: &KeybindingShortcut) -> String {
+    let mut parts = Vec::new();
+    if shortcut.mod_key {
+        parts.push("mod".to_string());
+    }
+    if shortcut.meta_key {
+        parts.push("meta".to_string());
+    }
+    if shortcut.ctrl_key {
+        parts.push("ctrl".to_string());
+    }
+    if shortcut.alt_key {
+        parts.push("alt".to_string());
+    }
+    if shortcut.shift_key {
+        parts.push("shift".to_string());
+    }
+    parts.push(match shortcut.key.as_str() {
+        " " => "space".to_string(),
+        "escape" => "esc".to_string(),
+        value => value.to_string(),
+    });
+    parts.join("+")
+}
+
+pub fn normalize_shortcut_key_token(key: &str) -> Option<String> {
+    let normalized = key.to_ascii_lowercase();
+    match normalized.as_str() {
+        "meta" | "control" | "ctrl" | "shift" | "alt" | "option" => None,
+        " " => Some("space".to_string()),
+        "escape" => Some("esc".to_string()),
+        "arrowup" | "arrowdown" | "arrowleft" | "arrowright" | "enter" | "tab" | "backspace"
+        | "delete" | "home" | "end" | "pageup" | "pagedown" => Some(normalized),
+        value if value.len() == 1 => Some(value.to_string()),
+        value if is_function_key(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+fn is_function_key(value: &str) -> bool {
+    let Some(number) = value.strip_prefix('f') else {
+        return false;
+    };
+    (1..=2).contains(&number.len()) && number.chars().all(|ch| ch.is_ascii_digit())
+}
+
+pub fn is_mac_platform(platform: &str) -> bool {
+    let platform = platform.to_ascii_lowercase();
+    ["mac", "iphone", "ipad", "ipod"]
+        .iter()
+        .any(|needle| platform.contains(needle))
+}
+
+pub fn keybinding_from_keyboard_event(
+    event: KeybindingKeyboardEvent<'_>,
+    platform: &str,
+) -> Option<String> {
+    let key_token = normalize_shortcut_key_token(event.key)?;
+    let mut parts = Vec::new();
+
+    if is_mac_platform(platform) {
+        if event.meta_key {
+            parts.push("mod".to_string());
+        }
+        if event.ctrl_key {
+            parts.push("ctrl".to_string());
+        }
+    } else {
+        if event.ctrl_key {
+            parts.push("mod".to_string());
+        }
+        if event.meta_key {
+            parts.push("meta".to_string());
+        }
+    }
+    if event.alt_key {
+        parts.push("alt".to_string());
+    }
+    if event.shift_key {
+        parts.push("shift".to_string());
+    }
+    if parts.is_empty() {
+        return None;
+    }
+
+    parts.push(key_token);
+    Some(parts.join("+"))
+}
+
+pub fn compile_resolved_keybinding_rule(rule: &KeybindingRule) -> Option<ResolvedKeybindingRule> {
+    let shortcut = parse_keybinding_shortcut(rule.key)?;
+    let when_ast = if rule.when.is_empty() {
+        None
+    } else {
+        Some(parse_keybinding_when_expression(rule.when)?)
+    };
+
+    Some(ResolvedKeybindingRule {
+        command: rule.command.to_string(),
+        shortcut,
+        when_ast,
+    })
+}
+
+pub fn default_resolved_keybindings() -> Vec<ResolvedKeybindingRule> {
+    DEFAULT_KEYBINDING_RULES
+        .iter()
+        .filter_map(compile_resolved_keybinding_rule)
+        .collect()
+}
+
+pub fn when_ast_to_expression(node: Option<&KeybindingWhenNode>) -> String {
+    node.map(when_node_to_expression).unwrap_or_default()
+}
+
+fn when_node_to_expression(node: &KeybindingWhenNode) -> String {
+    match node {
+        KeybindingWhenNode::Identifier { name } => name.clone(),
+        KeybindingWhenNode::Not { node } => format!("!{}", wrap_when_expression(node)),
+        KeybindingWhenNode::And { left, right } => {
+            format!(
+                "{} && {}",
+                wrap_when_expression(left),
+                wrap_when_expression(right)
+            )
+        }
+        KeybindingWhenNode::Or { left, right } => {
+            format!(
+                "{} || {}",
+                wrap_when_expression(left),
+                wrap_when_expression(right)
+            )
+        }
+    }
+}
+
+fn wrap_when_expression(node: &KeybindingWhenNode) -> String {
+    match node {
+        KeybindingWhenNode::Identifier { .. } | KeybindingWhenNode::Not { .. } => {
+            when_node_to_expression(node)
+        }
+        KeybindingWhenNode::And { .. } | KeybindingWhenNode::Or { .. } => {
+            format!("({})", when_node_to_expression(node))
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum WhenToken {
+    Identifier(String),
+    Not,
+    And,
+    Or,
+    LParen,
+    RParen,
+}
+
+fn tokenize_when_expression(expression: &str) -> Option<Vec<WhenToken>> {
+    let mut tokens = Vec::new();
+    let mut cursor = 0;
+
+    while cursor < expression.len() {
+        let current = expression[cursor..].chars().next()?;
+        if current.is_whitespace() {
+            cursor += current.len_utf8();
+            continue;
+        }
+        if expression[cursor..].starts_with("&&") {
+            tokens.push(WhenToken::And);
+            cursor += 2;
+            continue;
+        }
+        if expression[cursor..].starts_with("||") {
+            tokens.push(WhenToken::Or);
+            cursor += 2;
+            continue;
+        }
+        match current {
+            '!' => {
+                tokens.push(WhenToken::Not);
+                cursor += 1;
+                continue;
+            }
+            '(' => {
+                tokens.push(WhenToken::LParen);
+                cursor += 1;
+                continue;
+            }
+            ')' => {
+                tokens.push(WhenToken::RParen);
+                cursor += 1;
+                continue;
+            }
+            _ => {}
+        }
+
+        if !(current.is_ascii_alphabetic() || current == '_') {
+            return None;
+        }
+        let start = cursor;
+        cursor += current.len_utf8();
+        while cursor < expression.len() {
+            let next = expression[cursor..].chars().next()?;
+            if next.is_ascii_alphanumeric() || matches!(next, '_' | '.' | '-') {
+                cursor += next.len_utf8();
+            } else {
+                break;
+            }
+        }
+        tokens.push(WhenToken::Identifier(expression[start..cursor].to_string()));
+    }
+
+    Some(tokens)
+}
+
+pub fn parse_keybinding_when_expression(expression: &str) -> Option<KeybindingWhenNode> {
+    let tokens = tokenize_when_expression(expression)?;
+    if tokens.is_empty() {
+        return None;
+    }
+
+    struct Parser {
+        tokens: Vec<WhenToken>,
+        index: usize,
+    }
+
+    impl Parser {
+        fn parse_primary(&mut self, depth: usize) -> Option<KeybindingWhenNode> {
+            if depth > MAX_WHEN_EXPRESSION_DEPTH {
+                return None;
+            }
+            match self.tokens.get(self.index)? {
+                WhenToken::Identifier(value) => {
+                    self.index += 1;
+                    Some(KeybindingWhenNode::Identifier {
+                        name: value.clone(),
+                    })
+                }
+                WhenToken::LParen => {
+                    self.index += 1;
+                    let expression_node = self.parse_or(depth + 1)?;
+                    if self.tokens.get(self.index) != Some(&WhenToken::RParen) {
+                        return None;
+                    }
+                    self.index += 1;
+                    Some(expression_node)
+                }
+                _ => None,
+            }
+        }
+
+        fn parse_unary(&mut self, depth: usize) -> Option<KeybindingWhenNode> {
+            let mut not_count = 0;
+            while self.tokens.get(self.index) == Some(&WhenToken::Not) {
+                self.index += 1;
+                not_count += 1;
+                if not_count > MAX_WHEN_EXPRESSION_DEPTH {
+                    return None;
+                }
+            }
+
+            let mut node = self.parse_primary(depth)?;
+            while not_count > 0 {
+                node = KeybindingWhenNode::Not {
+                    node: Box::new(node),
+                };
+                not_count -= 1;
+            }
+            Some(node)
+        }
+
+        fn parse_and(&mut self, depth: usize) -> Option<KeybindingWhenNode> {
+            let mut left = self.parse_unary(depth)?;
+            while self.tokens.get(self.index) == Some(&WhenToken::And) {
+                self.index += 1;
+                let right = self.parse_unary(depth)?;
+                left = KeybindingWhenNode::And {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                };
+            }
+            Some(left)
+        }
+
+        fn parse_or(&mut self, depth: usize) -> Option<KeybindingWhenNode> {
+            let mut left = self.parse_and(depth)?;
+            while self.tokens.get(self.index) == Some(&WhenToken::Or) {
+                self.index += 1;
+                let right = self.parse_and(depth)?;
+                left = KeybindingWhenNode::Or {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                };
+            }
+            Some(left)
+        }
+    }
+
+    let mut parser = Parser { tokens, index: 0 };
+    let ast = parser.parse_or(0)?;
+    (parser.index == parser.tokens.len()).then_some(ast)
+}
+
+pub fn parse_when_expression_draft(
+    expression: &str,
+) -> Result<Option<KeybindingWhenNode>, &'static str> {
+    let trimmed = expression.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    parse_keybinding_when_expression(trimmed)
+        .map(Some)
+        .ok_or(KEYBINDING_WHEN_PARSE_ERROR)
+}
+
+fn collect_when_identifiers_from_node(
+    node: Option<&KeybindingWhenNode>,
+    identifiers: &mut BTreeSet<String>,
+) {
+    let Some(node) = node else {
+        return;
+    };
+    match node {
+        KeybindingWhenNode::Identifier { name } => {
+            identifiers.insert(name.clone());
+        }
+        KeybindingWhenNode::Not { node } => {
+            collect_when_identifiers_from_node(Some(node), identifiers)
+        }
+        KeybindingWhenNode::And { left, right } | KeybindingWhenNode::Or { left, right } => {
+            collect_when_identifiers_from_node(Some(left), identifiers);
+            collect_when_identifiers_from_node(Some(right), identifiers);
+        }
+    }
+}
+
+pub fn build_when_variable_options() -> Vec<String> {
+    let mut identifiers = BTreeSet::new();
+    for value in CORE_WHEN_VARIABLES {
+        identifiers.insert((*value).to_string());
+    }
+    for binding in default_resolved_keybindings() {
+        collect_when_identifiers_from_node(binding.when_ast.as_ref(), &mut identifiers);
+    }
+
+    let mut values = identifiers.into_iter().collect::<Vec<_>>();
+    values.sort_by(|left, right| {
+        let left_core = CORE_WHEN_VARIABLES.iter().position(|value| *value == left);
+        let right_core = CORE_WHEN_VARIABLES.iter().position(|value| *value == right);
+        match (left_core, right_core) {
+            (Some(left_index), Some(right_index)) => left_index.cmp(&right_index),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => left.cmp(right),
+        }
+    });
+    values
+}
+
+pub fn default_when_variable() -> String {
+    build_when_variable_options()
+        .into_iter()
+        .find(|identifier| identifier != "true" && identifier != "false")
+        .unwrap_or_else(|| "terminalFocus".to_string())
+}
+
+pub fn is_known_when_variable(identifier: &str) -> bool {
+    build_when_variable_options()
+        .iter()
+        .any(|value| value == identifier)
+}
+
+pub fn unknown_when_variables(node: Option<&KeybindingWhenNode>) -> Vec<String> {
+    let mut identifiers = BTreeSet::new();
+    collect_when_identifiers_from_node(node, &mut identifiers);
+    identifiers
+        .into_iter()
+        .filter(|identifier| !is_known_when_variable(identifier))
+        .collect()
+}
+
+fn source_for_binding(binding: &ResolvedKeybindingRule) -> KeybindingSource {
+    if binding.command.starts_with("script.") {
+        return KeybindingSource::Project;
+    }
+
+    let binding_key = shortcut_to_keybinding_input(&binding.shortcut);
+    let binding_when = when_ast_to_expression(binding.when_ast.as_ref());
+    let is_default = default_resolved_keybindings().iter().any(|entry| {
+        entry.command == binding.command
+            && shortcut_to_keybinding_input(&entry.shortcut) == binding_key
+            && when_ast_to_expression(entry.when_ast.as_ref()) == binding_when
+    });
+    if is_default {
+        KeybindingSource::Default
+    } else {
+        KeybindingSource::Custom
+    }
+}
+
+fn default_binding_for_binding(binding: &ResolvedKeybindingRule) -> Option<ResolvedKeybindingRule> {
+    let binding_key = shortcut_to_keybinding_input(&binding.shortcut);
+    let binding_when = when_ast_to_expression(binding.when_ast.as_ref());
+    let defaults = default_resolved_keybindings();
+    defaults
+        .iter()
+        .find(|entry| {
+            entry.command == binding.command
+                && shortcut_to_keybinding_input(&entry.shortcut) == binding_key
+                && when_ast_to_expression(entry.when_ast.as_ref()) == binding_when
+        })
+        .or_else(|| {
+            defaults.iter().find(|entry| {
+                entry.command == binding.command
+                    && when_ast_to_expression(entry.when_ast.as_ref()) == binding_when
+            })
+        })
+        .or_else(|| {
+            defaults
+                .iter()
+                .find(|entry| entry.command == binding.command)
+        })
+        .cloned()
+}
+
+fn keybinding_row_id(command: &str, key: &str, when: &str) -> String {
+    format!("{command}\0{key}\0{when}")
+}
+
+fn conflicts_with_when(left_when: &str, right_when: &str) -> bool {
+    left_when.is_empty() || right_when.is_empty() || left_when == right_when
+}
+
+pub fn keybinding_conflict_labels(
+    rows: &[KeybindingRow],
+    row_id: &str,
+    key: &str,
+    when: &str,
+) -> Vec<String> {
+    if key.trim().is_empty() {
+        return Vec::new();
+    }
+    rows.iter()
+        .filter(|candidate| {
+            candidate.id != row_id
+                && candidate.key == key
+                && conflicts_with_when(&candidate.when, when)
+        })
+        .map(|candidate| keybinding_command_label(&candidate.command))
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
+pub fn build_keybinding_rows(
+    keybindings: &[ResolvedKeybindingRule],
+    query: &str,
+) -> Vec<KeybindingRow> {
+    let normalized_query = query.trim().to_ascii_lowercase();
+    let rows = keybindings
+        .iter()
+        .enumerate()
+        .map(|(index, binding)| {
+            let default_binding = default_binding_for_binding(binding);
+            let key = shortcut_to_keybinding_input(&binding.shortcut);
+            let when = when_ast_to_expression(binding.when_ast.as_ref());
+            KeybindingRow {
+                id: format!(
+                    "{}\0{index}",
+                    keybinding_row_id(&binding.command, &key, &when)
+                ),
+                command: binding.command.clone(),
+                key,
+                when,
+                source: source_for_binding(binding),
+                default_key: default_binding
+                    .as_ref()
+                    .map(|binding| shortcut_to_keybinding_input(&binding.shortcut)),
+                default_when: when_ast_to_expression(
+                    default_binding
+                        .as_ref()
+                        .and_then(|binding| binding.when_ast.as_ref()),
+                ),
+                conflicts: Vec::new(),
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let mut rows_with_conflicts = rows
+        .iter()
+        .map(|row| {
+            let mut row = row.clone();
+            row.conflicts = keybinding_conflict_labels(&rows, &row.id, &row.key, &row.when);
+            row
+        })
+        .collect::<Vec<_>>();
+
+    rows_with_conflicts.sort_by(|left, right| {
+        left.command
+            .cmp(&right.command)
+            .then_with(|| left.key.cmp(&right.key))
+    });
+
+    if normalized_query.is_empty() {
+        return rows_with_conflicts;
+    }
+
+    rows_with_conflicts
+        .into_iter()
+        .filter(|row| {
+            let source = match row.source {
+                KeybindingSource::Default => "default",
+                KeybindingSource::Custom => "custom",
+                KeybindingSource::Project => "project",
+            };
+            row.command.to_ascii_lowercase().contains(&normalized_query)
+                || row.key.to_ascii_lowercase().contains(&normalized_query)
+                || row.when.to_ascii_lowercase().contains(&normalized_query)
+                || source.contains(&normalized_query)
+        })
+        .collect()
+}
+
+pub fn build_keybinding_command_options(keybindings: &[ResolvedKeybindingRule]) -> Vec<String> {
+    let mut commands = BTreeSet::new();
+    for binding in default_resolved_keybindings() {
+        commands.insert(binding.command);
+    }
+    for binding in keybindings {
+        commands.insert(binding.command.clone());
+    }
+    let mut commands = commands.into_iter().collect::<Vec<_>>();
+    commands.sort_by_key(|command| keybinding_command_label(command));
+    commands
 }
 
 pub fn keybinding_command_label(command: &str) -> String {
@@ -10482,6 +11149,156 @@ mod tests {
                 .filter(|row| row.when == "modelPickerOpen")
                 .count(),
             9
+        );
+    }
+
+    #[test]
+    fn keybinding_shortcuts_and_when_expressions_match_upstream_logic() {
+        assert_eq!(
+            shortcut_to_keybinding_input(&KeybindingShortcut {
+                key: " ".to_string(),
+                mod_key: true,
+                meta_key: false,
+                ctrl_key: false,
+                alt_key: true,
+                shift_key: false,
+            }),
+            "mod+alt+space"
+        );
+        assert_eq!(normalize_shortcut_key_token("K"), Some("k".to_string()));
+        assert_eq!(
+            normalize_shortcut_key_token("Control"),
+            None,
+            "modifier-only key events are ignored upstream"
+        );
+        assert_eq!(
+            keybinding_from_keyboard_event(
+                KeybindingKeyboardEvent {
+                    key: "K",
+                    meta_key: true,
+                    ctrl_key: false,
+                    alt_key: false,
+                    shift_key: true,
+                },
+                "MacIntel",
+            ),
+            Some("mod+shift+k".to_string())
+        );
+        assert_eq!(
+            keybinding_from_keyboard_event(
+                KeybindingKeyboardEvent {
+                    key: "K",
+                    meta_key: false,
+                    ctrl_key: true,
+                    alt_key: false,
+                    shift_key: true,
+                },
+                "Win32",
+            ),
+            Some("mod+shift+k".to_string())
+        );
+
+        let expected = KeybindingWhenNode::And {
+            left: Box::new(KeybindingWhenNode::Identifier {
+                name: "editorFocus".to_string(),
+            }),
+            right: Box::new(KeybindingWhenNode::Or {
+                left: Box::new(KeybindingWhenNode::Not {
+                    node: Box::new(KeybindingWhenNode::Identifier {
+                        name: "terminalFocus".to_string(),
+                    }),
+                }),
+                right: Box::new(KeybindingWhenNode::Identifier {
+                    name: "modelPickerOpen".to_string(),
+                }),
+            }),
+        };
+        let parsed =
+            parse_when_expression_draft("editorFocus && (!terminalFocus || modelPickerOpen)")
+                .unwrap()
+                .unwrap();
+        assert_eq!(parsed, expected);
+        assert_eq!(
+            when_ast_to_expression(Some(&parsed)),
+            "editorFocus && (!terminalFocus || modelPickerOpen)"
+        );
+        assert_eq!(
+            parse_when_expression_draft("editorFocus &&"),
+            Err(KEYBINDING_WHEN_PARSE_ERROR)
+        );
+        assert_eq!(
+            when_ast_to_expression(
+                parse_when_expression_draft("!(terminalFocus || modelPickerOpen)")
+                    .unwrap()
+                    .as_ref()
+            ),
+            "!(terminalFocus || modelPickerOpen)"
+        );
+    }
+
+    #[test]
+    fn keybinding_rows_options_and_conflicts_match_upstream_logic() {
+        let variable_options = build_when_variable_options();
+        assert_eq!(
+            variable_options
+                .iter()
+                .take(4)
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["terminalFocus", "terminalOpen", "true", "false"]
+        );
+        assert!(variable_options.contains(&"modelPickerOpen".to_string()));
+        assert!(!variable_options.contains(&"customModeActive".to_string()));
+        assert_eq!(default_when_variable(), "terminalFocus");
+
+        let command_options = build_keybinding_command_options(&[ResolvedKeybindingRule {
+            command: "script.setup-db.run".to_string(),
+            shortcut: parse_keybinding_shortcut("mod+r").unwrap(),
+            when_ast: None,
+        }]);
+        assert!(command_options.contains(&"chat.new".to_string()));
+        assert!(command_options.contains(&"script.setup-db.run".to_string()));
+
+        let custom_terminal = ResolvedKeybindingRule {
+            command: "terminal.toggle".to_string(),
+            shortcut: parse_keybinding_shortcut("mod+j").unwrap(),
+            when_ast: Some(parse_keybinding_when_expression("!terminalFocus").unwrap()),
+        };
+        let rows = build_keybinding_rows(&[custom_terminal], "terminal");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].key, "mod+j");
+        assert_eq!(rows[0].when, "!terminalFocus");
+        assert_eq!(rows[0].default_key.as_deref(), Some("mod+j"));
+        assert_eq!(rows[0].default_when, "");
+        assert_eq!(rows[0].source, KeybindingSource::Custom);
+
+        let unknown = parse_when_expression_draft("!terminalFocus && terminalFoc")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            unknown_when_variables(Some(&unknown)),
+            vec!["terminalFoc".to_string()]
+        );
+
+        let rows = build_keybinding_rows(
+            &[
+                ResolvedKeybindingRule {
+                    command: "chat.new".to_string(),
+                    shortcut: parse_keybinding_shortcut("mod+n").unwrap(),
+                    when_ast: Some(parse_keybinding_when_expression("!terminalFocus").unwrap()),
+                },
+                ResolvedKeybindingRule {
+                    command: "chat.newLocal".to_string(),
+                    shortcut: parse_keybinding_shortcut("mod+n").unwrap(),
+                    when_ast: Some(parse_keybinding_when_expression("!terminalFocus").unwrap()),
+                },
+            ],
+            "",
+        );
+        assert_eq!(rows[0].conflicts, vec!["Chat: New Local".to_string()]);
+        assert_eq!(
+            keybinding_conflict_labels(&rows, &rows[0].id, "mod+n", ""),
+            vec!["Chat: New Local".to_string()]
         );
     }
 
