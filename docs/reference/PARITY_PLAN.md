@@ -36,6 +36,7 @@ The task currently captures:
 - `reference/screenshots/upstream-composer-inline-tokens-reference.png`
 - `reference/screenshots/upstream-provider-model-picker-reference.png`
 - `reference/screenshots/upstream-active-chat-reference.png`
+- `reference/screenshots/upstream-pending-user-input-reference.png`
 - `reference/screenshots/upstream-settings-reference.png`
 - `reference/screenshots/upstream-settings-keybindings-reference.png`
 - `reference/screenshots/upstream-settings-providers-reference.png`
@@ -174,7 +175,6 @@ R3Code composer command menu capture: `reference/screenshots/r3code-composer-men
 R3Code composer inline-token capture: `reference/screenshots/r3code-composer-inline-tokens-window.png`
 R3Code running turn capture: `reference/screenshots/r3code-running-turn-window.png`
 R3Code pending approval capture: `reference/screenshots/r3code-pending-approval-window.png`
-R3Code pending user input capture: `reference/screenshots/r3code-pending-user-input-window.png`
 R3Code terminal drawer capture: `reference/screenshots/r3code-terminal-drawer-window.png`
 R3Code diff panel capture: `reference/screenshots/r3code-diff-panel-window.png`
 R3Code branch toolbar capture: `reference/screenshots/r3code-branch-toolbar-window.png`
@@ -197,8 +197,27 @@ cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light
 
 This is a native Rust/GPUI smoke capture for the first server-thread state: active header title/project badge, project script and open-in controls, sidebar thread row, user/assistant timeline rows, changed-files summary tree, and composer chrome. It is intentionally not a parity comparison yet because the current upstream reference harness has deterministic captures for empty/draft/settings, but not a full active server-thread route with persisted messages. The next parity step is to add a source-backed upstream fixture capture for the same `ChatView.browser.tsx` message state.
 The running turn capture ports the upstream work-log derivation shape first: activity ordering, ignored lifecycle rows, checkpoint filtering, simple tool update/completion collapse, command previews, changed-file previews, and the `WorkGroupSection` smoke surface. It is not a live provider stream yet.
-The pending approval and pending user input captures use the same active-thread shell with upstream-shaped `ChatComposer` state: approval summary/actions, user-input question progress, option shortcut chips, selected `CheckIcon`, and pending primary actions. They are also smoke captures until the upstream browser harness can seed the matching server-thread pending request fixtures.
+The pending approval capture uses the same active-thread shell with upstream-shaped `ChatComposer` state: approval summary/actions and pending primary actions. It is still a smoke capture until the upstream browser harness can seed the matching server-thread approval fixture.
 The Rust core also ports upstream `ChatView.logic.ts`, `terminalContext.ts`, `composer-editor-mentions.ts`, `composer-logic.ts`, `ComposerPromptEditor.tsx`, `composerInlineChip.ts`, `vscode-icons.ts`, `composerSlashCommandSearch.ts`, `composerMenuHighlight.ts`, `providerSkillSearch.ts`, and `providerSkillPresentation.ts` composer contracts: inline terminal-context placeholders, terminal-context block append/extract/display state, expired terminal-context filtering, expired-context toast copy, completed `@path` and `$skill` segment parsing, inline mention/skill chip rendering, terminal-context prompt segments, mention-boundary selection detection, collapsed/expanded cursor mapping, active `/`, `@`, and `$` trigger detection, standalone `/plan` and `/default` command parsing, text-range replacement, built-in and provider slash command search, provider skill search/presentation, composer menu grouping, active-item highlight reset, keyboard nudging, and command selection replacement behavior. The `composer-menu` GPUI capture renders the slash-command menu from those Rust contracts and is now compared against `upstream-composer-menu-reference.png` at a 5% threshold. The `composer-inline-tokens` GPUI capture renders completed `@AGENTS.md` and `$agent-browser` chips against a pinned upstream controlled-draft browser capture at a 5% threshold.
+
+## Current Pending User Input Baseline
+
+Reference: `reference/screenshots/upstream-pending-user-input-reference.png`
+
+R3Code capture: `reference/screenshots/r3code-pending-user-input-window.png`
+
+Allowed brand-copy difference: `--ignore-rect 0,0,120,45`
+
+Current measured diff:
+
+```text
+cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen pending-user-input --output reference\screenshots\r3code-pending-user-input-window.png
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-pending-user-input-reference.png --actual reference\screenshots\r3code-pending-user-input-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 7
+```
+
+Last measured result: `6.200%`.
+
+The upstream pending-user-input reference reuses the seeded active thread and injects the browser-test `user-input.requested` activity from `ChatView.browser.tsx`, then captures the real upstream composer question card.
 
 ## Current Composer Command Menu Baseline
 

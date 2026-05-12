@@ -8009,58 +8009,45 @@ impl AppSnapshot {
             thread.has_pending_user_input = true;
         }
         snapshot.pending_user_inputs = vec![PendingUserInput {
-            request_id: "user-input-port-scope".to_string(),
-            created_at: "2026-03-04T12:00:24.000Z".to_string(),
+            request_id: "req-browser-user-input".to_string(),
+            created_at: "2026-03-04T12:16:40.000Z".to_string(),
             questions: vec![
                 UserInputQuestion {
-                    id: "surface".to_string(),
-                    header: "Surface".to_string(),
-                    question: "Which surface should the Rust port match first?".to_string(),
+                    id: "scope".to_string(),
+                    header: "Scope".to_string(),
+                    question: "What should this change cover?".to_string(),
                     options: vec![
                         UserInputQuestionOption {
-                            label: "Composer".to_string(),
-                            description: "Pending approval and user input states".to_string(),
+                            label: "Tight".to_string(),
+                            description: "Touch only the footer layout logic.".to_string(),
                         },
                         UserInputQuestionOption {
-                            label: "Terminal".to_string(),
-                            description: "Drawer and command session state".to_string(),
-                        },
-                        UserInputQuestionOption {
-                            label: "Diff".to_string(),
-                            description: "Changed files and line review".to_string(),
+                            label: "Broad".to_string(),
+                            description: "Also adjust the related composer controls.".to_string(),
                         },
                     ],
                     multi_select: false,
                 },
                 UserInputQuestion {
-                    id: "coverage".to_string(),
-                    header: "Coverage".to_string(),
-                    question: "Select every state this parity pass should capture.".to_string(),
+                    id: "risk".to_string(),
+                    header: "Risk".to_string(),
+                    question: "How aggressive should the imaginary plan be?".to_string(),
                     options: vec![
                         UserInputQuestionOption {
-                            label: "Light".to_string(),
-                            description: "Light theme".to_string(),
+                            label: "Conservative".to_string(),
+                            description: "Favor reliability and low-risk changes.".to_string(),
                         },
                         UserInputQuestionOption {
-                            label: "Dark".to_string(),
-                            description: "Dark theme".to_string(),
-                        },
-                        UserInputQuestionOption {
-                            label: "Focused".to_string(),
-                            description: "Composer focus state".to_string(),
+                            label: "Balanced".to_string(),
+                            description: "Mix quick wins with one structural improvement."
+                                .to_string(),
                         },
                     ],
-                    multi_select: true,
+                    multi_select: false,
                 },
             ],
         }];
-        snapshot.pending_user_input_draft_answers = BTreeMap::from([(
-            "surface".to_string(),
-            PendingUserInputDraftAnswer {
-                selected_option_labels: vec!["Composer".to_string()],
-                custom_answer: Some(String::new()),
-            },
-        )]);
+        snapshot.pending_user_input_draft_answers = BTreeMap::new();
         snapshot
     }
 
@@ -10209,13 +10196,10 @@ mod tests {
         assert_eq!(snapshot.threads[0].status, ThreadStatus::NeedsInput);
         assert!(snapshot.threads[0].has_pending_user_input);
         assert_eq!(progress.question_index, 0);
-        assert_eq!(progress.active_question.unwrap().id, "surface");
-        assert_eq!(progress.selected_option_labels, vec!["Composer"]);
-        assert_eq!(
-            progress.resolved_answer,
-            Some(PendingUserInputAnswer::Text("Composer".to_string()))
-        );
-        assert!(progress.can_advance);
+        assert_eq!(progress.active_question.unwrap().id, "scope");
+        assert!(progress.selected_option_labels.is_empty());
+        assert_eq!(progress.resolved_answer, None);
+        assert!(!progress.can_advance);
         assert!(!progress.is_complete);
     }
 

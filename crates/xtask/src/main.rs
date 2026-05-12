@@ -345,6 +345,20 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
         allow_window_capture: true,
         ..CaptureR3CodeOptions::default()
     })?;
+    compare_screenshots(CompareOptions {
+        expected: resolve_repo_path(
+            "reference/screenshots/upstream-pending-user-input-reference.png",
+        ),
+        actual: resolve_repo_path("reference/screenshots/r3code-pending-user-input-window.png"),
+        max_different_pixels_percent: 7.0,
+        channel_tolerance: 8,
+        ignore_rects: vec![Rect {
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 45,
+        }],
+    })?;
 
     capture_r3code_window(CaptureR3CodeOptions {
         screen: Some("terminal-drawer".to_string()),
@@ -1407,7 +1421,7 @@ fn capture_reference_browser(options: CaptureReferenceOptions) -> Result<()> {
         fs::write(
             options.output_dir.join("CAPTURE_MANIFEST.txt"),
             format!(
-                "Upstream reference repository: {}\nReference commit: {}\nIsolated reference home: {}\nOutput directory: {}\nCaptured:\n- upstream-empty-reference.png\n- upstream-command-palette-reference.png\n- upstream-draft-reference.png\n- upstream-composer-focused-reference.png\n- upstream-composer-menu-reference.png\n- upstream-composer-inline-tokens-reference.png\n- upstream-provider-model-picker-reference.png\n- upstream-active-chat-reference.png\n- upstream-settings-reference.png\n- upstream-settings-keybindings-reference.png\n- upstream-settings-providers-reference.png\n- upstream-settings-source-control-reference.png\n- upstream-settings-connections-reference.png\n- upstream-settings-diagnostics-reference.png\n- upstream-settings-archive-reference.png\n- upstream-settings-theme-menu-reference.png\n- upstream-settings-dark-reference.png\n- upstream-empty-dark-reference.png\n",
+                "Upstream reference repository: {}\nReference commit: {}\nIsolated reference home: {}\nOutput directory: {}\nCaptured:\n- upstream-empty-reference.png\n- upstream-command-palette-reference.png\n- upstream-draft-reference.png\n- upstream-composer-focused-reference.png\n- upstream-composer-menu-reference.png\n- upstream-composer-inline-tokens-reference.png\n- upstream-provider-model-picker-reference.png\n- upstream-active-chat-reference.png\n- upstream-pending-user-input-reference.png\n- upstream-settings-reference.png\n- upstream-settings-keybindings-reference.png\n- upstream-settings-providers-reference.png\n- upstream-settings-source-control-reference.png\n- upstream-settings-connections-reference.png\n- upstream-settings-diagnostics-reference.png\n- upstream-settings-archive-reference.png\n- upstream-settings-theme-menu-reference.png\n- upstream-settings-dark-reference.png\n- upstream-empty-dark-reference.png\n",
                 options.repo.display(),
                 commit.trim(),
                 options.home.display(),
@@ -1607,6 +1621,99 @@ const path = require("path");
       });
     });
   }
+  async function seedPendingUserInputReference() {
+    await seedActiveChatReference();
+    await page.evaluate(async () => {
+      const { useStore } = await import("/src/store.ts");
+      const environmentId = "local";
+      const threadId = "thread-r3code-ui-shell";
+      const activity = {
+        id: "activity-user-input-requested",
+        tone: "info",
+        kind: "user-input.requested",
+        summary: "User input requested",
+        payload: {
+          requestId: "req-browser-user-input",
+          questions: [
+            {
+              id: "scope",
+              header: "Scope",
+              question: "What should this change cover?",
+              options: [
+                { label: "Tight", description: "Touch only the footer layout logic." },
+                { label: "Broad", description: "Also adjust the related composer controls." },
+              ],
+            },
+            {
+              id: "risk",
+              header: "Risk",
+              question: "How aggressive should the imaginary plan be?",
+              options: [
+                { label: "Conservative", description: "Favor reliability and low-risk changes." },
+                { label: "Balanced", description: "Mix quick wins with one structural improvement." },
+              ],
+            },
+          ],
+        },
+        turnId: null,
+        sequence: 1,
+        createdAt: "2026-03-04T12:16:40.000Z",
+      };
+      useStore.setState((state) => {
+        const environmentState = state.environmentStateById[environmentId];
+        if (!environmentState) return state;
+        const currentShell = environmentState.threadShellById[threadId];
+        const currentSummary = environmentState.sidebarThreadSummaryById[threadId];
+        const currentSession = environmentState.threadSessionById[threadId];
+        return {
+          ...state,
+          environmentStateById: {
+            ...state.environmentStateById,
+            [environmentId]: {
+              ...environmentState,
+              threadShellById: {
+                ...environmentState.threadShellById,
+                [threadId]: currentShell
+                  ? { ...currentShell, interactionMode: "plan" }
+                  : currentShell,
+              },
+              threadSessionById: {
+                ...environmentState.threadSessionById,
+                [threadId]: currentSession
+                  ? { ...currentSession, status: "running", orchestrationStatus: "running" }
+                  : currentSession,
+              },
+              activityIdsByThreadId: {
+                ...environmentState.activityIdsByThreadId,
+                [threadId]: [activity.id],
+              },
+              activityByThreadId: {
+                ...environmentState.activityByThreadId,
+                [threadId]: { [activity.id]: activity },
+              },
+              sidebarThreadSummaryById: {
+                ...environmentState.sidebarThreadSummaryById,
+                [threadId]: currentSummary
+                  ? {
+                      ...currentSummary,
+                      interactionMode: "plan",
+                      hasPendingUserInput: true,
+                      session: currentSummary.session
+                        ? {
+                            ...currentSummary.session,
+                            status: "running",
+                            orchestrationStatus: "running",
+                          }
+                        : currentSummary.session,
+                    }
+                  : currentSummary,
+              },
+            },
+          },
+        };
+      });
+    });
+  }
   await page.goto(process.env.PAIRING_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
   await page.getByText("Pick a thread to continue").waitFor({ timeout: 15000 });
   await page.waitForLoadState("networkidle", { timeout: 30000 });
@@ -1673,6 +1780,13 @@ const path = require("path");
   await page.waitForTimeout(350);
   await dismissUpdatesToast();
   await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-active-chat-reference.png"), fullPage: true });
+  await page.goto(new URL("/local/thread-r3code-ui-shell", appOrigin).toString(), { waitUntil: "domcontentloaded", timeout: 30000 });
+  await seedPendingUserInputReference();
+  await page.getByText("What should this change cover?").waitFor({ timeout: 15000 });
+  await page.getByText("Tight").waitFor({ timeout: 15000 });
+  await page.waitForTimeout(350);
+  await dismissUpdatesToast();
+  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-pending-user-input-reference.png"), fullPage: true });
   await page.goto(new URL("/settings", appOrigin).toString(), { waitUntil: "networkidle", timeout: 30000 });
   await page.getByLabel("Theme preference").waitFor({ timeout: 15000 });
   await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-settings-reference.png"), fullPage: true });
