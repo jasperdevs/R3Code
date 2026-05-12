@@ -181,6 +181,7 @@ R3Code composer inline-token capture: `reference/screenshots/r3code-composer-inl
 R3Code terminal drawer capture: `reference/screenshots/r3code-terminal-drawer-window.png`
 R3Code diff panel capture: `reference/screenshots/r3code-diff-panel-window.png`
 R3Code branch toolbar capture: `reference/screenshots/r3code-branch-toolbar-window.png`
+R3Code sidebar options menu capture: `reference/screenshots/r3code-sidebar-options-menu-window.png`
 R3Code project scripts menu capture: `reference/screenshots/r3code-project-scripts-menu-window.png`
 R3Code Open In menu capture: `reference/screenshots/r3code-open-in-menu-window.png`
 R3Code Git actions menu capture: `reference/screenshots/r3code-git-actions-menu-window.png`
@@ -198,13 +199,14 @@ cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen terminal-drawer --output reference\screenshots\r3code-terminal-drawer-window.png
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen diff-panel --output reference\screenshots\r3code-diff-panel-window.png
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen branch-toolbar --output reference\screenshots\r3code-branch-toolbar-window.png
+cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen sidebar-options-menu --output reference\screenshots\r3code-sidebar-options-menu-window.png
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen project-scripts-menu --output reference\screenshots\r3code-project-scripts-menu-window.png
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen open-in-menu --output reference\screenshots\r3code-open-in-menu-window.png
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen git-actions-menu --output reference\screenshots\r3code-git-actions-menu-window.png
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen provider-model-picker --output reference\screenshots\r3code-provider-model-picker-window.png
 ```
 
-These are native Rust/GPUI captures for seeded chat states. Active chat, running turn, pending approval, pending user input, terminal drawer, diff panel, branch toolbar, project scripts menu, Open In menu, Git actions menu, provider/model picker, composer command menu, composer inline tokens, and focused composer are now covered by source-backed upstream reference comparisons.
+These are native Rust/GPUI captures for seeded chat states. Active chat, running turn, pending approval, pending user input, terminal drawer, diff panel, branch toolbar, sidebar options menu, project scripts menu, Open In menu, Git actions menu, provider/model picker, composer command menu, composer inline tokens, and focused composer are now covered by source-backed upstream reference comparisons.
 The running turn capture ports the upstream work-log derivation shape first: activity ordering, ignored lifecycle rows, checkpoint filtering, simple tool update/completion collapse, command previews, changed-file previews, and the `WorkGroupSection` surface. It is not a live provider stream yet.
 The Rust core also ports upstream `ChatView.logic.ts`, `terminalContext.ts`, `composer-editor-mentions.ts`, `composer-logic.ts`, `ComposerPromptEditor.tsx`, `composerInlineChip.ts`, `vscode-icons.ts`, `composerSlashCommandSearch.ts`, `composerMenuHighlight.ts`, `providerSkillSearch.ts`, and `providerSkillPresentation.ts` composer contracts: inline terminal-context placeholders, terminal-context block append/extract/display state, expired terminal-context filtering, expired-context toast copy, completed `@path` and `$skill` segment parsing, inline mention/skill chip rendering, terminal-context prompt segments, mention-boundary selection detection, collapsed/expanded cursor mapping, active `/`, `@`, and `$` trigger detection, standalone `/plan` and `/default` command parsing, text-range replacement, built-in and provider slash command search, provider skill search/presentation, composer menu grouping, active-item highlight reset, keyboard nudging, and command selection replacement behavior. The `composer-menu` GPUI capture renders the slash-command menu from those Rust contracts and is now compared against `upstream-composer-menu-reference.png` at a 5% threshold. The `composer-inline-tokens` GPUI capture renders completed `@AGENTS.md` and `$agent-browser` chips against a pinned upstream controlled-draft browser capture at a 5% threshold.
 
@@ -354,6 +356,25 @@ Last measured result: `2.614%`.
 
 The branch toolbar capture ports upstream `BranchToolbar.tsx`, `BranchToolbar.logic.ts`, `BranchToolbarEnvModeSelector.tsx`, `BranchToolbarBranchSelector.tsx`, the shared remote-branch dedupe helpers, environment/worktree labels, current/new-worktree mode resolution, branch trigger text, worktree selection target rules, and lucide `Monitor`, `Cloud`, `FolderGit`, and `FolderGit2` assets. It is now compared against a seeded upstream draft-route worktree toolbar reference, but the full combobox, async git ref query, create-ref, PR checkout, and real environment switching paths remain missing.
 The branch/header chrome also now includes a source-backed static `GitActionsControl` quick action group so the surrounding action order matches the pinned upstream references; dialogs, publish flow, progress toasts, and live git mutations are still missing.
+
+## Current Sidebar Options Menu Baseline
+
+Reference: `reference/screenshots/upstream-sidebar-options-menu-reference.png`
+
+R3Code capture: `reference/screenshots/r3code-sidebar-options-menu-window.png`
+
+Allowed brand-copy difference: `--ignore-rect 0,0,120,45`
+
+Current measured diff:
+
+```text
+cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen sidebar-options-menu --output reference\screenshots\r3code-sidebar-options-menu-window.png
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-sidebar-options-menu-reference.png --actual reference\screenshots\r3code-sidebar-options-menu-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 3.7
+```
+
+Last measured result: `3.533%`.
+
+The sidebar options menu capture ports upstream `Sidebar.tsx` and `packages/contracts/src/settings.ts` defaults for project sort order, thread sort order, visible thread preview count, and project grouping labels. It now compares the native GPUI menu against the pinned upstream menu opened from the Projects header, including default selected radio rows and the focused visible-thread count control. Real project reordering, grouped-project override dialogs, drag sorting, and persisted settings are still missing.
 
 ## Current Git Actions Menu Baseline
 

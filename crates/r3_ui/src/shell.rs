@@ -16,15 +16,16 @@ use r3_core::{
     ProcessDiagnosticsEntry, ProcessDiagnosticsResult, ProjectEntry, ProjectEntryKind,
     ProjectScript, ProjectScriptIcon, ProjectSummary, ProviderInstanceEntry,
     RECENT_COMMAND_PALETTE_THREAD_LIMIT, ServerProviderModel, ServerProviderSkill,
-    ServerProviderSlashCommand, SidebarThreadSortOrder, TerminalEvent, ThreadStatus,
+    ServerProviderSlashCommand, SidebarOptionsState, SidebarProjectGroupingMode,
+    SidebarProjectSortOrder, SidebarThreadSortOrder, TerminalEvent, ThreadStatus,
     TraceDiagnosticsFailureSummary, TraceDiagnosticsLogEvent, TraceDiagnosticsRecentFailure,
     TraceDiagnosticsResult, TraceDiagnosticsSpanOccurrence, TraceDiagnosticsSpanSummary,
     TurnDiffFileChange, TurnDiffStat, TurnDiffSummary, TurnDiffTreeNode, WorkLogEntry,
     build_composer_menu_items, build_git_action_menu_items, build_project_action_items,
     build_root_command_palette_groups, build_thread_action_items, build_turn_diff_tree,
-    close_thread_terminal, composer_menu_search_key, detect_composer_trigger,
-    filter_command_palette_groups, format_diagnostics_bytes, format_diagnostics_count,
-    format_diagnostics_description, format_diagnostics_duration_ms,
+    close_thread_terminal, composer_menu_search_key, default_sidebar_options_state,
+    detect_composer_trigger, filter_command_palette_groups, format_diagnostics_bytes,
+    format_diagnostics_count, format_diagnostics_description, format_diagnostics_duration_ms,
     format_provider_skill_display_name, get_display_model_name, get_provider_summary,
     get_provider_version_advisory_presentation, get_provider_version_label,
     group_composer_command_items, new_thread_terminal, nudge_composer_menu_highlight,
@@ -32,7 +33,9 @@ use r3_core::{
     provider_instance_initials, replace_text_range, resolve_composer_command_selection,
     resolve_composer_menu_active_item_id, resolve_editor_options, resolve_model_picker_state,
     resolve_selectable_model, set_pending_user_input_custom_answer, set_thread_active_terminal,
-    set_thread_terminal_open, shorten_trace_id, split_prompt_into_composer_segments,
+    set_thread_terminal_open, shorten_trace_id, sidebar_project_grouping_label,
+    sidebar_project_grouping_options, sidebar_project_sort_label, sidebar_project_sort_options,
+    sidebar_thread_sort_label, sidebar_thread_sort_options, split_prompt_into_composer_segments,
     split_thread_terminal, summarize_turn_diff_stats, toggle_pending_user_input_option_selection,
 };
 
@@ -83,6 +86,8 @@ pub struct R3Shell {
     source_control_fetch_interval_seconds: u32,
     source_control_account_revealed: bool,
     source_control_provider_enabled: [bool; 3],
+    sidebar_options_menu_open: bool,
+    sidebar_options_state: SidebarOptionsState,
     project_script_run_count: usize,
     project_script_menu_open: bool,
     opened_editor_count: usize,
@@ -153,6 +158,8 @@ impl R3Shell {
             source_control_fetch_interval_seconds: SOURCE_CONTROL_DEFAULT_FETCH_INTERVAL_SECONDS,
             source_control_account_revealed: false,
             source_control_provider_enabled: [true, false, false],
+            sidebar_options_menu_open: screen == R3Screen::SidebarOptionsMenu,
+            sidebar_options_state: default_sidebar_options_state(),
             project_script_run_count: 0,
             project_script_menu_open: screen == R3Screen::ProjectScriptsMenu,
             opened_editor_count: 0,
@@ -218,6 +225,7 @@ pub enum R3Screen {
     TerminalDrawer,
     DiffPanel,
     BranchToolbar,
+    SidebarOptionsMenu,
     ProjectScriptsMenu,
     OpenInMenu,
     GitActionsMenu,
@@ -491,6 +499,7 @@ impl Render for R3Shell {
             | R3Screen::TerminalDrawer
             | R3Screen::DiffPanel
             | R3Screen::BranchToolbar
+            | R3Screen::SidebarOptionsMenu
             | R3Screen::ProjectScriptsMenu
             | R3Screen::OpenInMenu
             | R3Screen::GitActionsMenu
@@ -520,6 +529,10 @@ impl Render for R3Shell {
 
         if self.git_actions_menu_open && self.snapshot.is_git_repo {
             root = root.child(self.git_actions_menu_popup(cx));
+        }
+
+        if self.sidebar_options_menu_open {
+            root = root.child(self.sidebar_options_menu_popup(cx));
         }
 
         root
@@ -8257,11 +8270,15 @@ impl R3Shell {
             .on_click(cx.listener(move |this, _, window, cx| {
                 match id {
                     "project-add" => {
+                        this.sidebar_options_menu_open = false;
                         this.open_command_palette(window, cx);
                         this.execute_palette_action(CommandPaletteAction::AddProject, window, cx);
                     }
                     "project-sort" => {
-                        this.project_sort_ascending = !this.project_sort_ascending;
+                        this.sidebar_options_menu_open = !this.sidebar_options_menu_open;
+                        this.project_script_menu_open = false;
+                        this.open_in_menu_open = false;
+                        this.git_actions_menu_open = false;
                         cx.notify();
                     }
                     _ => {}
@@ -8274,6 +8291,222 @@ impl R3Shell {
                     .size_4()
                     .text_color(self.theme.muted_foreground),
             )
+    }
+
+    fn sidebar_options_menu_popup(&self, cx: &mut Context<Self>) -> AnyElement {
+        let mut popup = div()
+            .id("sidebar-options-menu-popup")
+            .absolute()
+            .top(px(116.0))
+            .left(px(17.0))
+            .flex()
+            .flex_col()
+            .w(px(200.0))
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.background)
+            .p_1()
+            .text_color(self.theme.foreground)
+            .shadow(self.header_menu_shadow());
+
+        popup = popup.child(self.sidebar_options_group_label("Sort projects", false));
+        for option in sidebar_project_sort_options() {
+            popup = popup.child(self.sidebar_project_sort_option_row(option, cx));
+        }
+
+        popup = popup.child(self.sidebar_options_group_label("Sort threads", true));
+        for option in sidebar_thread_sort_options() {
+            popup = popup.child(self.sidebar_thread_sort_option_row(option, cx));
+        }
+
+        popup = popup
+            .child(self.sidebar_options_group_label("Visible threads", true))
+            .child(self.sidebar_thread_preview_count_control(cx))
+            .child(self.sidebar_options_separator())
+            .child(self.sidebar_options_group_label("Group projects", true));
+
+        for option in sidebar_project_grouping_options() {
+            popup = popup.child(self.sidebar_project_grouping_option_row(option, cx));
+        }
+
+        popup.into_any_element()
+    }
+
+    fn sidebar_options_group_label(
+        &self,
+        label: &'static str,
+        extra_top: bool,
+    ) -> impl IntoElement {
+        div()
+            .px_2()
+            .pt(if extra_top { px(8.0) } else { px(4.0) })
+            .pb_1()
+            .text_size(px(12.0))
+            .font_weight(FontWeight(500.0))
+            .text_color(self.theme.muted_foreground)
+            .child(label)
+    }
+
+    fn sidebar_options_radio_row(
+        &self,
+        id: String,
+        label: &'static str,
+        selected: bool,
+    ) -> gpui::Stateful<gpui::Div> {
+        div()
+            .id(SharedString::from(id))
+            .flex()
+            .items_center()
+            .gap_2()
+            .h(px(28.0))
+            .rounded(px(2.0))
+            .pl_2()
+            .pr_4()
+            .text_size(px(12.0))
+            .text_color(self.theme.foreground)
+            .cursor_pointer()
+            .child(
+                div()
+                    .flex()
+                    .w(px(16.0))
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        svg()
+                            .path("icons/check.svg")
+                            .size_4()
+                            .text_color(self.theme.foreground)
+                            .opacity(if selected { 1.0 } else { 0.0 }),
+                    ),
+            )
+            .child(div().min_w_0().overflow_hidden().child(label))
+    }
+
+    fn sidebar_project_sort_option_row(
+        &self,
+        option: SidebarProjectSortOrder,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        self.sidebar_options_radio_row(
+            format!("sidebar-project-sort-{option:?}"),
+            sidebar_project_sort_label(option),
+            self.sidebar_options_state.project_sort_order == option,
+        )
+        .on_click(cx.listener(move |this, _, _, cx| {
+            this.sidebar_options_state.project_sort_order = option;
+            cx.notify();
+        }))
+    }
+
+    fn sidebar_thread_sort_option_row(
+        &self,
+        option: SidebarThreadSortOrder,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        self.sidebar_options_radio_row(
+            format!("sidebar-thread-sort-{option:?}"),
+            sidebar_thread_sort_label(option),
+            self.sidebar_options_state.thread_sort_order == option,
+        )
+        .on_click(cx.listener(move |this, _, _, cx| {
+            this.sidebar_options_state.thread_sort_order = option;
+            cx.notify();
+        }))
+    }
+
+    fn sidebar_project_grouping_option_row(
+        &self,
+        option: SidebarProjectGroupingMode,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        self.sidebar_options_radio_row(
+            format!("sidebar-project-grouping-{option:?}"),
+            sidebar_project_grouping_label(option),
+            self.sidebar_options_state.project_grouping_mode == option,
+        )
+        .on_click(cx.listener(move |this, _, _, cx| {
+            this.sidebar_options_state.project_grouping_mode = option;
+            cx.notify();
+        }))
+    }
+
+    fn sidebar_thread_preview_count_control(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div().px_2().py_1().child(
+            div()
+                .id("sidebar-thread-preview-count")
+                .flex()
+                .items_center()
+                .h(px(26.0))
+                .w(px(112.0))
+                .rounded(px(6.0))
+                .border_1()
+                .border_color(self.theme.primary)
+                .overflow_hidden()
+                .text_size(px(12.0))
+                .child(self.sidebar_thread_preview_count_button("decrement", "icons/minus.svg", cx))
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .h_full()
+                        .w(px(36.0))
+                        .border_l_1()
+                        .border_r_1()
+                        .border_color(self.theme.border)
+                        .text_color(self.theme.foreground)
+                        .child(self.sidebar_options_state.thread_preview_count.to_string()),
+                )
+                .child(self.sidebar_thread_preview_count_button("increment", "icons/plus.svg", cx)),
+        )
+    }
+
+    fn sidebar_thread_preview_count_button(
+        &self,
+        id: &'static str,
+        icon_path: &'static str,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .id(SharedString::from(format!("sidebar-thread-preview-{id}")))
+            .flex()
+            .items_center()
+            .justify_center()
+            .h_full()
+            .w(px(37.0))
+            .text_color(self.theme.muted_foreground)
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                match id {
+                    "decrement" => {
+                        this.sidebar_options_state.thread_preview_count = this
+                            .sidebar_options_state
+                            .thread_preview_count
+                            .saturating_sub(1)
+                            .max(r3_core::MIN_SIDEBAR_THREAD_PREVIEW_COUNT);
+                    }
+                    "increment" => {
+                        this.sidebar_options_state.thread_preview_count = this
+                            .sidebar_options_state
+                            .thread_preview_count
+                            .saturating_add(1)
+                            .min(r3_core::MAX_SIDEBAR_THREAD_PREVIEW_COUNT);
+                    }
+                    _ => {}
+                }
+                cx.notify();
+            }))
+            .child(
+                svg()
+                    .path(icon_path)
+                    .size_3p5()
+                    .text_color(self.theme.muted_foreground),
+            )
+    }
+
+    fn sidebar_options_separator(&self) -> impl IntoElement {
+        div().mx_2().my_1().h(px(1.0)).bg(self.theme.border)
     }
 
     fn toolbar_icon_button(
@@ -9607,6 +9840,7 @@ pub fn open_main_window(cx: &mut App) {
         Ok("terminal-drawer") | Ok("terminal") => (R3Screen::TerminalDrawer, false),
         Ok("diff-panel") | Ok("diff") => (R3Screen::DiffPanel, false),
         Ok("branch-toolbar") | Ok("branch") => (R3Screen::BranchToolbar, false),
+        Ok("sidebar-options-menu") | Ok("sidebar-options") => (R3Screen::SidebarOptionsMenu, false),
         Ok("project-scripts-menu") | Ok("scripts-menu") => (R3Screen::ProjectScriptsMenu, false),
         Ok("open-in-menu") | Ok("editor-menu") => (R3Screen::OpenInMenu, false),
         Ok("git-actions-menu") | Ok("git-menu") => (R3Screen::GitActionsMenu, false),
@@ -9635,7 +9869,9 @@ pub fn open_main_window(cx: &mut App) {
                 }
                 R3Screen::TerminalDrawer => AppSnapshot::terminal_drawer_reference_state(),
                 R3Screen::DiffPanel => AppSnapshot::diff_panel_reference_state(),
-                R3Screen::BranchToolbar => AppSnapshot::branch_toolbar_reference_state(),
+                R3Screen::BranchToolbar | R3Screen::SidebarOptionsMenu => {
+                    AppSnapshot::branch_toolbar_reference_state()
+                }
                 R3Screen::ProjectScriptsMenu => AppSnapshot::active_chat_reference_state(),
                 R3Screen::OpenInMenu | R3Screen::GitActionsMenu => {
                     AppSnapshot::branch_toolbar_reference_state()

@@ -3735,9 +3735,97 @@ pub enum ThreadStatus {
 pub const RECENT_COMMAND_PALETTE_THREAD_LIMIT: usize = 12;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidebarProjectSortOrder {
+    UpdatedAt,
+    CreatedAt,
+    Manual,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SidebarThreadSortOrder {
     UpdatedAt,
     CreatedAt,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidebarProjectGroupingMode {
+    Repository,
+    RepositoryPath,
+    Separate,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SidebarOptionsState {
+    pub project_sort_order: SidebarProjectSortOrder,
+    pub thread_sort_order: SidebarThreadSortOrder,
+    pub project_grouping_mode: SidebarProjectGroupingMode,
+    pub thread_preview_count: u8,
+}
+
+pub const MIN_SIDEBAR_THREAD_PREVIEW_COUNT: u8 = 1;
+pub const MAX_SIDEBAR_THREAD_PREVIEW_COUNT: u8 = 15;
+pub const DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT: u8 = 6;
+
+pub fn default_sidebar_options_state() -> SidebarOptionsState {
+    SidebarOptionsState {
+        project_sort_order: SidebarProjectSortOrder::UpdatedAt,
+        thread_sort_order: SidebarThreadSortOrder::UpdatedAt,
+        project_grouping_mode: SidebarProjectGroupingMode::Repository,
+        thread_preview_count: DEFAULT_SIDEBAR_THREAD_PREVIEW_COUNT,
+    }
+}
+
+pub fn clamp_sidebar_thread_preview_count(value: u8) -> u8 {
+    value.clamp(
+        MIN_SIDEBAR_THREAD_PREVIEW_COUNT,
+        MAX_SIDEBAR_THREAD_PREVIEW_COUNT,
+    )
+}
+
+pub fn sidebar_project_sort_options() -> [SidebarProjectSortOrder; 3] {
+    [
+        SidebarProjectSortOrder::UpdatedAt,
+        SidebarProjectSortOrder::CreatedAt,
+        SidebarProjectSortOrder::Manual,
+    ]
+}
+
+pub fn sidebar_thread_sort_options() -> [SidebarThreadSortOrder; 2] {
+    [
+        SidebarThreadSortOrder::UpdatedAt,
+        SidebarThreadSortOrder::CreatedAt,
+    ]
+}
+
+pub fn sidebar_project_grouping_options() -> [SidebarProjectGroupingMode; 3] {
+    [
+        SidebarProjectGroupingMode::Repository,
+        SidebarProjectGroupingMode::RepositoryPath,
+        SidebarProjectGroupingMode::Separate,
+    ]
+}
+
+pub fn sidebar_project_sort_label(sort_order: SidebarProjectSortOrder) -> &'static str {
+    match sort_order {
+        SidebarProjectSortOrder::UpdatedAt => "Last user message",
+        SidebarProjectSortOrder::CreatedAt => "Created at",
+        SidebarProjectSortOrder::Manual => "Manual",
+    }
+}
+
+pub fn sidebar_thread_sort_label(sort_order: SidebarThreadSortOrder) -> &'static str {
+    match sort_order {
+        SidebarThreadSortOrder::UpdatedAt => "Last user message",
+        SidebarThreadSortOrder::CreatedAt => "Created at",
+    }
+}
+
+pub fn sidebar_project_grouping_label(grouping_mode: SidebarProjectGroupingMode) -> &'static str {
+    match grouping_mode {
+        SidebarProjectGroupingMode::Repository => "Group by repository",
+        SidebarProjectGroupingMode::RepositoryPath => "Group by repository path",
+        SidebarProjectGroupingMode::Separate => "Keep separate",
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -10154,6 +10242,52 @@ mod tests {
             vec![("Commit", false), ("Push", true), ("Create PR", true)]
         );
         assert!(build_git_action_menu_items(None, false, true).is_empty());
+    }
+
+    #[test]
+    fn sidebar_options_defaults_and_labels_match_upstream_settings() {
+        let defaults = default_sidebar_options_state();
+        assert_eq!(
+            defaults.project_sort_order,
+            SidebarProjectSortOrder::UpdatedAt
+        );
+        assert_eq!(
+            defaults.thread_sort_order,
+            SidebarThreadSortOrder::UpdatedAt
+        );
+        assert_eq!(
+            defaults.project_grouping_mode,
+            SidebarProjectGroupingMode::Repository
+        );
+        assert_eq!(defaults.thread_preview_count, 6);
+
+        assert_eq!(
+            sidebar_project_sort_options()
+                .iter()
+                .map(|value| sidebar_project_sort_label(*value))
+                .collect::<Vec<_>>(),
+            vec!["Last user message", "Created at", "Manual"]
+        );
+        assert_eq!(
+            sidebar_thread_sort_options()
+                .iter()
+                .map(|value| sidebar_thread_sort_label(*value))
+                .collect::<Vec<_>>(),
+            vec!["Last user message", "Created at"]
+        );
+        assert_eq!(
+            sidebar_project_grouping_options()
+                .iter()
+                .map(|value| sidebar_project_grouping_label(*value))
+                .collect::<Vec<_>>(),
+            vec![
+                "Group by repository",
+                "Group by repository path",
+                "Keep separate"
+            ]
+        );
+        assert_eq!(clamp_sidebar_thread_preview_count(0), 1);
+        assert_eq!(clamp_sidebar_thread_preview_count(16), 15);
     }
 
     #[test]

@@ -112,7 +112,7 @@ fn print_usage() {
         "Usage:
   cargo run -p xtask -- check-parity --allow-window-capture [--refresh-reference]
   cargo run -p xtask -- compare-screenshots --expected <png> --actual <png> [--channel-tolerance <n>] [--ignore-rect x,y,w,h] [--max-different-pixels-percent <n>]
-  cargo run -p xtask -- capture-r3code-window --allow-window-capture [--screen draft|composer-focused|composer-menu|composer-inline-tokens|active-chat|project-scripts-menu|running-turn|pending-approval|pending-user-input|terminal-drawer|diff-panel|branch-toolbar|open-in-menu|git-actions-menu|provider-model-picker|settings|settings-diagnostics|command-palette|settings-theme-menu|settings-dark|settings-back|settings-keybindings|settings-providers|settings-source-control|settings-connections|settings-archive] [--theme light|dark|system] [--output <png>]
+  cargo run -p xtask -- capture-r3code-window --allow-window-capture [--screen draft|composer-focused|composer-menu|composer-inline-tokens|active-chat|project-scripts-menu|running-turn|pending-approval|pending-user-input|terminal-drawer|diff-panel|branch-toolbar|sidebar-options-menu|open-in-menu|git-actions-menu|provider-model-picker|settings|settings-diagnostics|command-palette|settings-theme-menu|settings-dark|settings-back|settings-keybindings|settings-providers|settings-source-control|settings-connections|settings-archive] [--theme light|dark|system] [--output <png>]
   cargo run -p xtask -- capture-reference-browser"
     );
 }
@@ -459,6 +459,28 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
         expected: resolve_repo_path("reference/screenshots/upstream-branch-toolbar-reference.png"),
         actual: resolve_repo_path("reference/screenshots/r3code-branch-toolbar-window.png"),
         max_different_pixels_percent: 3.0,
+        channel_tolerance: 8,
+        ignore_rects: vec![Rect {
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 45,
+        }],
+    })?;
+
+    capture_r3code_window(CaptureR3CodeOptions {
+        screen: Some("sidebar-options-menu".to_string()),
+        theme: Some("light".to_string()),
+        output: resolve_repo_path("reference/screenshots/r3code-sidebar-options-menu-window.png"),
+        allow_window_capture: true,
+        ..CaptureR3CodeOptions::default()
+    })?;
+    compare_screenshots(CompareOptions {
+        expected: resolve_repo_path(
+            "reference/screenshots/upstream-sidebar-options-menu-reference.png",
+        ),
+        actual: resolve_repo_path("reference/screenshots/r3code-sidebar-options-menu-window.png"),
+        max_different_pixels_percent: 3.7,
         channel_tolerance: 8,
         ignore_rects: vec![Rect {
             x: 0,
@@ -1547,7 +1569,7 @@ fn capture_reference_browser(options: CaptureReferenceOptions) -> Result<()> {
         fs::write(
             options.output_dir.join("CAPTURE_MANIFEST.txt"),
             format!(
-                "Upstream reference repository: {}\nReference commit: {}\nIsolated reference home: {}\nOutput directory: {}\nCaptured:\n- upstream-empty-reference.png\n- upstream-command-palette-reference.png\n- upstream-draft-reference.png\n- upstream-composer-focused-reference.png\n- upstream-composer-menu-reference.png\n- upstream-composer-inline-tokens-reference.png\n- upstream-provider-model-picker-reference.png\n- upstream-branch-toolbar-reference.png\n- upstream-open-in-menu-reference.png\n- upstream-git-actions-menu-reference.png\n- upstream-active-chat-reference.png\n- upstream-project-scripts-menu-reference.png\n- upstream-running-turn-reference.png\n- upstream-terminal-drawer-reference.png\n- upstream-diff-panel-reference.png\n- upstream-pending-user-input-reference.png\n- upstream-pending-approval-reference.png\n- upstream-settings-reference.png\n- upstream-settings-keybindings-reference.png\n- upstream-settings-providers-reference.png\n- upstream-settings-source-control-reference.png\n- upstream-settings-connections-reference.png\n- upstream-settings-diagnostics-reference.png\n- upstream-settings-archive-reference.png\n- upstream-settings-theme-menu-reference.png\n- upstream-settings-dark-reference.png\n- upstream-empty-dark-reference.png\n",
+                "Upstream reference repository: {}\nReference commit: {}\nIsolated reference home: {}\nOutput directory: {}\nCaptured:\n- upstream-empty-reference.png\n- upstream-command-palette-reference.png\n- upstream-draft-reference.png\n- upstream-composer-focused-reference.png\n- upstream-composer-menu-reference.png\n- upstream-composer-inline-tokens-reference.png\n- upstream-provider-model-picker-reference.png\n- upstream-branch-toolbar-reference.png\n- upstream-sidebar-options-menu-reference.png\n- upstream-open-in-menu-reference.png\n- upstream-git-actions-menu-reference.png\n- upstream-active-chat-reference.png\n- upstream-project-scripts-menu-reference.png\n- upstream-running-turn-reference.png\n- upstream-terminal-drawer-reference.png\n- upstream-diff-panel-reference.png\n- upstream-pending-user-input-reference.png\n- upstream-pending-approval-reference.png\n- upstream-settings-reference.png\n- upstream-settings-keybindings-reference.png\n- upstream-settings-providers-reference.png\n- upstream-settings-source-control-reference.png\n- upstream-settings-connections-reference.png\n- upstream-settings-diagnostics-reference.png\n- upstream-settings-archive-reference.png\n- upstream-settings-theme-menu-reference.png\n- upstream-settings-dark-reference.png\n- upstream-empty-dark-reference.png\n",
                 options.repo.display(),
                 commit.trim(),
                 options.home.display(),
@@ -2385,6 +2407,16 @@ const path = require("path");
   await page.waitForTimeout(350);
   await dismissUpdatesToast();
   await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-branch-toolbar-reference.png"), fullPage: true });
+  await page.locator('[data-slot="sidebar-group"]').filter({ has: page.getByText("Projects", { exact: true }) }).locator("button").first().click();
+  await page.getByText("Sort projects", { exact: true }).last().waitFor({ timeout: 15000 });
+  await page.getByText("Visible threads", { exact: true }).last().waitFor({ timeout: 15000 });
+  await page.getByText("Group projects", { exact: true }).last().waitFor({ timeout: 15000 });
+  await page.waitForTimeout(350);
+  await dismissUpdatesToast();
+  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-sidebar-options-menu-reference.png"), fullPage: true });
+  await page.keyboard.press("Escape");
+  await page.locator('[data-slot="menu-popup"]').last().waitFor({ state: "detached", timeout: 15000 }).catch(() => undefined);
+  await page.mouse.click(500, 500);
   await page.getByRole("button", { name: "Copy options" }).last().click();
   await page.locator('[data-slot="menu-popup"]').last().waitFor({ timeout: 15000 });
   await page.waitForTimeout(350);
