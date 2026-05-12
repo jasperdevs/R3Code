@@ -4413,8 +4413,8 @@ impl R3Shell {
         let mut popup = div()
             .id("model-picker-content")
             .absolute()
-            .left(px(SIDEBAR_MIN_WIDTH + 24.0))
-            .bottom(px(76.0))
+            .left(px(SIDEBAR_MIN_WIDTH + 112.0))
+            .bottom(px(54.0))
             .flex()
             .w(px(400.0))
             .h(px(384.0))
@@ -4466,8 +4466,12 @@ impl R3Shell {
 
         if !state.is_locked {
             rail = rail
-                .child(self.model_picker_coming_soon_button("Gemini", "G", cx))
-                .child(self.model_picker_coming_soon_button("Github Copilot", "GH", cx));
+                .child(self.model_picker_coming_soon_button("Gemini", "icons/gemini.svg", cx))
+                .child(self.model_picker_coming_soon_button(
+                    "Github Copilot",
+                    "icons/github-copilot.svg",
+                    cx,
+                ));
         }
 
         rail
@@ -4544,8 +4548,8 @@ impl R3Shell {
 
     fn model_picker_coming_soon_button(
         &self,
-        label: &'static str,
-        initials: &'static str,
+        _label: &'static str,
+        icon_path: &'static str,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         self.model_picker_rail_button(
@@ -4561,10 +4565,13 @@ impl R3Shell {
                 .justify_center()
                 .w(px(24.0))
                 .h(px(24.0))
-                .text_size(px(9.0))
-                .font_weight(FontWeight(650.0))
                 .text_color(self.theme.muted_foreground.opacity(0.80))
-                .child(initials)
+                .child(
+                    svg()
+                        .path(icon_path)
+                        .size_5()
+                        .text_color(self.theme.muted_foreground.opacity(0.80)),
+                )
                 .child(
                     div()
                         .absolute()
@@ -4583,8 +4590,7 @@ impl R3Shell {
                                 .size(px(8.0))
                                 .text_color(self.theme.muted_foreground),
                         ),
-                )
-                .child(div().w(px(0.0)).h(px(0.0)).child(label)),
+                ),
         )
     }
 

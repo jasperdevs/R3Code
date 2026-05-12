@@ -103,6 +103,10 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/folder.svg"),
     ),
     (
+        "icons/gemini.svg",
+        include_bytes!("../assets/icons/gemini.svg"),
+    ),
+    (
         "icons/git-branch.svg",
         include_bytes!("../assets/icons/git-branch.svg"),
     ),
@@ -113,6 +117,10 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
     (
         "icons/git-pull-request.svg",
         include_bytes!("../assets/icons/git-pull-request.svg"),
+    ),
+    (
+        "icons/github-copilot.svg",
+        include_bytes!("../assets/icons/github-copilot.svg"),
     ),
     (
         "icons/hammer.svg",
@@ -313,8 +321,10 @@ mod tests {
             "folder.svg",
             "folder-git-2.svg",
             "folder-git.svg",
+            "gemini.svg",
             "git-commit.svg",
             "git-pull-request.svg",
+            "github-copilot.svg",
             "hammer.svg",
             "info.svg",
             "list-checks.svg",

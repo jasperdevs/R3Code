@@ -4,7 +4,7 @@ R3Code is still an early static Rust/GPUI shell, not a full Rust port of T3 Code
 
 Reference commit: `8fc317939f5c8bbef4afbe309ae897abbc221631`
 
-Current local baseline: R3Code `main` after the keybindings default-rule projection, pending-user-input composer footer, and diff-panel compact-composer/renderer parity slices.
+Current local baseline: R3Code `main` after the keybindings default-rule projection, provider/model picker rail, pending-user-input composer footer, and diff-panel compact-composer/renderer parity slices.
 
 ## Size Check
 
@@ -42,7 +42,7 @@ These screens have automated reference captures and native GPUI comparisons:
 | Git actions options menu | 3% |
 | Composer slash-command menu | 5% |
 | Composer inline mention/skill chips | 5% |
-| Provider/model picker | 6% |
+| Provider/model picker | 4.7% |
 | Pending approval composer state | 5% |
 | Pending user input composer state | 5.1% |
 | Settings general | 6% |
@@ -57,7 +57,7 @@ These screens have automated reference captures and native GPUI comparisons:
 | Settings dark selection | 6% |
 | Empty/no active thread, dark theme | 2% |
 
-The strongest parity areas are the empty shell, draft chat chrome, archive empty state, and settings back path. The weakest implemented area is now the diff panel renderer, followed by Keybindings; the diff panel gate is tightened to 8.8% after source-backed row geometry, stat-label, compact composer, and syntax-palette improvements, while the simplified renderer still carries browser-vs-GPUI and missing `@pierre/diffs` differences. The active-chat gate is tightened to 4.1% after the seeded active reference model matched upstream `gpt-5.4`. The pending-user-input composer now restores the upstream footer controls and tighter editor height, with the gate reduced to 5.1%.
+The strongest parity areas are the empty shell, draft chat chrome, archive empty state, and settings back path. The weakest implemented area is now the diff panel renderer, followed by Keybindings; the diff panel gate is tightened to 8.8% after source-backed row geometry, stat-label, compact composer, and syntax-palette improvements, while the simplified renderer still carries browser-vs-GPUI and missing `@pierre/diffs` differences. The active-chat gate is tightened to 4.1% after the seeded active reference model matched upstream `gpt-5.4`. The provider/model picker gate is tightened to 4.7% after matching the upstream draft capture rail order, popup anchor, and coming-soon icon treatment. The pending-user-input composer now restores the upstream footer controls and tighter editor height, with the gate reduced to 5.1%.
 
 ## Major Missing Product Surfaces
 

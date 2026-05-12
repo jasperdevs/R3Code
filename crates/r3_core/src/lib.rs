@@ -8346,6 +8346,16 @@ impl AppSnapshot {
         let mut snapshot = Self::draft_reference_state();
         snapshot.selected_model = DEFAULT_MODEL.to_string();
         snapshot.model_favorites = Vec::new();
+        let providers = snapshot.providers.clone();
+        snapshot.providers = ["claudeAgent", "codex", "cursor", "opencode"]
+            .iter()
+            .filter_map(|instance_id| {
+                providers
+                    .iter()
+                    .find(|provider| provider.instance_id == *instance_id)
+                    .cloned()
+            })
+            .collect();
         snapshot
     }
 
@@ -10736,6 +10746,44 @@ mod tests {
         assert_eq!(
             build_model_picker_search_text(&sorted[0]),
             "gpt-5.4 codex codex"
+        );
+    }
+
+    #[test]
+    fn provider_model_picker_reference_state_matches_upstream_capture_contract() {
+        let snapshot = AppSnapshot::provider_model_picker_reference_state();
+        assert_eq!(snapshot.selected_provider_instance_id, "codex");
+        assert_eq!(snapshot.selected_model, DEFAULT_MODEL);
+        assert!(snapshot.model_favorites.is_empty());
+
+        let state = resolve_model_picker_state(&snapshot, "", None, None, None);
+        assert_eq!(
+            state.selected_instance,
+            ModelPickerSelectedInstance::Instance("codex".to_string())
+        );
+        assert!(!state.show_instance_badge);
+        assert_eq!(
+            state
+                .sidebar_entries
+                .iter()
+                .map(|entry| entry.instance_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["claudeAgent", "codex", "cursor", "opencode"]
+        );
+        assert_eq!(
+            state
+                .filtered_models
+                .iter()
+                .map(|model| provider_model_key(&model.instance_id, &model.slug))
+                .collect::<Vec<_>>(),
+            vec![
+                "codex:gpt-5.5",
+                "codex:gpt-5.4",
+                "codex:gpt-5.4-mini",
+                "codex:gpt-5.3-codex",
+                "codex:gpt-5.3-codex-spark",
+                "codex:gpt-5.2"
+            ]
         );
     }
 

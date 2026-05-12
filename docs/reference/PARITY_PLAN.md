@@ -421,7 +421,7 @@ cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstr
 Last measured results: project scripts menu `4.039%`; Open In menu `2.575%`.
 
 The project script/open-in header controls port upstream `projectScripts.ts`, `ProjectScriptsControl.tsx` primary/add button behavior, `OpenInPicker.tsx` visibility rules, editor option labels, preferred-editor shortcut display, script runtime cwd/env helpers, and the script/editor icon assets visible in the seeded references. The project scripts menu is now compared against a pinned active-chat menu reference and the Open In menu is compared against a pinned draft-route editor menu reference. The add/edit/delete dialogs, keybinding capture UI, full custom editor icon set, real shell open-in calls, and real shell/project-script process execution are still missing.
-The provider/model picker capture ports upstream `ProviderModelPicker.tsx`, `ModelPickerContent.tsx`, `providerInstances.ts`, `modelOrdering.ts`, `modelPickerSearch.ts`, provider trigger labels, duplicate-instance badges, active-instance sidebar selection, locked-provider filtering, selectable-model aliases, and the provider/lucide icon set used by the picker. It is now compared against a pinned upstream draft-route picker capture. Live provider snapshots, editable provider settings, real favorites persistence, and full combobox/input behavior are still incomplete.
+The provider/model picker capture ports upstream `ProviderModelPicker.tsx`, `ModelPickerContent.tsx`, `ModelPickerSidebar.tsx`, `providerInstances.ts`, `modelOrdering.ts`, `modelPickerSearch.ts`, provider trigger labels, duplicate-instance badges, active-instance sidebar selection, locked-provider filtering, selectable-model aliases, the seeded provider rail order, and the provider/lucide/coming-soon icon set used by the picker. It is now compared against a pinned upstream draft-route picker capture. Live provider snapshots, editable provider settings, real favorites persistence, and full combobox/input behavior are still incomplete.
 
 ## Current Provider Model Picker Baseline
 
@@ -435,10 +435,10 @@ Current measured diff:
 
 ```text
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen provider-model-picker --output reference\screenshots\r3code-provider-model-picker-window.png
-cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-provider-model-picker-reference.png --actual reference\screenshots\r3code-provider-model-picker-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-provider-model-picker-reference.png --actual reference\screenshots\r3code-provider-model-picker-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 4.7
 ```
 
-Last measured result: `5.505%`.
+Last measured result: `4.496%`.
 
 ## Current Settings Baseline
 
