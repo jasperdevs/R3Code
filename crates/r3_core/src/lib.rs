@@ -77,6 +77,538 @@ pub enum DraftThreadEnvMode {
     Worktree,
 }
 
+pub const INLINE_TERMINAL_CONTEXT_PLACEHOLDER: char = '\u{FFFC}';
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalContextSelection {
+    pub terminal_id: String,
+    pub terminal_label: String,
+    pub line_start: i64,
+    pub line_end: i64,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalContextDraft {
+    pub id: String,
+    pub thread_id: String,
+    pub terminal_id: String,
+    pub terminal_label: String,
+    pub line_start: i64,
+    pub line_end: i64,
+    pub text: String,
+    pub created_at: String,
+}
+
+impl TerminalContextDraft {
+    pub fn selection(&self) -> TerminalContextSelection {
+        TerminalContextSelection {
+            terminal_id: self.terminal_id.clone(),
+            terminal_label: self.terminal_label.clone(),
+            line_start: self.line_start,
+            line_end: self.line_end,
+            text: self.text.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedTerminalContextEntry {
+    pub header: String,
+    pub body: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExtractedTerminalContexts {
+    pub prompt_text: String,
+    pub context_count: usize,
+    pub preview_title: Option<String>,
+    pub contexts: Vec<ParsedTerminalContextEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisplayedUserMessageState {
+    pub visible_text: String,
+    pub copy_text: String,
+    pub context_count: usize,
+    pub preview_title: Option<String>,
+    pub contexts: Vec<ParsedTerminalContextEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComposerSendState {
+    pub trimmed_prompt: String,
+    pub sendable_terminal_contexts: Vec<TerminalContextDraft>,
+    pub expired_terminal_context_count: usize,
+    pub has_sendable_content: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExpiredTerminalContextToastVariant {
+    Omitted,
+    Empty,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExpiredTerminalContextToastCopy {
+    pub title: String,
+    pub description: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InlineTerminalContextInsertion {
+    pub prompt: String,
+    pub cursor: usize,
+    pub context_index: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InlineTerminalContextRemoval {
+    pub prompt: String,
+    pub cursor: usize,
+}
+
+pub fn normalize_terminal_context_text(text: &str) -> String {
+    text.replace("\r\n", "\n").trim_matches('\n').to_string()
+}
+
+pub fn has_terminal_context_text(text: &str) -> bool {
+    !normalize_terminal_context_text(text).is_empty()
+}
+
+pub fn is_terminal_context_expired(text: &str) -> bool {
+    !has_terminal_context_text(text)
+}
+
+pub fn filter_terminal_contexts_with_text(
+    contexts: &[TerminalContextDraft],
+) -> Vec<TerminalContextDraft> {
+    contexts
+        .iter()
+        .filter(|context| has_terminal_context_text(&context.text))
+        .cloned()
+        .collect()
+}
+
+fn preview_terminal_context_text(text: &str) -> String {
+    let normalized = normalize_terminal_context_text(text);
+    if normalized.is_empty() {
+        return String::new();
+    }
+    let mut visible_lines = normalized.lines().take(3).collect::<Vec<_>>();
+    if normalized.lines().count() > 3 {
+        visible_lines.push("...");
+    }
+    let preview = visible_lines.join("\n");
+    if preview.chars().count() > 180 {
+        format!("{}...", preview.chars().take(177).collect::<String>())
+    } else {
+        preview
+    }
+}
+
+pub fn normalize_terminal_context_selection(
+    selection: &TerminalContextSelection,
+) -> Option<TerminalContextSelection> {
+    let text = normalize_terminal_context_text(&selection.text);
+    let terminal_id = selection.terminal_id.trim();
+    let terminal_label = selection.terminal_label.trim();
+    if text.is_empty() || terminal_id.is_empty() || terminal_label.is_empty() {
+        return None;
+    }
+    let line_start = selection.line_start.max(1);
+    let line_end = selection.line_end.max(line_start);
+    Some(TerminalContextSelection {
+        terminal_id: terminal_id.to_string(),
+        terminal_label: terminal_label.to_string(),
+        line_start,
+        line_end,
+        text,
+    })
+}
+
+pub fn format_terminal_context_range(line_start: i64, line_end: i64) -> String {
+    if line_start == line_end {
+        format!("line {line_start}")
+    } else {
+        format!("lines {line_start}-{line_end}")
+    }
+}
+
+pub fn format_terminal_context_label(selection: &TerminalContextSelection) -> String {
+    format!(
+        "{} {}",
+        selection.terminal_label,
+        format_terminal_context_range(selection.line_start, selection.line_end)
+    )
+}
+
+pub fn format_inline_terminal_context_label(selection: &TerminalContextSelection) -> String {
+    let terminal_label = selection
+        .terminal_label
+        .trim()
+        .to_ascii_lowercase()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join("-");
+    let range = if selection.line_start == selection.line_end {
+        selection.line_start.to_string()
+    } else {
+        format!("{}-{}", selection.line_start, selection.line_end)
+    };
+    format!("@{terminal_label}:{range}")
+}
+
+pub fn build_terminal_context_preview_title(
+    contexts: &[TerminalContextSelection],
+) -> Option<String> {
+    let previews = contexts
+        .iter()
+        .filter_map(|context| normalize_terminal_context_selection(context))
+        .filter_map(|context| {
+            let preview = preview_terminal_context_text(&context.text);
+            if preview.is_empty() {
+                Some(format_terminal_context_label(&context))
+            } else {
+                Some(format!(
+                    "{}\n{}",
+                    format_terminal_context_label(&context),
+                    preview
+                ))
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    (!previews.is_empty()).then_some(previews)
+}
+
+fn build_terminal_context_body_lines(selection: &TerminalContextSelection) -> Vec<String> {
+    normalize_terminal_context_text(&selection.text)
+        .lines()
+        .enumerate()
+        .map(|(index, line)| format!("  {} | {}", selection.line_start + index as i64, line))
+        .collect()
+}
+
+pub fn build_terminal_context_block(contexts: &[TerminalContextSelection]) -> String {
+    let normalized_contexts = contexts
+        .iter()
+        .filter_map(normalize_terminal_context_selection)
+        .collect::<Vec<_>>();
+    if normalized_contexts.is_empty() {
+        return String::new();
+    }
+
+    let mut lines = Vec::new();
+    for (index, context) in normalized_contexts.iter().enumerate() {
+        lines.push(format!("- {}:", format_terminal_context_label(context)));
+        lines.extend(build_terminal_context_body_lines(context));
+        if index < normalized_contexts.len() - 1 {
+            lines.push(String::new());
+        }
+    }
+
+    let mut block = vec!["<terminal_context>".to_string()];
+    block.extend(lines);
+    block.push("</terminal_context>".to_string());
+    block.join("\n")
+}
+
+pub fn materialize_inline_terminal_context_prompt(
+    prompt: &str,
+    contexts: &[TerminalContextSelection],
+) -> String {
+    let mut next_context_index = 0;
+    let mut result = String::new();
+
+    for character in prompt.chars() {
+        if character != INLINE_TERMINAL_CONTEXT_PLACEHOLDER {
+            result.push(character);
+            continue;
+        }
+        if let Some(context) = contexts.get(next_context_index) {
+            result.push_str(&format_inline_terminal_context_label(context));
+        }
+        next_context_index += 1;
+    }
+
+    result
+}
+
+pub fn append_terminal_contexts_to_prompt(
+    prompt: &str,
+    contexts: &[TerminalContextSelection],
+) -> String {
+    let trimmed_prompt = materialize_inline_terminal_context_prompt(prompt, contexts)
+        .trim()
+        .to_string();
+    let context_block = build_terminal_context_block(contexts);
+    if context_block.is_empty() {
+        return trimmed_prompt;
+    }
+    if trimmed_prompt.is_empty() {
+        context_block
+    } else {
+        format!("{trimmed_prompt}\n\n{context_block}")
+    }
+}
+
+pub fn extract_trailing_terminal_contexts(prompt: &str) -> ExtractedTerminalContexts {
+    let trimmed_end = prompt.trim_end();
+    let close_tag = "\n</terminal_context>";
+    if !trimmed_end.ends_with(close_tag) {
+        return ExtractedTerminalContexts {
+            prompt_text: prompt.to_string(),
+            context_count: 0,
+            preview_title: None,
+            contexts: Vec::new(),
+        };
+    }
+
+    let body_end = trimmed_end.len() - close_tag.len();
+    let open_tag = "<terminal_context>\n";
+    let Some(open_index) = trimmed_end[..body_end].rfind(open_tag) else {
+        return ExtractedTerminalContexts {
+            prompt_text: prompt.to_string(),
+            context_count: 0,
+            preview_title: None,
+            contexts: Vec::new(),
+        };
+    };
+
+    let body = &trimmed_end[open_index + open_tag.len()..body_end];
+    let contexts = parse_terminal_context_entries(body);
+    let preview_title = if contexts.is_empty() {
+        None
+    } else {
+        Some(
+            contexts
+                .iter()
+                .map(|context| {
+                    if context.body.is_empty() {
+                        context.header.clone()
+                    } else {
+                        format!("{}\n{}", context.header, context.body)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+        )
+    };
+
+    ExtractedTerminalContexts {
+        prompt_text: prompt[..open_index].trim_end_matches('\n').to_string(),
+        context_count: contexts.len(),
+        preview_title,
+        contexts,
+    }
+}
+
+pub fn derive_displayed_user_message_state(prompt: &str) -> DisplayedUserMessageState {
+    let extracted = extract_trailing_terminal_contexts(prompt);
+    DisplayedUserMessageState {
+        visible_text: extracted.prompt_text,
+        copy_text: prompt.to_string(),
+        context_count: extracted.context_count,
+        preview_title: extracted.preview_title,
+        contexts: extracted.contexts,
+    }
+}
+
+fn parse_terminal_context_entries(block: &str) -> Vec<ParsedTerminalContextEntry> {
+    let mut entries = Vec::new();
+    let mut current: Option<(String, Vec<String>)> = None;
+
+    let commit_current = |entries: &mut Vec<ParsedTerminalContextEntry>,
+                          current: &mut Option<(String, Vec<String>)>| {
+        if let Some((header, body_lines)) = current.take() {
+            entries.push(ParsedTerminalContextEntry {
+                header,
+                body: body_lines.join("\n").trim_end().to_string(),
+            });
+        }
+    };
+
+    for raw_line in block.split('\n') {
+        if let Some(header) = raw_line
+            .strip_prefix("- ")
+            .and_then(|line| line.strip_suffix(':'))
+        {
+            commit_current(&mut entries, &mut current);
+            current = Some((header.to_string(), Vec::new()));
+            continue;
+        }
+        let Some((_, body_lines)) = current.as_mut() else {
+            continue;
+        };
+        if let Some(line) = raw_line.strip_prefix("  ") {
+            body_lines.push(line.to_string());
+        } else if raw_line.is_empty() {
+            body_lines.push(String::new());
+        }
+    }
+
+    commit_current(&mut entries, &mut current);
+    entries
+}
+
+pub fn count_inline_terminal_context_placeholders(prompt: &str) -> usize {
+    prompt
+        .chars()
+        .filter(|character| *character == INLINE_TERMINAL_CONTEXT_PLACEHOLDER)
+        .count()
+}
+
+pub fn ensure_inline_terminal_context_placeholders(
+    prompt: &str,
+    terminal_context_count: usize,
+) -> String {
+    let missing_count =
+        terminal_context_count.saturating_sub(count_inline_terminal_context_placeholders(prompt));
+    if missing_count == 0 {
+        return prompt.to_string();
+    }
+    format!(
+        "{}{}",
+        INLINE_TERMINAL_CONTEXT_PLACEHOLDER
+            .to_string()
+            .repeat(missing_count),
+        prompt
+    )
+}
+
+fn char_to_byte_index(text: &str, char_index: usize) -> usize {
+    text.char_indices()
+        .nth(char_index)
+        .map(|(index, _)| index)
+        .unwrap_or(text.len())
+}
+
+fn char_at(text: &str, char_index: usize) -> Option<char> {
+    text.chars().nth(char_index)
+}
+
+fn is_inline_terminal_context_boundary_whitespace(character: Option<char>) -> bool {
+    matches!(character, None | Some(' ' | '\n' | '\t' | '\r'))
+}
+
+pub fn insert_inline_terminal_context_placeholder(
+    prompt: &str,
+    cursor_input: isize,
+) -> InlineTerminalContextInsertion {
+    let char_len = prompt.chars().count();
+    let cursor = cursor_input.max(0) as usize;
+    let cursor = cursor.min(char_len);
+    let needs_leading_space = !is_inline_terminal_context_boundary_whitespace(
+        cursor
+            .checked_sub(1)
+            .and_then(|index| char_at(prompt, index)),
+    );
+    let replacement = format!(
+        "{}{} ",
+        if needs_leading_space { " " } else { "" },
+        INLINE_TERMINAL_CONTEXT_PLACEHOLDER
+    );
+    let range_end = if char_at(prompt, cursor) == Some(' ') {
+        cursor + 1
+    } else {
+        cursor
+    };
+    let cursor_byte = char_to_byte_index(prompt, cursor);
+    let range_end_byte = char_to_byte_index(prompt, range_end);
+    let next_prompt = format!(
+        "{}{}{}",
+        &prompt[..cursor_byte],
+        replacement,
+        &prompt[range_end_byte..]
+    );
+    InlineTerminalContextInsertion {
+        prompt: next_prompt,
+        cursor: cursor + replacement.chars().count(),
+        context_index: count_inline_terminal_context_placeholders(
+            &prompt[..char_to_byte_index(prompt, cursor)],
+        ),
+    }
+}
+
+pub fn strip_inline_terminal_context_placeholders(prompt: &str) -> String {
+    prompt.replace(INLINE_TERMINAL_CONTEXT_PLACEHOLDER, "")
+}
+
+pub fn remove_inline_terminal_context_placeholder(
+    prompt: &str,
+    context_index: isize,
+) -> InlineTerminalContextRemoval {
+    if context_index < 0 {
+        return InlineTerminalContextRemoval {
+            prompt: prompt.to_string(),
+            cursor: prompt.chars().count(),
+        };
+    }
+
+    let mut placeholder_index = 0;
+    for (char_index, (byte_index, character)) in prompt.char_indices().enumerate() {
+        if character != INLINE_TERMINAL_CONTEXT_PLACEHOLDER {
+            continue;
+        }
+        if placeholder_index == context_index as usize {
+            let next_byte_index = byte_index + character.len_utf8();
+            return InlineTerminalContextRemoval {
+                prompt: format!("{}{}", &prompt[..byte_index], &prompt[next_byte_index..]),
+                cursor: char_index,
+            };
+        }
+        placeholder_index += 1;
+    }
+
+    InlineTerminalContextRemoval {
+        prompt: prompt.to_string(),
+        cursor: prompt.chars().count(),
+    }
+}
+
+pub fn derive_composer_send_state(
+    prompt: &str,
+    image_count: usize,
+    terminal_contexts: &[TerminalContextDraft],
+) -> ComposerSendState {
+    let trimmed_prompt = strip_inline_terminal_context_placeholders(prompt)
+        .trim()
+        .to_string();
+    let sendable_terminal_contexts = filter_terminal_contexts_with_text(terminal_contexts);
+    let expired_terminal_context_count = terminal_contexts.len() - sendable_terminal_contexts.len();
+    ComposerSendState {
+        has_sendable_content: !trimmed_prompt.is_empty()
+            || image_count > 0
+            || !sendable_terminal_contexts.is_empty(),
+        trimmed_prompt,
+        sendable_terminal_contexts,
+        expired_terminal_context_count,
+    }
+}
+
+pub fn build_expired_terminal_context_toast_copy(
+    expired_terminal_context_count: usize,
+    variant: ExpiredTerminalContextToastVariant,
+) -> ExpiredTerminalContextToastCopy {
+    let count = expired_terminal_context_count.max(1);
+    let noun = if count == 1 {
+        "Expired terminal context"
+    } else {
+        "Expired terminal contexts"
+    };
+    match variant {
+        ExpiredTerminalContextToastVariant::Empty => ExpiredTerminalContextToastCopy {
+            title: format!("{noun} won't be sent"),
+            description: "Remove it or re-add it to include terminal output.",
+        },
+        ExpiredTerminalContextToastVariant::Omitted => ExpiredTerminalContextToastCopy {
+            title: format!("{noun} omitted from message"),
+            description: "Re-add it if you want that terminal output included.",
+        },
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BranchToolbarEnvironmentOption {
     pub environment_id: String,
@@ -8367,6 +8899,272 @@ mod tests {
         );
         assert!(progress.can_advance);
         assert!(!progress.is_complete);
+    }
+
+    fn make_terminal_context(
+        overrides: impl FnOnce(&mut TerminalContextDraft),
+    ) -> TerminalContextDraft {
+        let mut context = TerminalContextDraft {
+            id: "context-1".to_string(),
+            thread_id: "thread-1".to_string(),
+            terminal_id: "default".to_string(),
+            terminal_label: "Terminal 1".to_string(),
+            line_start: 12,
+            line_end: 13,
+            text: "git status\nOn branch main".to_string(),
+            created_at: "2026-03-13T12:00:00.000Z".to_string(),
+        };
+        overrides(&mut context);
+        context
+    }
+
+    #[test]
+    fn terminal_context_formatting_matches_upstream_contract() {
+        let context = make_terminal_context(|_| {});
+        assert_eq!(
+            format_terminal_context_label(&context.selection()),
+            "Terminal 1 lines 12-13"
+        );
+
+        let single_line = make_terminal_context(|context| {
+            context.line_start = 9;
+            context.line_end = 9;
+        });
+        assert_eq!(
+            format_terminal_context_label(&single_line.selection()),
+            "Terminal 1 line 9"
+        );
+
+        assert_eq!(
+            build_terminal_context_block(&[context.selection()]),
+            [
+                "<terminal_context>",
+                "- Terminal 1 lines 12-13:",
+                "  12 | git status",
+                "  13 | On branch main",
+                "</terminal_context>",
+            ]
+            .join("\n")
+        );
+    }
+
+    #[test]
+    fn terminal_context_prompt_materialization_matches_upstream_contract() {
+        let context = make_terminal_context(|_| {});
+        let placeholder = INLINE_TERMINAL_CONTEXT_PLACEHOLDER;
+
+        assert_eq!(
+            append_terminal_contexts_to_prompt("Investigate this", &[context.selection()]),
+            [
+                "Investigate this",
+                "",
+                "<terminal_context>",
+                "- Terminal 1 lines 12-13:",
+                "  12 | git status",
+                "  13 | On branch main",
+                "</terminal_context>",
+            ]
+            .join("\n")
+        );
+
+        assert_eq!(
+            append_terminal_contexts_to_prompt(
+                &format!("Investigate {placeholder} carefully"),
+                &[context.selection()]
+            ),
+            [
+                "Investigate @terminal-1:12-13 carefully",
+                "",
+                "<terminal_context>",
+                "- Terminal 1 lines 12-13:",
+                "  12 | git status",
+                "  13 | On branch main",
+                "</terminal_context>",
+            ]
+            .join("\n")
+        );
+        assert_eq!(
+            materialize_inline_terminal_context_prompt(
+                &format!("Investigate {placeholder} carefully"),
+                &[context.selection()]
+            ),
+            "Investigate @terminal-1:12-13 carefully"
+        );
+    }
+
+    #[test]
+    fn extracts_terminal_context_blocks_like_upstream() {
+        let context = make_terminal_context(|_| {});
+        let prompt = append_terminal_contexts_to_prompt("Investigate this", &[context.selection()]);
+
+        assert_eq!(
+            extract_trailing_terminal_contexts(&prompt),
+            ExtractedTerminalContexts {
+                prompt_text: "Investigate this".to_string(),
+                context_count: 1,
+                preview_title: Some(
+                    "Terminal 1 lines 12-13\n12 | git status\n13 | On branch main".to_string()
+                ),
+                contexts: vec![ParsedTerminalContextEntry {
+                    header: "Terminal 1 lines 12-13".to_string(),
+                    body: "12 | git status\n13 | On branch main".to_string(),
+                }],
+            }
+        );
+        assert_eq!(
+            derive_displayed_user_message_state(&prompt),
+            DisplayedUserMessageState {
+                visible_text: "Investigate this".to_string(),
+                copy_text: prompt,
+                context_count: 1,
+                preview_title: Some(
+                    "Terminal 1 lines 12-13\n12 | git status\n13 | On branch main".to_string()
+                ),
+                contexts: vec![ParsedTerminalContextEntry {
+                    header: "Terminal 1 lines 12-13".to_string(),
+                    body: "12 | git status\n13 | On branch main".to_string(),
+                }],
+            }
+        );
+        assert_eq!(
+            extract_trailing_terminal_contexts("No attached context"),
+            ExtractedTerminalContexts {
+                prompt_text: "No attached context".to_string(),
+                context_count: 0,
+                preview_title: None,
+                contexts: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn inline_terminal_context_placeholders_match_upstream_contract() {
+        let placeholder = INLINE_TERMINAL_CONTEXT_PLACEHOLDER;
+
+        assert_eq!(
+            count_inline_terminal_context_placeholders(&format!("a{placeholder}b{placeholder}")),
+            2
+        );
+        assert_eq!(
+            ensure_inline_terminal_context_placeholders("Investigate this", 2),
+            format!("{placeholder}{placeholder}Investigate this")
+        );
+        assert_eq!(
+            insert_inline_terminal_context_placeholder("abc", 1),
+            InlineTerminalContextInsertion {
+                prompt: format!("a {placeholder} bc"),
+                cursor: 4,
+                context_index: 0,
+            }
+        );
+        assert_eq!(
+            remove_inline_terminal_context_placeholder(
+                &format!("a{placeholder}b{placeholder}c"),
+                1
+            ),
+            InlineTerminalContextRemoval {
+                prompt: format!("a{placeholder}bc"),
+                cursor: 3,
+            }
+        );
+        assert_eq!(
+            strip_inline_terminal_context_placeholders(&format!("a{placeholder}b")),
+            "ab"
+        );
+        assert_eq!(
+            insert_inline_terminal_context_placeholder("Inspect @package.json ", 22),
+            InlineTerminalContextInsertion {
+                prompt: format!("Inspect @package.json {placeholder} "),
+                cursor: 24,
+                context_index: 0,
+            }
+        );
+        assert_eq!(
+            insert_inline_terminal_context_placeholder("yo whats", 3),
+            InlineTerminalContextInsertion {
+                prompt: format!("yo {placeholder} whats"),
+                cursor: 5,
+                context_index: 0,
+            }
+        );
+    }
+
+    #[test]
+    fn terminal_context_expiry_and_preview_match_upstream_contract() {
+        let live_context = make_terminal_context(|_| {});
+        let expired_context = make_terminal_context(|context| {
+            context.id = "context-2".to_string();
+            context.text.clear();
+        });
+        let invalid_context = make_terminal_context(|context| {
+            context.terminal_id = "   ".to_string();
+        });
+        let blank_context = make_terminal_context(|context| {
+            context.id = "context-3".to_string();
+            context.text = "\n\n".to_string();
+        });
+
+        assert!(has_terminal_context_text(&live_context.text));
+        assert!(!is_terminal_context_expired(&live_context.text));
+        assert!(!has_terminal_context_text(&expired_context.text));
+        assert!(is_terminal_context_expired(&expired_context.text));
+        assert_eq!(
+            filter_terminal_contexts_with_text(&[expired_context.clone(), live_context.clone()]),
+            vec![live_context.clone()]
+        );
+        assert_eq!(
+            build_terminal_context_preview_title(&[
+                invalid_context.selection(),
+                blank_context.selection()
+            ]),
+            None
+        );
+        assert_eq!(
+            format_inline_terminal_context_label(&live_context.selection()),
+            "@terminal-1:12-13"
+        );
+    }
+
+    #[test]
+    fn composer_send_state_and_expired_terminal_copy_match_upstream() {
+        let expired_context = make_terminal_context(|context| {
+            context.id = "ctx-expired".to_string();
+            context.text.clear();
+            context.line_start = 4;
+            context.line_end = 4;
+        });
+        let placeholder = INLINE_TERMINAL_CONTEXT_PLACEHOLDER;
+
+        let expired_only =
+            derive_composer_send_state(&placeholder.to_string(), 0, &[expired_context.clone()]);
+        assert_eq!(expired_only.trimmed_prompt, "");
+        assert_eq!(expired_only.sendable_terminal_contexts, Vec::new());
+        assert_eq!(expired_only.expired_terminal_context_count, 1);
+        assert!(!expired_only.has_sendable_content);
+
+        let with_text =
+            derive_composer_send_state(&format!("yoo {placeholder} waddup"), 0, &[expired_context]);
+        assert_eq!(with_text.trimmed_prompt, "yoo  waddup");
+        assert_eq!(with_text.expired_terminal_context_count, 1);
+        assert!(with_text.has_sendable_content);
+
+        assert_eq!(
+            build_expired_terminal_context_toast_copy(1, ExpiredTerminalContextToastVariant::Empty),
+            ExpiredTerminalContextToastCopy {
+                title: "Expired terminal context won't be sent".to_string(),
+                description: "Remove it or re-add it to include terminal output.",
+            }
+        );
+        assert_eq!(
+            build_expired_terminal_context_toast_copy(
+                2,
+                ExpiredTerminalContextToastVariant::Omitted
+            ),
+            ExpiredTerminalContextToastCopy {
+                title: "Expired terminal contexts omitted from message".to_string(),
+                description: "Re-add it if you want that terminal output included.",
+            }
+        );
     }
 
     #[test]
