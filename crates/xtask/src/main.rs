@@ -393,6 +393,18 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
         allow_window_capture: true,
         ..CaptureR3CodeOptions::default()
     })?;
+    compare_screenshots(CompareOptions {
+        expected: resolve_repo_path("reference/screenshots/upstream-terminal-drawer-reference.png"),
+        actual: resolve_repo_path("reference/screenshots/r3code-terminal-drawer-window.png"),
+        max_different_pixels_percent: 6.0,
+        channel_tolerance: 8,
+        ignore_rects: vec![Rect {
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 45,
+        }],
+    })?;
 
     capture_r3code_window(CaptureR3CodeOptions {
         screen: Some("diff-panel".to_string()),
@@ -1447,7 +1459,7 @@ fn capture_reference_browser(options: CaptureReferenceOptions) -> Result<()> {
         fs::write(
             options.output_dir.join("CAPTURE_MANIFEST.txt"),
             format!(
-                "Upstream reference repository: {}\nReference commit: {}\nIsolated reference home: {}\nOutput directory: {}\nCaptured:\n- upstream-empty-reference.png\n- upstream-command-palette-reference.png\n- upstream-draft-reference.png\n- upstream-composer-focused-reference.png\n- upstream-composer-menu-reference.png\n- upstream-composer-inline-tokens-reference.png\n- upstream-provider-model-picker-reference.png\n- upstream-active-chat-reference.png\n- upstream-running-turn-reference.png\n- upstream-pending-user-input-reference.png\n- upstream-pending-approval-reference.png\n- upstream-settings-reference.png\n- upstream-settings-keybindings-reference.png\n- upstream-settings-providers-reference.png\n- upstream-settings-source-control-reference.png\n- upstream-settings-connections-reference.png\n- upstream-settings-diagnostics-reference.png\n- upstream-settings-archive-reference.png\n- upstream-settings-theme-menu-reference.png\n- upstream-settings-dark-reference.png\n- upstream-empty-dark-reference.png\n",
+                "Upstream reference repository: {}\nReference commit: {}\nIsolated reference home: {}\nOutput directory: {}\nCaptured:\n- upstream-empty-reference.png\n- upstream-command-palette-reference.png\n- upstream-draft-reference.png\n- upstream-composer-focused-reference.png\n- upstream-composer-menu-reference.png\n- upstream-composer-inline-tokens-reference.png\n- upstream-provider-model-picker-reference.png\n- upstream-active-chat-reference.png\n- upstream-running-turn-reference.png\n- upstream-terminal-drawer-reference.png\n- upstream-pending-user-input-reference.png\n- upstream-pending-approval-reference.png\n- upstream-settings-reference.png\n- upstream-settings-keybindings-reference.png\n- upstream-settings-providers-reference.png\n- upstream-settings-source-control-reference.png\n- upstream-settings-connections-reference.png\n- upstream-settings-diagnostics-reference.png\n- upstream-settings-archive-reference.png\n- upstream-settings-theme-menu-reference.png\n- upstream-settings-dark-reference.png\n- upstream-empty-dark-reference.png\n",
                 options.repo.display(),
                 commit.trim(),
                 options.home.display(),
@@ -1520,6 +1532,7 @@ const path = require("path");
     await page.evaluate(async () => {
       const { useStore } = await import("/src/store.ts");
       const { useUiStateStore } = await import("/src/uiStateStore.ts");
+      const { useTerminalStateStore } = await import("/src/terminalStateStore.ts");
       const environmentId = "local";
       const projectId = "project-r3code";
       const threadId = "thread-r3code-ui-shell";
@@ -1644,6 +1657,13 @@ const path = require("path");
         projectExpandedById: { [projectId]: true },
         projectOrder: [projectId],
         threadLastVisitedAtById: { [threadId]: Date.parse(now) },
+      });
+      useTerminalStateStore.persist.clearStorage();
+      useTerminalStateStore.setState({
+        terminalStateByThreadKey: {},
+        terminalLaunchContextByThreadKey: {},
+        terminalEventEntriesByKey: {},
+        nextTerminalEventId: 1,
       });
     });
   }
@@ -1975,6 +1995,85 @@ const path = require("path");
       });
     });
   }
+  async function seedTerminalDrawerReference() {
+    await seedActiveChatReference();
+    await page.evaluate(async () => {
+      const { useTerminalStateStore } = await import("/src/terminalStateStore.ts");
+      const { __setEnvironmentApiOverrideForTests, readEnvironmentApi } = await import("/src/environmentApi.ts");
+      const environmentId = "local";
+      const threadId = "thread-r3code-ui-shell";
+      const threadKey = `${environmentId}:${threadId}`;
+      const cwd = "C:\\Users\\bunny\\Downloads\\r3code";
+      const snapshots = {
+        default: {
+          threadId,
+          terminalId: "default",
+          cwd,
+          worktreePath: null,
+          status: "running",
+          pid: 24012,
+          history: "PS C:\\Users\\bunny\\Downloads\\r3code> cargo check --workspace\r\n",
+          exitCode: null,
+          exitSignal: null,
+          updatedAt: "2026-03-04T12:00:14.000Z",
+        },
+        "terminal-2": {
+          threadId,
+          terminalId: "terminal-2",
+          cwd,
+          worktreePath: null,
+          status: "running",
+          pid: 24028,
+          history: "Running upstream capture fixture...\r\n",
+          exitCode: null,
+          exitSignal: null,
+          updatedAt: "2026-03-04T12:00:14.000Z",
+        },
+      };
+      const existingApi = readEnvironmentApi(environmentId);
+      __setEnvironmentApiOverrideForTests(environmentId, {
+        ...(existingApi ?? {}),
+        terminal: {
+          async open(input) {
+            const terminalId = input?.terminalId === "terminal-2" ? "terminal-2" : "default";
+            return snapshots[terminalId];
+          },
+          async write() {},
+          async resize() {},
+          async clear() {},
+          async restart(input) {
+            const terminalId = input?.terminalId === "terminal-2" ? "terminal-2" : "default";
+            return snapshots[terminalId];
+          },
+          async close() {},
+          onEvent() {
+            return () => undefined;
+          },
+        },
+      });
+      useTerminalStateStore.setState({
+        terminalStateByThreadKey: {
+          [threadKey]: {
+            terminalOpen: true,
+            terminalHeight: 280,
+            terminalIds: ["default", "terminal-2"],
+            runningTerminalIds: ["terminal-2"],
+            activeTerminalId: "terminal-2",
+            terminalGroups: [{ id: "group-default", terminalIds: ["default", "terminal-2"] }],
+            activeTerminalGroupId: "group-default",
+          },
+        },
+        terminalLaunchContextByThreadKey: {
+          [threadKey]: {
+            cwd,
+            worktreePath: null,
+          },
+        },
+        terminalEventEntriesByKey: {},
+        nextTerminalEventId: 1,
+      });
+    });
+  }
   await page.goto(process.env.PAIRING_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
   await page.getByText("Pick a thread to continue").waitFor({ timeout: 15000 });
   await page.waitForLoadState("networkidle", { timeout: 30000 });
@@ -2048,6 +2147,12 @@ const path = require("path");
   await page.waitForTimeout(350);
   await dismissUpdatesToast();
   await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-running-turn-reference.png"), fullPage: true });
+  await page.goto(new URL("/local/thread-r3code-ui-shell", appOrigin).toString(), { waitUntil: "domcontentloaded", timeout: 30000 });
+  await seedTerminalDrawerReference();
+  await page.locator(".thread-terminal-drawer").waitFor({ timeout: 15000 });
+  await page.waitForTimeout(900);
+  await dismissUpdatesToast();
+  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-terminal-drawer-reference.png"), fullPage: true });
   await page.goto(new URL("/local/thread-r3code-ui-shell", appOrigin).toString(), { waitUntil: "domcontentloaded", timeout: 30000 });
   await seedPendingUserInputReference();
   await page.getByText("What should this change cover?").waitFor({ timeout: 15000 });

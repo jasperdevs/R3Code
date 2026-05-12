@@ -688,15 +688,15 @@ impl R3Shell {
             .child(self.toolbar(cx))
             .child(self.timeline(cx));
 
-        if self.snapshot.terminal_open() {
-            panel = panel.child(self.terminal_drawer(cx));
-        }
-
         if self.snapshot.renders_chat_view() {
             panel = panel.child(self.composer(cx));
             if self.snapshot.active_branch_toolbar_state().is_some() {
                 panel = panel.child(self.branch_toolbar(cx));
             }
+        }
+
+        if self.snapshot.terminal_open() {
+            panel = panel.child(self.terminal_drawer(cx));
         }
 
         if self.snapshot.diff_open() {
@@ -1404,61 +1404,27 @@ impl R3Shell {
         row
     }
 
-    fn terminal_viewport(&self, terminal_id: &str, index: usize) -> impl IntoElement {
-        let active = terminal_id == self.snapshot.terminal_state.active_terminal_id;
+    fn terminal_viewport(&self, terminal_id: &str, _index: usize) -> impl IntoElement {
         let mut body = div()
             .h_full()
             .rounded(px(4.0))
-            .border_1()
-            .border_color(if active {
-                self.theme.border
-            } else {
-                self.theme.border.opacity(0.70)
-            })
-            .bg(self.theme.card)
-            .p_3()
+            .bg(self.theme.background)
             .font_family(SharedString::from(MONO_FONT_FAMILY))
             .text_size(px(12.0))
+            .line_height(px(14.4))
             .text_color(self.theme.foreground)
-            .overflow_hidden()
-            .child(
-                div()
-                    .mb_2()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .text_size(px(11.0))
-                    .text_color(self.theme.muted_foreground)
-                    .child(
-                        svg()
-                            .path("icons/square-terminal.svg")
-                            .size_3()
-                            .text_color(self.theme.muted_foreground),
-                    )
-                    .child(format!("Terminal {}", index + 1)),
-            );
+            .overflow_hidden();
 
         let lines = self.terminal_lines_for(terminal_id);
         for line in lines {
-            body = body.child(div().mb_1().child(line));
+            body = body.child(div().child(line));
         }
 
-        body.child(
-            div()
-                .mt_1()
-                .flex()
-                .items_center()
-                .gap_1()
-                .child(">")
-                .child(div().w(px(7.0)).h(px(14.0)).bg(self.theme.foreground)),
-        )
+        body
     }
 
     fn terminal_lines_for(&self, terminal_id: &str) -> Vec<String> {
         let mut lines = Vec::new();
-        if let Some(context) = self.snapshot.terminal_launch_context.as_ref() {
-            lines.push(format!("cwd {}", context.cwd));
-        }
         for entry in &self.snapshot.terminal_event_entries {
             if entry.event.terminal_id() != terminal_id {
                 continue;
@@ -1466,10 +1432,12 @@ impl R3Shell {
             match &entry.event {
                 TerminalEvent::Started { snapshot, .. }
                 | TerminalEvent::Restarted { snapshot, .. } => {
-                    lines.push(format!(
-                        "[terminal] started pid {}",
-                        snapshot.pid.unwrap_or(0)
-                    ));
+                    lines.clear();
+                    for line in snapshot.history.lines() {
+                        if !line.trim().is_empty() {
+                            lines.push(line.to_string());
+                        }
+                    }
                 }
                 TerminalEvent::Output { data, .. } => {
                     for line in data.lines() {
@@ -1478,14 +1446,7 @@ impl R3Shell {
                         }
                     }
                 }
-                TerminalEvent::Activity {
-                    has_running_subprocess,
-                    ..
-                } => {
-                    if *has_running_subprocess {
-                        lines.push("[terminal] process running".to_string());
-                    }
-                }
+                TerminalEvent::Activity { .. } => {}
                 TerminalEvent::Error { message, .. } => {
                     lines.push(format!("[terminal] {message}"));
                 }
@@ -1497,18 +1458,15 @@ impl R3Shell {
                     exit_signal,
                     ..
                 } => {
-                    lines.push(format!(
-                        "[terminal] exited {}",
-                        exit_signal
-                            .clone()
-                            .or_else(|| exit_code.map(|code| code.to_string()))
-                            .unwrap_or_else(|| "unknown".to_string())
-                    ));
+                    let details = exit_signal
+                        .clone()
+                        .or_else(|| exit_code.map(|code| format!("code {code}")));
+                    lines.push(match details {
+                        Some(details) => format!("[terminal] Process exited ({details})"),
+                        None => "[terminal] Process exited".to_string(),
+                    });
                 }
             }
-        }
-        if lines.is_empty() {
-            lines.push("Terminal ready.".to_string());
         }
         lines
     }

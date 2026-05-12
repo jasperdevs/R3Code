@@ -37,6 +37,7 @@ The task currently captures:
 - `reference/screenshots/upstream-provider-model-picker-reference.png`
 - `reference/screenshots/upstream-active-chat-reference.png`
 - `reference/screenshots/upstream-running-turn-reference.png`
+- `reference/screenshots/upstream-terminal-drawer-reference.png`
 - `reference/screenshots/upstream-pending-user-input-reference.png`
 - `reference/screenshots/upstream-pending-approval-reference.png`
 - `reference/screenshots/upstream-settings-reference.png`
@@ -290,7 +291,24 @@ cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstr
 
 Last measured result: `2.192%`.
 
-The terminal drawer capture ports the upstream terminal UI state contract into Rust first: default drawer height, terminal IDs, active terminal/group, split/new/close behavior, running activity, event replay filtering, and terminal-context prompt materialization. The GPUI surface is a static terminal drawer smoke screen until the native runtime/xterm layer exists.
+## Current Terminal Drawer Baseline
+
+Reference: `reference/screenshots/upstream-terminal-drawer-reference.png`
+
+R3Code capture: `reference/screenshots/r3code-terminal-drawer-window.png`
+
+Allowed brand-copy difference: `--ignore-rect 0,0,120,45`
+
+Current measured diff:
+
+```text
+cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen terminal-drawer --output reference\screenshots\r3code-terminal-drawer-window.png
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-terminal-drawer-reference.png --actual reference\screenshots\r3code-terminal-drawer-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
+```
+
+Last measured result: `5.692%`.
+
+The terminal drawer capture ports the upstream terminal UI state contract into Rust first: default drawer height, terminal IDs, active terminal/group, split/new/close behavior, running activity, event replay filtering, terminal-context prompt materialization, split pane/sidebar layout, and xterm-style snapshot history rendering. The GPUI surface is now compared against a deterministic upstream `ThreadTerminalDrawer` capture, but the native runtime/xterm layer is still incomplete.
 The diff panel capture ports the upstream diff route parser, turn-diff summary ordering, changed-file tree/stat contracts, and the inline `DiffPanelShell` header controls. It remains a smoke screen until the Rust side has the real checkpoint-diff query and patch renderer equivalent to `@pierre/diffs`.
 The branch toolbar capture ports upstream `BranchToolbar.logic.ts`, the shared remote-branch dedupe helpers, the environment/worktree labels, current/new-worktree mode resolution, branch trigger text, worktree selection target rules, and lucide `Monitor`, `Cloud`, `FolderGit`, and `FolderGit2` assets. It is still a GPUI smoke screen: the full combobox, async git ref query, create-ref, PR checkout, and real environment switching paths remain missing.
 The project script/open-in header controls port upstream `projectScripts.ts`, `ProjectScriptsControl.tsx` primary/add button behavior, `OpenInPicker.tsx` visibility rules, editor option labels, script runtime cwd/env helpers, and the lucide script icon set. The add/edit/delete dialogs, custom editor SVG icon set, keybinding capture UI, and real shell/project-script process execution are still missing.

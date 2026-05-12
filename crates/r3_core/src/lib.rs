@@ -8052,10 +8052,13 @@ impl AppSnapshot {
     }
 
     pub fn terminal_drawer_reference_state() -> Self {
-        let mut snapshot = Self::mock_reference_state();
+        let mut snapshot = Self::active_chat_reference_state();
         let thread_id = "thread-r3code-ui-shell".to_string();
-        snapshot.terminal_state =
-            split_thread_terminal(&create_default_thread_terminal_state(), "terminal-2");
+        snapshot.terminal_state = set_thread_terminal_activity(
+            &split_thread_terminal(&create_default_thread_terminal_state(), "terminal-2"),
+            "terminal-2",
+            true,
+        );
         snapshot.terminal_launch_context = Some(ThreadTerminalLaunchContext {
             cwd: "C:\\Users\\bunny\\Downloads\\r3code".to_string(),
             worktree_path: None,
@@ -8074,7 +8077,9 @@ impl AppSnapshot {
                         worktree_path: None,
                         status: "running".to_string(),
                         pid: Some(24012),
-                        history: String::new(),
+                        history:
+                            "PS C:\\Users\\bunny\\Downloads\\r3code> cargo check --workspace\r\n"
+                                .to_string(),
                         exit_code: None,
                         exit_signal: None,
                         updated_at: "2026-03-04T12:00:14.000Z".to_string(),
@@ -8083,30 +8088,22 @@ impl AppSnapshot {
             },
             TerminalEventEntry {
                 id: 2,
-                event: TerminalEvent::Output {
-                    thread_id: thread_id.clone(),
-                    terminal_id: "default".to_string(),
-                    created_at: "2026-03-04T12:00:15.000Z".to_string(),
-                    data: "PS C:\\Users\\bunny\\Downloads\\r3code> cargo check --workspace\r\n"
-                        .to_string(),
-                },
-            },
-            TerminalEventEntry {
-                id: 3,
-                event: TerminalEvent::Activity {
-                    thread_id: thread_id.clone(),
-                    terminal_id: "terminal-2".to_string(),
-                    created_at: "2026-03-04T12:00:16.000Z".to_string(),
-                    has_running_subprocess: true,
-                },
-            },
-            TerminalEventEntry {
-                id: 4,
-                event: TerminalEvent::Output {
+                event: TerminalEvent::Started {
                     thread_id,
                     terminal_id: "terminal-2".to_string(),
-                    created_at: "2026-03-04T12:00:17.000Z".to_string(),
-                    data: "Running upstream capture fixture...\r\n".to_string(),
+                    created_at: "2026-03-04T12:00:15.000Z".to_string(),
+                    snapshot: TerminalSessionSnapshot {
+                        thread_id: "thread-r3code-ui-shell".to_string(),
+                        terminal_id: "terminal-2".to_string(),
+                        cwd: "C:\\Users\\bunny\\Downloads\\r3code".to_string(),
+                        worktree_path: None,
+                        status: "running".to_string(),
+                        pid: Some(24028),
+                        history: "Running upstream capture fixture...\r\n".to_string(),
+                        exit_code: None,
+                        exit_signal: None,
+                        updated_at: "2026-03-04T12:00:14.000Z".to_string(),
+                    },
                 },
             },
         ];
@@ -8392,6 +8389,28 @@ impl AppSnapshot {
 fn reference_turn_diff_summaries() -> Vec<TurnDiffSummary> {
     vec![
         TurnDiffSummary {
+            turn_id: "turn-r3code-ui-shell-1".to_string(),
+            completed_at: "2026-03-04T12:01:42.000Z".to_string(),
+            status: Some("completed".to_string()),
+            files: vec![
+                TurnDiffFileChange {
+                    path: "crates/r3_ui/assets/icons/diff.svg".to_string(),
+                    kind: Some("added".to_string()),
+                    additions: Some(1),
+                    deletions: Some(0),
+                },
+                TurnDiffFileChange {
+                    path: "crates/r3_ui/src/assets.rs".to_string(),
+                    kind: Some("modified".to_string()),
+                    additions: Some(6),
+                    deletions: Some(1),
+                },
+            ],
+            checkpoint_ref: Some("checkpoint-turn-1".to_string()),
+            assistant_message_id: Some("msg-assistant-r3code-ui-shell".to_string()),
+            checkpoint_turn_count: Some(1),
+        },
+        TurnDiffSummary {
             turn_id: "turn-r3code-ui-shell-2".to_string(),
             completed_at: "2026-03-04T12:05:18.000Z".to_string(),
             status: Some("completed".to_string()),
@@ -8418,28 +8437,6 @@ fn reference_turn_diff_summaries() -> Vec<TurnDiffSummary> {
             checkpoint_ref: Some("checkpoint-turn-2".to_string()),
             assistant_message_id: Some("msg-assistant-r3code-ui-shell".to_string()),
             checkpoint_turn_count: Some(2),
-        },
-        TurnDiffSummary {
-            turn_id: "turn-r3code-ui-shell-1".to_string(),
-            completed_at: "2026-03-04T12:01:42.000Z".to_string(),
-            status: Some("completed".to_string()),
-            files: vec![
-                TurnDiffFileChange {
-                    path: "crates/r3_ui/assets/icons/diff.svg".to_string(),
-                    kind: Some("added".to_string()),
-                    additions: Some(1),
-                    deletions: Some(0),
-                },
-                TurnDiffFileChange {
-                    path: "crates/r3_ui/src/assets.rs".to_string(),
-                    kind: Some("modified".to_string()),
-                    additions: Some(6),
-                    deletions: Some(1),
-                },
-            ],
-            checkpoint_ref: Some("checkpoint-turn-1".to_string()),
-            assistant_message_id: Some("msg-assistant-r3code-ui-shell".to_string()),
-            checkpoint_turn_count: Some(1),
         },
     ]
 }
@@ -11384,7 +11381,11 @@ mod tests {
                 terminal_ids: vec!["default".to_string(), "terminal-2".to_string()],
             }]
         );
-        assert_eq!(snapshot.terminal_event_entries.len(), 4);
+        assert_eq!(
+            snapshot.terminal_state.running_terminal_ids,
+            vec!["terminal-2"]
+        );
+        assert_eq!(snapshot.terminal_event_entries.len(), 2);
     }
 
     #[test]
