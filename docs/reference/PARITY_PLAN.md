@@ -35,6 +35,7 @@ The task currently captures:
 - `reference/screenshots/upstream-composer-menu-reference.png`
 - `reference/screenshots/upstream-composer-inline-tokens-reference.png`
 - `reference/screenshots/upstream-provider-model-picker-reference.png`
+- `reference/screenshots/upstream-active-chat-reference.png`
 - `reference/screenshots/upstream-settings-reference.png`
 - `reference/screenshots/upstream-settings-keybindings-reference.png`
 - `reference/screenshots/upstream-settings-providers-reference.png`
@@ -148,9 +149,27 @@ cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstr
 
 Last measured result: `1.911%`.
 
-## Current Active Chat Smoke Baseline
+## Current Active Chat Baseline
+
+Reference: `reference/screenshots/upstream-active-chat-reference.png`
 
 R3Code capture: `reference/screenshots/r3code-active-chat-window.png`
+
+Allowed brand-copy difference: `--ignore-rect 0,0,120,45`
+
+Current measured diff:
+
+```text
+cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen active-chat --output reference\screenshots\r3code-active-chat-window.png
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-active-chat-reference.png --actual reference\screenshots\r3code-active-chat-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
+```
+
+Last measured result: `5.502%`.
+
+The upstream active-chat reference seeds the real T3 Code app store with a deterministic server thread, then captures the actual `/$environmentId/$threadId` route from pinned commit `8fc317939f5c8bbef4afbe309ae897abbc221631`.
+
+## Current Active Chat Smoke Captures
+
 R3Code composer command menu capture: `reference/screenshots/r3code-composer-menu-window.png`
 R3Code composer inline-token capture: `reference/screenshots/r3code-composer-inline-tokens-window.png`
 R3Code running turn capture: `reference/screenshots/r3code-running-turn-window.png`

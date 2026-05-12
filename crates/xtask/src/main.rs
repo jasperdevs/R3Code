@@ -267,6 +267,18 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
         allow_window_capture: true,
         ..CaptureR3CodeOptions::default()
     })?;
+    compare_screenshots(CompareOptions {
+        expected: resolve_repo_path("reference/screenshots/upstream-active-chat-reference.png"),
+        actual: resolve_repo_path("reference/screenshots/r3code-active-chat-window.png"),
+        max_different_pixels_percent: 6.0,
+        channel_tolerance: 8,
+        ignore_rects: vec![Rect {
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 45,
+        }],
+    })?;
 
     capture_r3code_window(CaptureR3CodeOptions {
         screen: Some("composer-menu".to_string()),
@@ -1395,7 +1407,7 @@ fn capture_reference_browser(options: CaptureReferenceOptions) -> Result<()> {
         fs::write(
             options.output_dir.join("CAPTURE_MANIFEST.txt"),
             format!(
-                "Upstream reference repository: {}\nReference commit: {}\nIsolated reference home: {}\nOutput directory: {}\nCaptured:\n- upstream-empty-reference.png\n- upstream-command-palette-reference.png\n- upstream-draft-reference.png\n- upstream-composer-focused-reference.png\n- upstream-composer-menu-reference.png\n- upstream-composer-inline-tokens-reference.png\n- upstream-provider-model-picker-reference.png\n- upstream-settings-reference.png\n- upstream-settings-keybindings-reference.png\n- upstream-settings-providers-reference.png\n- upstream-settings-source-control-reference.png\n- upstream-settings-connections-reference.png\n- upstream-settings-diagnostics-reference.png\n- upstream-settings-archive-reference.png\n- upstream-settings-theme-menu-reference.png\n- upstream-settings-dark-reference.png\n- upstream-empty-dark-reference.png\n",
+                "Upstream reference repository: {}\nReference commit: {}\nIsolated reference home: {}\nOutput directory: {}\nCaptured:\n- upstream-empty-reference.png\n- upstream-command-palette-reference.png\n- upstream-draft-reference.png\n- upstream-composer-focused-reference.png\n- upstream-composer-menu-reference.png\n- upstream-composer-inline-tokens-reference.png\n- upstream-provider-model-picker-reference.png\n- upstream-active-chat-reference.png\n- upstream-settings-reference.png\n- upstream-settings-keybindings-reference.png\n- upstream-settings-providers-reference.png\n- upstream-settings-source-control-reference.png\n- upstream-settings-connections-reference.png\n- upstream-settings-diagnostics-reference.png\n- upstream-settings-archive-reference.png\n- upstream-settings-theme-menu-reference.png\n- upstream-settings-dark-reference.png\n- upstream-empty-dark-reference.png\n",
                 options.repo.display(),
                 commit.trim(),
                 options.home.display(),
@@ -1464,6 +1476,137 @@ const path = require("path");
       await page.waitForTimeout(250);
     }
   }
+  async function seedActiveChatReference() {
+    await page.evaluate(async () => {
+      const { useStore } = await import("/src/store.ts");
+      const { useUiStateStore } = await import("/src/uiStateStore.ts");
+      const environmentId = "local";
+      const projectId = "project-r3code";
+      const threadId = "thread-r3code-ui-shell";
+      const now = "2026-03-04T12:00:12.000Z";
+      const modelSelection = { instanceId: "codex", model: "gpt-5.4-mini" };
+      const project = {
+        id: projectId,
+        title: "r3code",
+        workspaceRoot: "C:\\Users\\bunny\\Downloads\\r3code",
+        repositoryIdentity: null,
+        defaultModelSelection: modelSelection,
+        scripts: [
+          { id: "script-test", name: "test", command: "cargo test --workspace", icon: "test-tube", createdAt: now, updatedAt: now },
+          { id: "script-parity", name: "parity", command: "cargo run -p xtask -- check-parity --allow-window-capture", icon: "sparkles", createdAt: now, updatedAt: now },
+        ],
+        createdAt: "2026-03-04T11:59:00.000Z",
+        updatedAt: now,
+        deletedAt: null,
+      };
+      const session = {
+        threadId,
+        status: "ready",
+        providerName: "codex",
+        runtimeMode: "full-access",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: now,
+      };
+      const latestTurn = {
+        turnId: "turn-r3code-ui-shell-2",
+        state: "completed",
+        requestedAt: "2026-03-04T12:00:09.000Z",
+        startedAt: "2026-03-04T12:00:10.000Z",
+        completedAt: "2026-03-04T12:05:18.000Z",
+        assistantMessageId: "msg-assistant-r3code-ui-shell",
+      };
+      const threadShell = {
+        id: threadId,
+        projectId,
+        title: "Port R3Code UI shell",
+        modelSelection,
+        interactionMode: "default",
+        runtimeMode: "full-access",
+        branch: "main",
+        worktreePath: null,
+        latestTurn,
+        createdAt: "2026-03-04T11:59:00.000Z",
+        updatedAt: now,
+        archivedAt: null,
+        deletedAt: null,
+        session,
+        latestUserMessageAt: "2026-03-04T12:00:09.000Z",
+        hasPendingApprovals: false,
+        hasPendingUserInput: false,
+        hasActionableProposedPlan: false,
+      };
+      const checkpoints = [
+        {
+          turnId: "turn-r3code-ui-shell-2",
+          completedAt: "2026-03-04T12:05:18.000Z",
+          status: "completed",
+          assistantMessageId: "msg-assistant-r3code-ui-shell",
+          checkpointTurnCount: 2,
+          checkpointRef: "checkpoint-turn-2",
+          files: [
+            { path: "crates/r3_ui/src/shell.rs", kind: "modified", additions: 126, deletions: 18 },
+            { path: "crates/r3_core/src/lib.rs", kind: "modified", additions: 74, deletions: 4 },
+            { path: "docs/reference/PARITY_PLAN.md", kind: "modified", additions: 8, deletions: 0 },
+          ],
+        },
+        {
+          turnId: "turn-r3code-ui-shell-1",
+          completedAt: "2026-03-04T12:01:42.000Z",
+          status: "completed",
+          assistantMessageId: "msg-assistant-r3code-ui-shell",
+          checkpointTurnCount: 1,
+          checkpointRef: "checkpoint-turn-1",
+          files: [
+            { path: "crates/r3_ui/assets/icons/diff.svg", kind: "added", additions: 1, deletions: 0 },
+            { path: "crates/r3_ui/src/assets.rs", kind: "modified", additions: 6, deletions: 1 },
+          ],
+        },
+      ];
+      const thread = {
+        ...threadShell,
+        messages: [
+          {
+            id: "msg-user-r3code-ui-shell",
+            role: "user",
+            text: "Make the Rust port match the original UI exactly.",
+            turnId: "turn-r3code-ui-shell-2",
+            streaming: false,
+            createdAt: "2026-03-04T12:00:09.000Z",
+            updatedAt: "2026-03-04T12:00:09.000Z",
+          },
+          {
+            id: "msg-assistant-r3code-ui-shell",
+            role: "assistant",
+            text: "Building a static GPUI shell first, then replacing mock data with Rust state.",
+            turnId: "turn-r3code-ui-shell-2",
+            streaming: false,
+            createdAt: now,
+            updatedAt: "2026-03-04T12:05:18.000Z",
+          },
+        ],
+        activities: [],
+        proposedPlans: [],
+        checkpoints,
+      };
+      useStore.setState({ activeEnvironmentId: environmentId, environmentStateById: {} });
+      useStore.getState().syncServerShellSnapshot(
+        {
+          snapshotSequence: 100,
+          projects: [project],
+          threads: [threadShell],
+          updatedAt: now,
+        },
+        environmentId,
+      );
+      useStore.getState().syncServerThreadDetail(thread, environmentId);
+      useUiStateStore.setState({
+        projectExpandedById: { [projectId]: true },
+        projectOrder: [projectId],
+        threadLastVisitedAtById: { [threadId]: Date.parse(now) },
+      });
+    });
+  }
   await page.goto(process.env.PAIRING_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
   await page.getByText("Pick a thread to continue").waitFor({ timeout: 15000 });
   await page.waitForLoadState("networkidle", { timeout: 30000 });
@@ -1522,6 +1665,14 @@ const path = require("path");
   await page.waitForTimeout(350);
   await dismissUpdatesToast();
   await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-provider-model-picker-reference.png"), fullPage: true });
+  await page.goto(new URL("/local/thread-r3code-ui-shell", appOrigin).toString(), { waitUntil: "domcontentloaded", timeout: 30000 });
+  await seedActiveChatReference();
+  await page.getByRole("heading", { name: "Port R3Code UI shell" }).waitFor({ timeout: 15000 });
+  await page.getByText("Make the Rust port match the original UI exactly.").waitFor({ timeout: 15000 });
+  await page.getByText("Building a static GPUI shell first, then replacing mock data with Rust state.").waitFor({ timeout: 15000 });
+  await page.waitForTimeout(350);
+  await dismissUpdatesToast();
+  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-active-chat-reference.png"), fullPage: true });
   await page.goto(new URL("/settings", appOrigin).toString(), { waitUntil: "networkidle", timeout: 30000 });
   await page.getByLabel("Theme preference").waitFor({ timeout: 15000 });
   await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-settings-reference.png"), fullPage: true });
