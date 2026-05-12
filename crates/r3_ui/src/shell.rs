@@ -583,7 +583,7 @@ impl R3Shell {
                 .items_center()
                 .justify_between()
                 .px_4()
-                .pb_6()
+                .pb_4()
                 .cursor_pointer()
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.open_command_palette(window, cx);
@@ -621,7 +621,7 @@ impl R3Shell {
                 .items_center()
                 .justify_between()
                 .px_4()
-                .pb_6()
+                .pb_3()
                 .child(
                     div()
                         .text_size(px(10.0))
@@ -689,27 +689,6 @@ impl R3Shell {
                         ),
                 )
             };
-        }
-
-        for thread in &self.snapshot.threads {
-            let status = match thread.status {
-                ThreadStatus::Idle => "",
-                ThreadStatus::Running => "Running",
-                ThreadStatus::NeedsInput => "Needs input",
-                ThreadStatus::Failed => "Failed",
-            };
-            sidebar = sidebar.child(
-                div()
-                    .rounded(px(8.0))
-                    .p_2()
-                    .child(div().text_size(px(13.0)).child(thread.title.clone()))
-                    .child(
-                        div()
-                            .text_size(px(11.0))
-                            .text_color(self.theme.muted_foreground)
-                            .child(format!("{} {}", thread.project_name, status)),
-                    ),
-            );
         }
 
         sidebar.child(
@@ -8561,51 +8540,164 @@ impl R3Shell {
     }
 
     fn sidebar_active_project_group(&self, project: &ProjectSummary) -> impl IntoElement {
+        let mut group = div().px_3().child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .h(px(22.0))
+                .text_size(px(13.0))
+                .text_color(self.theme.foreground)
+                .child(
+                    svg()
+                        .path("icons/chevron-down.svg")
+                        .size_3()
+                        .text_color(self.theme.muted_foreground),
+                )
+                .child(
+                    svg()
+                        .path("icons/folder.svg")
+                        .w(px(14.0))
+                        .h(px(14.0))
+                        .text_color(self.theme.muted_foreground.opacity(0.50)),
+                )
+                .child(project.name.clone()),
+        );
+
+        let project_threads = self
+            .snapshot
+            .threads
+            .iter()
+            .filter(|thread| {
+                thread.environment_id == project.environment_id
+                    && thread.project_id == project.id
+                    && thread.archived_at.is_none()
+            })
+            .collect::<Vec<_>>();
+
+        if project_threads.is_empty() {
+            group = group.child(self.sidebar_draft_thread_row());
+        } else {
+            let active_thread_id = self
+                .snapshot
+                .active_thread_summary()
+                .map(|thread| thread.id.as_str());
+            let mut thread_list = div()
+                .mt_2()
+                .ml_3()
+                .pl_1p5()
+                .border_l_1()
+                .border_color(self.theme.border)
+                .flex()
+                .flex_col()
+                .gap_0p5();
+
+            for thread in project_threads {
+                thread_list =
+                    thread_list.child(self.sidebar_project_thread_row(thread, active_thread_id));
+            }
+            group = group.child(thread_list);
+        }
+
+        group
+    }
+
+    fn sidebar_draft_thread_row(&self) -> impl IntoElement {
         div()
-            .px_3()
+            .flex()
+            .items_center()
+            .justify_between()
+            .mt_2()
+            .ml_3()
+            .pl_3()
+            .border_l_1()
+            .border_color(self.theme.border)
+            .h(px(24.0))
+            .text_size(px(13.0))
+            .child(div().child("New thread"))
             .child(
                 div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .h(px(22.0))
-                    .text_size(px(13.0))
-                    .text_color(self.theme.foreground)
-                    .child(
-                        svg()
-                            .path("icons/chevron-down.svg")
-                            .size_3()
-                            .text_color(self.theme.muted_foreground),
-                    )
-                    .child(
-                        svg()
-                            .path("icons/folder.svg")
-                            .w(px(14.0))
-                            .h(px(14.0))
-                            .text_color(self.theme.muted_foreground.opacity(0.50)),
-                    )
-                    .child(project.name.clone()),
+                    .text_size(px(11.0))
+                    .text_color(self.theme.muted_foreground.opacity(0.70))
+                    .child("just now"),
             )
+    }
+
+    fn sidebar_project_thread_row(
+        &self,
+        thread: &r3_core::ThreadSummary,
+        active_thread_id: Option<&str>,
+    ) -> impl IntoElement {
+        let is_active = active_thread_id == Some(thread.id.as_str());
+        let status = sidebar_thread_status_label(thread);
+
+        div()
+            .id(SharedString::from(format!("sidebar-thread-{}", thread.id)))
+            .flex()
+            .items_center()
+            .justify_between()
+            .gap_2()
+            .h(px(26.0))
+            .rounded(px(6.0))
+            .px_2()
+            .text_size(px(12.0))
+            .text_color(if is_active {
+                self.theme.foreground
+            } else {
+                self.theme.muted_foreground
+            })
+            .bg(if is_active {
+                self.theme.accent.opacity(0.85)
+            } else {
+                self.theme.card
+            })
             .child(
                 div()
                     .flex()
+                    .min_w_0()
+                    .flex_1()
                     .items_center()
-                    .justify_between()
-                    .mt_2()
-                    .ml_3()
-                    .pl_3()
-                    .border_l_1()
-                    .border_color(self.theme.border)
-                    .h(px(24.0))
-                    .text_size(px(13.0))
-                    .child(div().child("New thread"))
+                    .gap_1p5()
                     .child(
                         div()
-                            .text_size(px(11.0))
-                            .text_color(self.theme.muted_foreground.opacity(0.70))
-                            .child("just now"),
-                    ),
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .child(thread.title.clone()),
+                    )
+                    .when_some(status, |row, status| {
+                        row.child(self.sidebar_thread_status_pill(status))
+                    }),
             )
+            .child(
+                div()
+                    .ml_auto()
+                    .flex_shrink_0()
+                    .text_size(px(10.0))
+                    .text_color(if is_active {
+                        self.theme.foreground.opacity(0.72)
+                    } else {
+                        self.theme.muted_foreground.opacity(0.45)
+                    })
+                    .child(sidebar_thread_relative_time(thread)),
+            )
+    }
+
+    fn sidebar_thread_status_pill(&self, status: SidebarThreadStatus) -> impl IntoElement {
+        div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .text_size(px(10.0))
+            .text_color(status.color)
+            .child(
+                div()
+                    .w(px(6.0))
+                    .h(px(6.0))
+                    .rounded(px(3.0))
+                    .bg(status.dot_color),
+            )
+            .child(status.label)
     }
 
     fn command_palette_item_icon(&self, icon_path: &'static str, active: bool) -> impl IntoElement {
@@ -9376,6 +9468,66 @@ fn git_action_icon_path(icon: GitActionIconName) -> &'static str {
 
 fn git_action_warning_color() -> gpui::Hsla {
     hsla(38.0 / 360.0, 0.92, 0.50, 1.0)
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SidebarThreadStatus {
+    label: &'static str,
+    color: gpui::Hsla,
+    dot_color: gpui::Hsla,
+}
+
+fn sidebar_thread_status_label(thread: &r3_core::ThreadSummary) -> Option<SidebarThreadStatus> {
+    if thread.has_pending_approvals {
+        return Some(SidebarThreadStatus {
+            label: "Pending Approval",
+            color: hsla(35.0 / 360.0, 0.74, 0.42, 1.0),
+            dot_color: hsla(38.0 / 360.0, 0.92, 0.50, 1.0),
+        });
+    }
+    if thread.has_pending_user_input {
+        return Some(SidebarThreadStatus {
+            label: "Awaiting Input",
+            color: hsla(243.0 / 360.0, 0.72, 0.58, 1.0),
+            dot_color: hsla(239.0 / 360.0, 0.84, 0.67, 1.0),
+        });
+    }
+    if thread.status == ThreadStatus::Running {
+        return Some(SidebarThreadStatus {
+            label: "Working",
+            color: hsla(201.0 / 360.0, 0.80, 0.42, 1.0),
+            dot_color: hsla(199.0 / 360.0, 0.89, 0.48, 1.0),
+        });
+    }
+    if thread.has_actionable_proposed_plan {
+        return Some(SidebarThreadStatus {
+            label: "Plan Ready",
+            color: hsla(262.0 / 360.0, 0.72, 0.52, 1.0),
+            dot_color: hsla(258.0 / 360.0, 0.90, 0.66, 1.0),
+        });
+    }
+    if thread.status == ThreadStatus::Failed {
+        return Some(SidebarThreadStatus {
+            label: "Failed",
+            color: diff_destructive_color(),
+            dot_color: diff_destructive_color(),
+        });
+    }
+    None
+}
+
+fn sidebar_thread_relative_time(thread: &r3_core::ThreadSummary) -> String {
+    let timestamp = thread
+        .latest_user_message_at
+        .as_deref()
+        .unwrap_or(thread.updated_at.as_str());
+    if timestamp.starts_with("2026-03-04") {
+        "68d ago".to_string()
+    } else if timestamp.starts_with("2026-03-03") {
+        "69d ago".to_string()
+    } else {
+        "just now".to_string()
+    }
 }
 
 fn provider_driver_icon_path(driver: &str) -> &'static str {

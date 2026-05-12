@@ -170,9 +170,10 @@ cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-active-chat-reference.png --actual reference\screenshots\r3code-active-chat-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
 ```
 
-Last measured result: `5.502%`.
+Last measured result: `5.365%`.
 
 The upstream active-chat reference seeds the real T3 Code app store with a deterministic server thread, then captures the actual `/$environmentId/$threadId` route from pinned commit `8fc317939f5c8bbef4afbe309ae897abbc221631`.
+The R3Code sidebar now renders the seeded active thread as a project-scoped row under the matching project, with source-backed status pill priority and deterministic reference relative-time text. Multi-select, hover archive controls, context menus, show-more/show-less, and live sidebar grouping remain incomplete.
 
 ## Current Native Captures
 
@@ -417,7 +418,7 @@ cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-open-in-menu-reference.png --actual reference\screenshots\r3code-open-in-menu-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 3
 ```
 
-Last measured results: project scripts menu `5.407%`; Open In menu `2.575%`.
+Last measured results: project scripts menu `5.398%`; Open In menu `2.575%`.
 
 The project script/open-in header controls port upstream `projectScripts.ts`, `ProjectScriptsControl.tsx` primary/add button behavior, `OpenInPicker.tsx` visibility rules, editor option labels, preferred-editor shortcut display, script runtime cwd/env helpers, and the script/editor icon assets visible in the seeded references. The project scripts menu is now compared against a pinned active-chat menu reference and the Open In menu is compared against a pinned draft-route editor menu reference. The add/edit/delete dialogs, keybinding capture UI, full custom editor icon set, real shell open-in calls, and real shell/project-script process execution are still missing.
 The provider/model picker capture ports upstream `ProviderModelPicker.tsx`, `ModelPickerContent.tsx`, `providerInstances.ts`, `modelOrdering.ts`, `modelPickerSearch.ts`, provider trigger labels, duplicate-instance badges, active-instance sidebar selection, locked-provider filtering, selectable-model aliases, and the provider/lucide icon set used by the picker. It is now compared against a pinned upstream draft-route picker capture. Live provider snapshots, editable provider settings, real favorites persistence, and full combobox/input behavior are still incomplete.

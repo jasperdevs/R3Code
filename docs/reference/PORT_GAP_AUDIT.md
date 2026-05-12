@@ -4,7 +4,7 @@ R3Code is still an early static Rust/GPUI shell, not a full Rust port of T3 Code
 
 Reference commit: `8fc317939f5c8bbef4afbe309ae897abbc221631`
 
-Current local baseline: R3Code `main` after the sidebar options menu reference-gate slice.
+Current local baseline: R3Code `main` after the project-scoped sidebar thread-row slice.
 
 ## Size Check
 
@@ -75,7 +75,7 @@ These T3 surfaces have no complete Rust implementation yet:
 | Project scripts, open-in-editor picker, and Git header actions | `ProjectScriptsControl.tsx`, `projectScripts.ts`, `OpenInPicker.tsx`, `GitActionsControl.tsx`, `GitActionsControl.logic.ts` | Seeded upstream menu gates plus partial core/header logic; dialogs, keybinding capture, disabled-reason tooltips, full editor/icon set, real process/editor execution, and live git mutations are still missing |
 | Settings providers/connections diagnostics depth | `settings/*`, `Provider*`, `ConnectionsSettings.tsx`, `DiagnosticsSettings.tsx`, `ProcessDiagnostics.ts`, `TraceDiagnostics.ts` | Partial provider, pairing, endpoint, process/trace diagnostics, diagnostics-format contracts, and top-level provider/connections/diagnostics comparison gates |
 | Command palette real actions/search | `CommandPalette.tsx`, `CommandPaletteResults.tsx`, `CommandPalette.logic.ts` | Partial core logic + dynamic GPUI groups |
-| Sidebar real grouping, selection, archival actions | `Sidebar.tsx`, `uiStateStore.ts`, `threadSelectionStore.ts` | Seeded sidebar options menu gate plus partial static project/thread rows; real grouping snapshots, multi-select, context menus, drag sorting, archive/delete actions, and persisted settings are still missing |
+| Sidebar real grouping, selection, archival actions | `Sidebar.tsx`, `uiStateStore.ts`, `threadSelectionStore.ts` | Seeded sidebar options menu gate plus source-backed project-scoped thread rows/status pills for deterministic references; real grouping snapshots, multi-select, context menus, hover archive controls, show-more/show-less, drag sorting, archive/delete actions, and persisted settings are still missing |
 
 ## Major Missing Runtime/Backend Layers
 

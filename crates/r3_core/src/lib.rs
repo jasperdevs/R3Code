@@ -8025,45 +8025,23 @@ impl AppSnapshot {
             selected_provider_instance_id: "codex".to_string(),
             selected_model: DEFAULT_GIT_TEXT_GENERATION_MODEL.to_string(),
             model_favorites: Self::reference_model_favorites(),
-            threads: vec![
-                ThreadSummary {
-                    id: "thread-r3code-ui-shell".to_string(),
-                    environment_id: "local".to_string(),
-                    project_id: "project-r3code".to_string(),
-                    title: "Port R3Code UI shell".to_string(),
-                    project_name: "r3code".to_string(),
-                    status: ThreadStatus::Running,
-                    created_at: "2026-03-04T11:59:00.000Z".to_string(),
-                    updated_at: "2026-03-04T12:00:12.000Z".to_string(),
-                    archived_at: None,
-                    latest_user_message_at: Some("2026-03-04T12:00:09.000Z".to_string()),
-                    has_pending_approvals: false,
-                    has_pending_user_input: false,
-                    has_actionable_proposed_plan: false,
-                    branch: Some("main".to_string()),
-                    worktree_path: None,
-                },
-                ThreadSummary {
-                    id: "thread-visual-references".to_string(),
-                    environment_id: "local".to_string(),
-                    project_id: "project-r3code".to_string(),
-                    title: "Capture visual references".to_string(),
-                    project_name: "r3code".to_string(),
-                    status: ThreadStatus::Idle,
-                    created_at: "2026-03-03T14:12:00.000Z".to_string(),
-                    updated_at: "2026-03-03T14:32:00.000Z".to_string(),
-                    archived_at: None,
-                    latest_user_message_at: None,
-                    has_pending_approvals: false,
-                    has_pending_user_input: false,
-                    has_actionable_proposed_plan: false,
-                    branch: Some("feature/parity-branch-toolbar".to_string()),
-                    worktree_path: Some(
-                        "C:\\Users\\bunny\\Downloads\\r3code\\.t3\\worktrees\\branch-toolbar"
-                            .to_string(),
-                    ),
-                },
-            ],
+            threads: vec![ThreadSummary {
+                id: "thread-r3code-ui-shell".to_string(),
+                environment_id: "local".to_string(),
+                project_id: "project-r3code".to_string(),
+                title: "Port R3Code UI shell".to_string(),
+                project_name: "r3code".to_string(),
+                status: ThreadStatus::Idle,
+                created_at: "2026-03-04T11:59:00.000Z".to_string(),
+                updated_at: "2026-03-04T12:00:12.000Z".to_string(),
+                archived_at: None,
+                latest_user_message_at: Some("2026-03-04T12:00:09.000Z".to_string()),
+                has_pending_approvals: false,
+                has_pending_user_input: false,
+                has_actionable_proposed_plan: false,
+                branch: Some("main".to_string()),
+                worktree_path: None,
+            }],
             messages: vec![
                 ChatMessage::user(
                     "msg-user-r3code-ui-shell",
@@ -9849,6 +9827,8 @@ mod tests {
             .find(|message| message.role == MessageRole::Assistant)
             .unwrap();
 
+        assert_eq!(snapshot.threads.len(), 1);
+        assert_eq!(snapshot.threads[0].status, ThreadStatus::Idle);
         assert_eq!(snapshot.turn_diff_summaries.len(), 2);
         assert!(
             snapshot
