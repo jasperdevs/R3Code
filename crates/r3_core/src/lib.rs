@@ -191,11 +191,31 @@ pub enum ComposerTriggerKind {
     Skill,
 }
 
+impl ComposerTriggerKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Path => "path",
+            Self::SlashCommand => "slash-command",
+            Self::Skill => "skill",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ComposerSlashCommand {
     Model,
     Plan,
     Default,
+}
+
+impl ComposerSlashCommand {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Model => "model",
+            Self::Plan => "plan",
+            Self::Default => "default",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -210,6 +230,107 @@ pub struct ComposerTrigger {
 pub struct TextRangeReplacement {
     pub text: String,
     pub cursor: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProjectEntryKind {
+    File,
+    Directory,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectEntry {
+    pub path: String,
+    pub kind: ProjectEntryKind,
+    pub parent_path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerProviderSlashCommandInput {
+    pub hint: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerProviderSlashCommand {
+    pub name: String,
+    pub description: Option<String>,
+    pub input: Option<ServerProviderSlashCommandInput>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerProviderSkill {
+    pub name: String,
+    pub description: Option<String>,
+    pub path: String,
+    pub scope: Option<String>,
+    pub enabled: bool,
+    pub display_name: Option<String>,
+    pub short_description: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ComposerCommandItem {
+    Path {
+        id: String,
+        path: String,
+        path_kind: ProjectEntryKind,
+        label: String,
+        description: String,
+    },
+    SlashCommand {
+        id: String,
+        command: ComposerSlashCommand,
+        label: String,
+        description: String,
+    },
+    ProviderSlashCommand {
+        id: String,
+        provider: String,
+        command: ServerProviderSlashCommand,
+        label: String,
+        description: String,
+    },
+    Skill {
+        id: String,
+        provider: String,
+        skill: ServerProviderSkill,
+        label: String,
+        description: String,
+    },
+}
+
+impl ComposerCommandItem {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Path { id, .. }
+            | Self::SlashCommand { id, .. }
+            | Self::ProviderSlashCommand { id, .. }
+            | Self::Skill { id, .. } => id,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComposerCommandGroup {
+    pub id: String,
+    pub label: Option<String>,
+    pub items: Vec<ComposerCommandItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComposerCommandSelection {
+    pub range_start: usize,
+    pub range_end: usize,
+    pub replacement: String,
+    pub interaction_mode: Option<ComposerSlashCommand>,
+    pub open_model_picker: bool,
+    pub focus_editor_after_replace: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ComposerMenuNudgeDirection {
+    ArrowDown,
+    ArrowUp,
 }
 
 pub fn normalize_terminal_context_text(text: &str) -> String {
@@ -1166,6 +1287,545 @@ pub fn replace_text_range(
     TextRangeReplacement {
         text: next_text,
         cursor: safe_start + composer_text_len(replacement),
+    }
+}
+
+pub fn extend_replacement_range_for_trailing_space(
+    text: &str,
+    range_end: usize,
+    replacement: &str,
+) -> usize {
+    if !replacement.ends_with(' ') {
+        return range_end;
+    }
+    if char_at(text, range_end) == Some(' ') {
+        range_end + 1
+    } else {
+        range_end
+    }
+}
+
+fn basename_of_path(path: &str) -> &str {
+    path.rsplit_once('/')
+        .map(|(_, basename)| basename)
+        .unwrap_or(path)
+}
+
+fn title_case_skill_words(value: &str) -> String {
+    value
+        .split(|character: char| character.is_whitespace() || matches!(character, ':' | '_' | '-'))
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| {
+            let mut chars = segment.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().chain(chars).collect::<String>(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub fn format_provider_skill_display_name(skill: &ServerProviderSkill) -> String {
+    skill
+        .display_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|display_name| !display_name.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| title_case_skill_words(&skill.name))
+}
+
+fn normalize_path_separators(path: &str) -> String {
+    path.replace('\\', "/")
+}
+
+pub fn format_provider_skill_install_source(skill: &ServerProviderSkill) -> Option<String> {
+    let normalized_path = normalize_path_separators(&skill.path);
+    if normalized_path.contains("/.codex/plugins/") || normalized_path.contains("/.agents/plugins/")
+    {
+        return Some("App".to_string());
+    }
+
+    let normalized_scope = skill.scope.as_deref()?.trim().to_ascii_lowercase();
+    if normalized_scope.is_empty() {
+        return None;
+    }
+
+    Some(match normalized_scope.as_str() {
+        "system" => "System".to_string(),
+        "project" | "workspace" | "local" => "Project".to_string(),
+        "user" | "personal" => "Personal".to_string(),
+        _ => title_case_skill_words(&normalized_scope),
+    })
+}
+
+pub fn normalize_search_query_trim_leading(input: &str, leading: char) -> String {
+    input
+        .trim()
+        .trim_start_matches(leading)
+        .to_ascii_lowercase()
+}
+
+fn score_slash_command_item(item: &ComposerCommandItem, query: &str) -> Option<usize> {
+    let (primary_value, description) = match item {
+        ComposerCommandItem::SlashCommand {
+            command,
+            description,
+            ..
+        } => (
+            command.as_str().to_ascii_lowercase(),
+            description.to_ascii_lowercase(),
+        ),
+        ComposerCommandItem::ProviderSlashCommand {
+            command,
+            description,
+            ..
+        } => (
+            command.name.to_ascii_lowercase(),
+            description.to_ascii_lowercase(),
+        ),
+        _ => return None,
+    };
+
+    [
+        score_query_match_with_boundary_markers(
+            &primary_value,
+            query,
+            0,
+            Some(2),
+            Some(4),
+            Some(6),
+            Some(100),
+            &["-", "_", "/"],
+        ),
+        score_query_match(&description, query, 20, Some(22), Some(24), Some(26), None),
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+}
+
+pub fn search_slash_command_items(
+    items: &[ComposerCommandItem],
+    query: &str,
+) -> Vec<ComposerCommandItem> {
+    let normalized_query = normalize_search_query_trim_leading(query, '/');
+    let slash_items = items
+        .iter()
+        .filter(|item| {
+            matches!(
+                item,
+                ComposerCommandItem::SlashCommand { .. }
+                    | ComposerCommandItem::ProviderSlashCommand { .. }
+            )
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+
+    if normalized_query.is_empty() {
+        return slash_items;
+    }
+
+    let mut ranked = slash_items
+        .into_iter()
+        .filter_map(|item| {
+            let score = score_slash_command_item(&item, &normalized_query)?;
+            let tie_breaker = match &item {
+                ComposerCommandItem::SlashCommand { command, .. } => {
+                    format!("0\0{}", command.as_str())
+                }
+                ComposerCommandItem::ProviderSlashCommand {
+                    provider, command, ..
+                } => {
+                    format!("1\0{}\0{}", command.name, provider)
+                }
+                _ => String::new(),
+            };
+            Some((item, score, tie_breaker))
+        })
+        .collect::<Vec<_>>();
+    ranked.sort_by(|left, right| left.1.cmp(&right.1).then_with(|| left.2.cmp(&right.2)));
+    ranked.into_iter().map(|(item, _, _)| item).collect()
+}
+
+fn score_provider_skill(skill: &ServerProviderSkill, query: &str) -> Option<usize> {
+    let normalized_name = skill.name.to_ascii_lowercase();
+    let normalized_label = format_provider_skill_display_name(skill).to_ascii_lowercase();
+    let normalized_short_description = skill
+        .short_description
+        .as_deref()
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    let normalized_description = skill
+        .description
+        .as_deref()
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+    let normalized_scope = skill
+        .scope
+        .as_deref()
+        .map(str::to_ascii_lowercase)
+        .unwrap_or_default();
+
+    [
+        score_query_match_with_boundary_markers(
+            &normalized_name,
+            query,
+            0,
+            Some(2),
+            Some(4),
+            Some(6),
+            Some(100),
+            &["-", "_", "/"],
+        ),
+        score_query_match(
+            &normalized_label,
+            query,
+            1,
+            Some(3),
+            Some(5),
+            Some(7),
+            Some(110),
+        ),
+        score_query_match(
+            &normalized_short_description,
+            query,
+            20,
+            Some(22),
+            Some(24),
+            Some(26),
+            None,
+        ),
+        score_query_match(
+            &normalized_description,
+            query,
+            30,
+            Some(32),
+            Some(34),
+            Some(36),
+            None,
+        ),
+        score_query_match(&normalized_scope, query, 40, Some(42), None, Some(44), None),
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+}
+
+pub fn search_provider_skills(
+    skills: &[ServerProviderSkill],
+    query: &str,
+) -> Vec<ServerProviderSkill> {
+    search_provider_skills_with_limit(skills, query, usize::MAX)
+}
+
+pub fn search_provider_skills_with_limit(
+    skills: &[ServerProviderSkill],
+    query: &str,
+    limit: usize,
+) -> Vec<ServerProviderSkill> {
+    let enabled_skills = skills
+        .iter()
+        .filter(|skill| skill.enabled)
+        .cloned()
+        .collect::<Vec<_>>();
+    let normalized_query = normalize_search_query_trim_leading(query, '$');
+
+    if normalized_query.is_empty() {
+        return enabled_skills.into_iter().take(limit).collect();
+    }
+
+    let mut ranked = enabled_skills
+        .into_iter()
+        .filter_map(|skill| {
+            let score = score_provider_skill(&skill, &normalized_query)?;
+            let tie_breaker = format!(
+                "{}\0{}",
+                format_provider_skill_display_name(&skill).to_ascii_lowercase(),
+                skill.name
+            );
+            Some((skill, score, tie_breaker))
+        })
+        .collect::<Vec<_>>();
+    ranked.sort_by(|left, right| left.1.cmp(&right.1).then_with(|| left.2.cmp(&right.2)));
+    ranked
+        .into_iter()
+        .take(limit)
+        .map(|(skill, _, _)| skill)
+        .collect()
+}
+
+pub fn builtin_composer_slash_command_items() -> Vec<ComposerCommandItem> {
+    vec![
+        ComposerCommandItem::SlashCommand {
+            id: "slash:model".to_string(),
+            command: ComposerSlashCommand::Model,
+            label: "/model".to_string(),
+            description: "Switch response model for this thread".to_string(),
+        },
+        ComposerCommandItem::SlashCommand {
+            id: "slash:plan".to_string(),
+            command: ComposerSlashCommand::Plan,
+            label: "/plan".to_string(),
+            description: "Switch this thread into plan mode".to_string(),
+        },
+        ComposerCommandItem::SlashCommand {
+            id: "slash:default".to_string(),
+            command: ComposerSlashCommand::Default,
+            label: "/default".to_string(),
+            description: "Switch this thread back to normal build mode".to_string(),
+        },
+    ]
+}
+
+pub fn build_composer_menu_items(
+    composer_trigger: Option<&ComposerTrigger>,
+    workspace_entries: &[ProjectEntry],
+    selected_provider: &str,
+    provider_slash_commands: &[ServerProviderSlashCommand],
+    provider_skills: &[ServerProviderSkill],
+) -> Vec<ComposerCommandItem> {
+    let Some(composer_trigger) = composer_trigger else {
+        return Vec::new();
+    };
+
+    match composer_trigger.kind {
+        ComposerTriggerKind::Path => workspace_entries
+            .iter()
+            .map(|entry| ComposerCommandItem::Path {
+                id: format!(
+                    "path:{}:{}",
+                    match entry.kind {
+                        ProjectEntryKind::File => "file",
+                        ProjectEntryKind::Directory => "directory",
+                    },
+                    entry.path
+                ),
+                path: entry.path.clone(),
+                path_kind: entry.kind,
+                label: basename_of_path(&entry.path).to_string(),
+                description: entry.parent_path.clone().unwrap_or_default(),
+            })
+            .collect(),
+        ComposerTriggerKind::SlashCommand => {
+            let mut slash_command_items = builtin_composer_slash_command_items();
+            slash_command_items.extend(provider_slash_commands.iter().map(|command| {
+                ComposerCommandItem::ProviderSlashCommand {
+                    id: format!(
+                        "provider-slash-command:{}:{}",
+                        selected_provider, command.name
+                    ),
+                    provider: selected_provider.to_string(),
+                    command: command.clone(),
+                    label: format!("/{}", command.name),
+                    description: command
+                        .description
+                        .clone()
+                        .or_else(|| command.input.as_ref().map(|input| input.hint.clone()))
+                        .unwrap_or_else(|| "Run provider command".to_string()),
+                }
+            }));
+
+            let query = composer_trigger.query.trim().to_ascii_lowercase();
+            if query.is_empty() {
+                slash_command_items
+            } else {
+                search_slash_command_items(&slash_command_items, &query)
+            }
+        }
+        ComposerTriggerKind::Skill => {
+            search_provider_skills(provider_skills, &composer_trigger.query)
+                .into_iter()
+                .map(|skill| ComposerCommandItem::Skill {
+                    id: format!("skill:{}:{}", selected_provider, skill.name),
+                    provider: selected_provider.to_string(),
+                    label: format_provider_skill_display_name(&skill),
+                    description: skill
+                        .short_description
+                        .clone()
+                        .or_else(|| skill.description.clone())
+                        .or_else(|| skill.scope.as_ref().map(|scope| format!("{scope} skill")))
+                        .unwrap_or_else(|| "Run provider skill".to_string()),
+                    skill,
+                })
+                .collect()
+        }
+    }
+}
+
+pub fn group_composer_command_items(
+    items: &[ComposerCommandItem],
+    trigger_kind: Option<ComposerTriggerKind>,
+    group_slash_command_sections: bool,
+) -> Vec<ComposerCommandGroup> {
+    if trigger_kind == Some(ComposerTriggerKind::Skill) {
+        return if items.is_empty() {
+            Vec::new()
+        } else {
+            vec![ComposerCommandGroup {
+                id: "skills".to_string(),
+                label: Some("Skills".to_string()),
+                items: items.to_vec(),
+            }]
+        };
+    }
+
+    if trigger_kind != Some(ComposerTriggerKind::SlashCommand) || !group_slash_command_sections {
+        return vec![ComposerCommandGroup {
+            id: "default".to_string(),
+            label: None,
+            items: items.to_vec(),
+        }];
+    }
+
+    let built_in_items = items
+        .iter()
+        .filter(|item| matches!(item, ComposerCommandItem::SlashCommand { .. }))
+        .cloned()
+        .collect::<Vec<_>>();
+    let provider_items = items
+        .iter()
+        .filter(|item| matches!(item, ComposerCommandItem::ProviderSlashCommand { .. }))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let mut groups = Vec::new();
+    if !built_in_items.is_empty() {
+        groups.push(ComposerCommandGroup {
+            id: "built-in".to_string(),
+            label: Some("Built-in".to_string()),
+            items: built_in_items,
+        });
+    }
+    if !provider_items.is_empty() {
+        groups.push(ComposerCommandGroup {
+            id: "provider".to_string(),
+            label: Some("Provider".to_string()),
+            items: provider_items,
+        });
+    }
+    groups
+}
+
+pub fn composer_menu_search_key(trigger: Option<&ComposerTrigger>) -> Option<String> {
+    trigger.map(|trigger| {
+        format!(
+            "{}:{}",
+            trigger.kind.as_str(),
+            trigger.query.trim().to_ascii_lowercase()
+        )
+    })
+}
+
+pub fn resolve_composer_menu_active_item_id(
+    items: &[ComposerCommandItem],
+    highlighted_item_id: Option<&str>,
+    current_search_key: Option<&str>,
+    highlighted_search_key: Option<&str>,
+) -> Option<String> {
+    if items.is_empty() {
+        return None;
+    }
+
+    if current_search_key == highlighted_search_key {
+        if let Some(highlighted_item_id) = highlighted_item_id {
+            if items.iter().any(|item| item.id() == highlighted_item_id) {
+                return Some(highlighted_item_id.to_string());
+            }
+        }
+    }
+
+    items.first().map(|item| item.id().to_string())
+}
+
+pub fn nudge_composer_menu_highlight(
+    items: &[ComposerCommandItem],
+    highlighted_item_id: Option<&str>,
+    direction: ComposerMenuNudgeDirection,
+) -> Option<String> {
+    if items.is_empty() {
+        return None;
+    }
+    let highlighted_index =
+        highlighted_item_id.and_then(|item_id| items.iter().position(|item| item.id() == item_id));
+    let normalized_index = highlighted_index.unwrap_or(match direction {
+        ComposerMenuNudgeDirection::ArrowDown => items.len().saturating_sub(1),
+        ComposerMenuNudgeDirection::ArrowUp => 0,
+    });
+    let next_index = match direction {
+        ComposerMenuNudgeDirection::ArrowDown => (normalized_index + 1) % items.len(),
+        ComposerMenuNudgeDirection::ArrowUp => (normalized_index + items.len() - 1) % items.len(),
+    };
+    items.get(next_index).map(|item| item.id().to_string())
+}
+
+pub fn resolve_composer_command_selection(
+    text: &str,
+    trigger: &ComposerTrigger,
+    item: &ComposerCommandItem,
+) -> Option<ComposerCommandSelection> {
+    match item {
+        ComposerCommandItem::Path { path, .. } => {
+            let replacement = format!("@{path} ");
+            Some(ComposerCommandSelection {
+                range_start: trigger.range_start,
+                range_end: extend_replacement_range_for_trailing_space(
+                    text,
+                    trigger.range_end,
+                    &replacement,
+                ),
+                replacement,
+                interaction_mode: None,
+                open_model_picker: false,
+                focus_editor_after_replace: true,
+            })
+        }
+        ComposerCommandItem::SlashCommand { command, .. } => {
+            let (interaction_mode, open_model_picker, focus_editor_after_replace) = match command {
+                ComposerSlashCommand::Model => (None, true, false),
+                ComposerSlashCommand::Plan => (Some(ComposerSlashCommand::Plan), false, true),
+                ComposerSlashCommand::Default => (Some(ComposerSlashCommand::Default), false, true),
+            };
+            Some(ComposerCommandSelection {
+                range_start: trigger.range_start,
+                range_end: trigger.range_end,
+                replacement: String::new(),
+                interaction_mode,
+                open_model_picker,
+                focus_editor_after_replace,
+            })
+        }
+        ComposerCommandItem::ProviderSlashCommand { command, .. } => {
+            let replacement = format!("/{} ", command.name);
+            Some(ComposerCommandSelection {
+                range_start: trigger.range_start,
+                range_end: extend_replacement_range_for_trailing_space(
+                    text,
+                    trigger.range_end,
+                    &replacement,
+                ),
+                replacement,
+                interaction_mode: None,
+                open_model_picker: false,
+                focus_editor_after_replace: true,
+            })
+        }
+        ComposerCommandItem::Skill { skill, .. } => {
+            let replacement = format!("${} ", skill.name);
+            Some(ComposerCommandSelection {
+                range_start: trigger.range_start,
+                range_end: extend_replacement_range_for_trailing_space(
+                    text,
+                    trigger.range_end,
+                    &replacement,
+                ),
+                replacement,
+                interaction_mode: None,
+                open_model_picker: false,
+                focus_editor_after_replace: true,
+            })
+        }
     }
 }
 
@@ -2220,8 +2880,12 @@ fn length_penalty(value: &str, query: &str) -> usize {
         .min(64)
 }
 
-fn find_boundary_match_index(value: &str, query: &str) -> Option<usize> {
-    [" ", "-", "_", "/"]
+fn find_boundary_match_index_with_markers(
+    value: &str,
+    query: &str,
+    boundary_markers: &[&str],
+) -> Option<usize> {
+    boundary_markers
         .iter()
         .filter_map(|marker| {
             value
@@ -2231,7 +2895,7 @@ fn find_boundary_match_index(value: &str, query: &str) -> Option<usize> {
         .min()
 }
 
-pub fn score_query_match(
+pub fn score_query_match_with_boundary_markers(
     value: &str,
     query: &str,
     exact_base: usize,
@@ -2239,6 +2903,7 @@ pub fn score_query_match(
     boundary_base: Option<usize>,
     includes_base: Option<usize>,
     fuzzy_base: Option<usize>,
+    boundary_markers: &[&str],
 ) -> Option<usize> {
     if value.is_empty() || query.is_empty() {
         return None;
@@ -2252,7 +2917,9 @@ pub fn score_query_match(
         }
     }
     if let Some(boundary_base) = boundary_base {
-        if let Some(boundary_index) = find_boundary_match_index(value, query) {
+        if let Some(boundary_index) =
+            find_boundary_match_index_with_markers(value, query, boundary_markers)
+        {
             return Some(boundary_base + boundary_index * 2 + length_penalty(value, query));
         }
     }
@@ -2267,6 +2934,27 @@ pub fn score_query_match(
         }
     }
     None
+}
+
+pub fn score_query_match(
+    value: &str,
+    query: &str,
+    exact_base: usize,
+    prefix_base: Option<usize>,
+    boundary_base: Option<usize>,
+    includes_base: Option<usize>,
+    fuzzy_base: Option<usize>,
+) -> Option<usize> {
+    score_query_match_with_boundary_markers(
+        value,
+        query,
+        exact_base,
+        prefix_base,
+        boundary_base,
+        includes_base,
+        fuzzy_base,
+        &[" ", "-", "_", "/"],
+    )
 }
 
 pub fn build_model_picker_search_text(model: &ModelPickerItem) -> String {
@@ -10175,6 +10863,496 @@ mod tests {
             None
         );
         assert_eq!(parse_standalone_composer_slash_command("/model"), None);
+    }
+
+    fn make_provider_skill(
+        name: &str,
+        overrides: impl FnOnce(&mut ServerProviderSkill),
+    ) -> ServerProviderSkill {
+        let mut skill = ServerProviderSkill {
+            name: name.to_string(),
+            description: None,
+            path: format!("/tmp/{name}/SKILL.md"),
+            scope: None,
+            enabled: true,
+            display_name: None,
+            short_description: None,
+        };
+        overrides(&mut skill);
+        skill
+    }
+
+    fn make_provider_slash_command(
+        name: &str,
+        description: Option<&str>,
+    ) -> ServerProviderSlashCommand {
+        ServerProviderSlashCommand {
+            name: name.to_string(),
+            description: description.map(str::to_string),
+            input: None,
+        }
+    }
+
+    #[test]
+    fn shared_search_ranking_matches_upstream_contract() {
+        assert_eq!(normalize_search_query("  UI  "), "ui");
+        assert_eq!(normalize_search_query_trim_leading("  $ui", '$'), "ui");
+
+        assert_eq!(
+            score_query_match("ui", "ui", 0, Some(10), None, Some(20), None),
+            Some(0)
+        );
+        assert!(
+            score_query_match(
+                "building native ui",
+                "ui",
+                0,
+                Some(10),
+                Some(20),
+                Some(30),
+                None
+            )
+            .unwrap()
+                > 0
+        );
+
+        let boundary_score = score_query_match_with_boundary_markers(
+            "gh-fix-ci",
+            "fix",
+            0,
+            Some(10),
+            Some(20),
+            Some(30),
+            None,
+            &["-"],
+        )
+        .unwrap();
+        let contains_score = score_query_match_with_boundary_markers(
+            "highfixci",
+            "fix",
+            0,
+            Some(10),
+            Some(20),
+            Some(30),
+            None,
+            &["-"],
+        )
+        .unwrap();
+        assert!(boundary_score < contains_score);
+
+        let compact = score_subsequence_match("ghfixci", "gfc").unwrap();
+        let spread = score_subsequence_match("github-fix-ci", "gfc").unwrap();
+        assert!(compact < spread);
+    }
+
+    #[test]
+    fn provider_skill_presentation_and_search_match_upstream_contract() {
+        let review = make_provider_skill("review-follow-up", |skill| {
+            skill.display_name = Some("Review Follow-up".to_string());
+        });
+        assert_eq!(
+            format_provider_skill_display_name(&review),
+            "Review Follow-up"
+        );
+        assert_eq!(
+            format_provider_skill_display_name(&make_provider_skill("review-follow-up", |_| {})),
+            "Review Follow Up"
+        );
+
+        assert_eq!(
+            format_provider_skill_install_source(&make_provider_skill("gh-fix-ci", |skill| {
+                skill.path = "/Users/julius/.codex/plugins/cache/openai-curated/github/skills/gh-fix-ci/SKILL.md".to_string();
+                skill.scope = Some("user".to_string());
+            })),
+            Some("App".to_string())
+        );
+        assert_eq!(
+            format_provider_skill_install_source(&make_provider_skill("agent-browser", |skill| {
+                skill.path = "/Users/julius/.agents/skills/agent-browser/SKILL.md".to_string();
+                skill.scope = Some("user".to_string());
+            })),
+            Some("Personal".to_string())
+        );
+        assert_eq!(
+            format_provider_skill_install_source(&make_provider_skill("imagegen", |skill| {
+                skill.path = "/usr/local/share/codex/skills/imagegen/SKILL.md".to_string();
+                skill.scope = Some("system".to_string());
+            })),
+            Some("System".to_string())
+        );
+        assert_eq!(
+            format_provider_skill_install_source(&make_provider_skill(
+                "review-follow-up",
+                |skill| {
+                    skill.path = "/workspace/.codex/skills/review-follow-up/SKILL.md".to_string();
+                    skill.scope = Some("project".to_string());
+                }
+            )),
+            Some("Project".to_string())
+        );
+
+        let skills = vec![
+            make_provider_skill("agent-browser", |skill| {
+                skill.display_name = Some("Agent Browser".to_string());
+                skill.short_description = Some("Browser automation CLI for AI agents".to_string());
+            }),
+            make_provider_skill("building-native-ui", |skill| {
+                skill.display_name = Some("Building Native Ui".to_string());
+                skill.short_description =
+                    Some("Complete guide for building beautiful apps with Expo Router".to_string());
+            }),
+            make_provider_skill("ui", |skill| {
+                skill.display_name = Some("Ui".to_string());
+                skill.short_description = Some("Explore, build, and refine UI.".to_string());
+            }),
+        ];
+        assert_eq!(
+            search_provider_skills(&skills, "ui")
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["ui", "building-native-ui"]
+        );
+
+        let skills = vec![
+            make_provider_skill("gh-fix-ci", |skill| {
+                skill.display_name = Some("Gh Fix Ci".to_string());
+            }),
+            make_provider_skill("github", |skill| {
+                skill.display_name = Some("Github".to_string());
+            }),
+            make_provider_skill("agent-browser", |skill| {
+                skill.display_name = Some("Agent Browser".to_string());
+            }),
+        ];
+        assert_eq!(
+            search_provider_skills(&skills, "gfc")
+                .iter()
+                .map(|skill| skill.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["gh-fix-ci"]
+        );
+
+        let skills = vec![
+            make_provider_skill("ui", |skill| {
+                skill.display_name = Some("Ui".to_string());
+                skill.enabled = false;
+            }),
+            make_provider_skill("frontend-design", |skill| {
+                skill.display_name = Some("Frontend Design".to_string());
+            }),
+        ];
+        assert!(search_provider_skills(&skills, "ui").is_empty());
+    }
+
+    #[test]
+    fn composer_menu_item_derivation_matches_upstream_contract() {
+        let provider = "claudeAgent";
+        let slash_items = vec![
+            make_provider_slash_command("ui", Some("Explore, build, and refine UI.")),
+            make_provider_slash_command(
+                "frontend-design",
+                Some("Create distinctive, production-grade frontend interfaces"),
+            ),
+        ];
+        let trigger = ComposerTrigger {
+            kind: ComposerTriggerKind::SlashCommand,
+            query: "ui".to_string(),
+            range_start: 0,
+            range_end: 3,
+        };
+        assert_eq!(
+            build_composer_menu_items(Some(&trigger), &[], provider, &slash_items, &[])
+                .iter()
+                .map(ComposerCommandItem::id)
+                .collect::<Vec<_>>(),
+            vec!["provider-slash-command:claudeAgent:ui", "slash:default"]
+        );
+
+        let fuzzy_items = vec![
+            make_provider_slash_command("gh-fix-ci", Some("Fix failing GitHub Actions")),
+            make_provider_slash_command("github", Some("General GitHub help")),
+        ];
+        let trigger = ComposerTrigger {
+            kind: ComposerTriggerKind::SlashCommand,
+            query: "gfc".to_string(),
+            range_start: 0,
+            range_end: 4,
+        };
+        assert_eq!(
+            build_composer_menu_items(Some(&trigger), &[], provider, &fuzzy_items, &[])
+                .iter()
+                .map(ComposerCommandItem::id)
+                .collect::<Vec<_>>(),
+            vec!["provider-slash-command:claudeAgent:gh-fix-ci"]
+        );
+
+        let trigger = ComposerTrigger {
+            kind: ComposerTriggerKind::Path,
+            query: "src".to_string(),
+            range_start: 7,
+            range_end: 11,
+        };
+        assert_eq!(
+            build_composer_menu_items(
+                Some(&trigger),
+                &[ProjectEntry {
+                    path: "src/main.rs".to_string(),
+                    kind: ProjectEntryKind::File,
+                    parent_path: Some("src".to_string()),
+                }],
+                provider,
+                &[],
+                &[],
+            ),
+            vec![ComposerCommandItem::Path {
+                id: "path:file:src/main.rs".to_string(),
+                path: "src/main.rs".to_string(),
+                path_kind: ProjectEntryKind::File,
+                label: "main.rs".to_string(),
+                description: "src".to_string(),
+            }]
+        );
+
+        let trigger = ComposerTrigger {
+            kind: ComposerTriggerKind::Skill,
+            query: "ui".to_string(),
+            range_start: 4,
+            range_end: 7,
+        };
+        let skills = vec![make_provider_skill("ui", |skill| {
+            skill.display_name = Some("Ui".to_string());
+            skill.short_description = Some("Explore, build, and refine UI.".to_string());
+        })];
+        assert_eq!(
+            build_composer_menu_items(Some(&trigger), &[], provider, &[], &skills),
+            vec![ComposerCommandItem::Skill {
+                id: "skill:claudeAgent:ui".to_string(),
+                provider: provider.to_string(),
+                skill: skills[0].clone(),
+                label: "Ui".to_string(),
+                description: "Explore, build, and refine UI.".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn composer_menu_grouping_highlight_and_selection_match_upstream_contract() {
+        let built_in = builtin_composer_slash_command_items();
+        let provider_item = ComposerCommandItem::ProviderSlashCommand {
+            id: "provider-slash-command:claudeAgent:ui".to_string(),
+            provider: "claudeAgent".to_string(),
+            command: make_provider_slash_command("ui", Some("Explore, build, and refine UI.")),
+            label: "/ui".to_string(),
+            description: "Explore, build, and refine UI.".to_string(),
+        };
+        let mut items = built_in.clone();
+        items.push(provider_item.clone());
+
+        assert_eq!(
+            group_composer_command_items(&items, Some(ComposerTriggerKind::SlashCommand), true),
+            vec![
+                ComposerCommandGroup {
+                    id: "built-in".to_string(),
+                    label: Some("Built-in".to_string()),
+                    items: built_in,
+                },
+                ComposerCommandGroup {
+                    id: "provider".to_string(),
+                    label: Some("Provider".to_string()),
+                    items: vec![provider_item],
+                },
+            ]
+        );
+
+        let skill_item = ComposerCommandItem::Skill {
+            id: "skill:claudeAgent:ui".to_string(),
+            provider: "claudeAgent".to_string(),
+            skill: make_provider_skill("ui", |_| {}),
+            label: "Ui".to_string(),
+            description: "Run provider skill".to_string(),
+        };
+        assert_eq!(
+            group_composer_command_items(
+                std::slice::from_ref(&skill_item),
+                Some(ComposerTriggerKind::Skill),
+                true,
+            ),
+            vec![ComposerCommandGroup {
+                id: "skills".to_string(),
+                label: Some("Skills".to_string()),
+                items: vec![skill_item],
+            }]
+        );
+
+        let items = vec![
+            ComposerCommandItem::SlashCommand {
+                id: "top".to_string(),
+                command: ComposerSlashCommand::Model,
+                label: "/model".to_string(),
+                description: "Switch response model for this thread".to_string(),
+            },
+            ComposerCommandItem::SlashCommand {
+                id: "second".to_string(),
+                command: ComposerSlashCommand::Plan,
+                label: "/plan".to_string(),
+                description: "Switch this thread into plan mode".to_string(),
+            },
+            ComposerCommandItem::SlashCommand {
+                id: "third".to_string(),
+                command: ComposerSlashCommand::Default,
+                label: "/default".to_string(),
+                description: "Switch this thread back to normal build mode".to_string(),
+            },
+        ];
+        assert_eq!(
+            resolve_composer_menu_active_item_id(&items, None, Some("skill:u"), None),
+            Some("top".to_string())
+        );
+        assert_eq!(
+            resolve_composer_menu_active_item_id(
+                &items,
+                Some("second"),
+                Some("skill:u"),
+                Some("skill:u"),
+            ),
+            Some("second".to_string())
+        );
+        assert_eq!(
+            resolve_composer_menu_active_item_id(
+                &items,
+                Some("second"),
+                Some("skill:ui"),
+                Some("skill:u"),
+            ),
+            Some("top".to_string())
+        );
+        assert_eq!(
+            resolve_composer_menu_active_item_id(
+                &items,
+                Some("missing"),
+                Some("skill:ui"),
+                Some("skill:ui"),
+            ),
+            Some("top".to_string())
+        );
+        assert_eq!(
+            nudge_composer_menu_highlight(
+                &items,
+                Some("top"),
+                ComposerMenuNudgeDirection::ArrowDown
+            ),
+            Some("second".to_string())
+        );
+        assert_eq!(
+            nudge_composer_menu_highlight(&items, Some("top"), ComposerMenuNudgeDirection::ArrowUp),
+            Some("third".to_string())
+        );
+    }
+
+    #[test]
+    fn composer_command_selection_matches_upstream_replacement_contract() {
+        let trigger = ComposerTrigger {
+            kind: ComposerTriggerKind::Path,
+            query: "AG".to_string(),
+            range_start: "and then ".chars().count(),
+            range_end: "and then @AG".chars().count(),
+        };
+        let path_item = ComposerCommandItem::Path {
+            id: "path:file:AGENTS.md".to_string(),
+            path: "AGENTS.md".to_string(),
+            path_kind: ProjectEntryKind::File,
+            label: "AGENTS.md".to_string(),
+            description: String::new(),
+        };
+        assert_eq!(
+            resolve_composer_command_selection("and then @AG summarize", &trigger, &path_item),
+            Some(ComposerCommandSelection {
+                range_start: "and then ".chars().count(),
+                range_end: "and then @AG ".chars().count(),
+                replacement: "@AGENTS.md ".to_string(),
+                interaction_mode: None,
+                open_model_picker: false,
+                focus_editor_after_replace: true,
+            })
+        );
+
+        let model_item = ComposerCommandItem::SlashCommand {
+            id: "slash:model".to_string(),
+            command: ComposerSlashCommand::Model,
+            label: "/model".to_string(),
+            description: "Switch response model for this thread".to_string(),
+        };
+        let slash_trigger = ComposerTrigger {
+            kind: ComposerTriggerKind::SlashCommand,
+            query: "model".to_string(),
+            range_start: 0,
+            range_end: "/model".chars().count(),
+        };
+        assert_eq!(
+            resolve_composer_command_selection("/model", &slash_trigger, &model_item),
+            Some(ComposerCommandSelection {
+                range_start: 0,
+                range_end: "/model".chars().count(),
+                replacement: String::new(),
+                interaction_mode: None,
+                open_model_picker: true,
+                focus_editor_after_replace: false,
+            })
+        );
+
+        let plan_item = ComposerCommandItem::SlashCommand {
+            id: "slash:plan".to_string(),
+            command: ComposerSlashCommand::Plan,
+            label: "/plan".to_string(),
+            description: "Switch this thread into plan mode".to_string(),
+        };
+        let plan_trigger = ComposerTrigger {
+            kind: ComposerTriggerKind::SlashCommand,
+            query: "plan".to_string(),
+            range_start: 0,
+            range_end: "/plan".chars().count(),
+        };
+        assert_eq!(
+            resolve_composer_command_selection("/plan", &plan_trigger, &plan_item)
+                .unwrap()
+                .interaction_mode,
+            Some(ComposerSlashCommand::Plan)
+        );
+
+        let provider_item = ComposerCommandItem::ProviderSlashCommand {
+            id: "provider-slash-command:claudeAgent:ui".to_string(),
+            provider: "claudeAgent".to_string(),
+            command: make_provider_slash_command("ui", Some("Explore, build, and refine UI.")),
+            label: "/ui".to_string(),
+            description: "Explore, build, and refine UI.".to_string(),
+        };
+        assert_eq!(
+            resolve_composer_command_selection("/u now", &slash_trigger, &provider_item)
+                .unwrap()
+                .replacement,
+            "/ui ".to_string()
+        );
+
+        let skill_item = ComposerCommandItem::Skill {
+            id: "skill:claudeAgent:review-follow-up".to_string(),
+            provider: "claudeAgent".to_string(),
+            skill: make_provider_skill("review-follow-up", |_| {}),
+            label: "Review Follow Up".to_string(),
+            description: "Run provider skill".to_string(),
+        };
+        let skill_trigger = ComposerTrigger {
+            kind: ComposerTriggerKind::Skill,
+            query: "review".to_string(),
+            range_start: "run ".chars().count(),
+            range_end: "run $review".chars().count(),
+        };
+        assert_eq!(
+            resolve_composer_command_selection("run $review next", &skill_trigger, &skill_item)
+                .unwrap()
+                .replacement,
+            "$review-follow-up ".to_string()
+        );
     }
 
     #[test]
