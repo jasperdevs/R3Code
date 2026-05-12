@@ -48,7 +48,6 @@ const REFERENCE_WORKING_TIMER_NOW: &str = "2026-05-12T09:35:10.000Z";
 struct DiffPatchRow {
     old_line: Option<u32>,
     new_line: Option<u32>,
-    marker: &'static str,
     text: &'static str,
     kind: DiffPatchRowKind,
 }
@@ -2173,10 +2172,14 @@ impl R3Shell {
             );
 
         for row in self.diff_file_rows(file.path.as_str()) {
+            let row_is_meta = matches!(row.kind, DiffPatchRowKind::Meta);
             card = card.child(self.diff_patch_row(row));
+            if row_is_meta {
+                card = card.child(div().h(px(6.0)).bg(self.theme.background));
+            }
         }
 
-        card = card.child(div().h(px(10.0)).bg(self.theme.background));
+        card = card.child(div().h(px(4.0)).bg(self.theme.background));
 
         card
     }
@@ -2187,28 +2190,24 @@ impl R3Shell {
                 DiffPatchRow {
                     old_line: None,
                     new_line: None,
-                    marker: "",
                     text: "9 unmodified lines",
                     kind: DiffPatchRowKind::Meta,
                 },
                 DiffPatchRow {
                     old_line: Some(10),
                     new_line: Some(10),
-                    marker: "",
                     text: "    pub terminal_open: bool,",
                     kind: DiffPatchRowKind::Context,
                 },
                 DiffPatchRow {
                     old_line: None,
                     new_line: Some(11),
-                    marker: "+",
                     text: "    pub active_terminal_group_id: String,",
                     kind: DiffPatchRowKind::Addition,
                 },
                 DiffPatchRow {
                     old_line: Some(12),
                     new_line: Some(12),
-                    marker: "",
                     text: "}",
                     kind: DiffPatchRowKind::Context,
                 },
@@ -2217,35 +2216,30 @@ impl R3Shell {
                 DiffPatchRow {
                     old_line: None,
                     new_line: None,
-                    marker: "",
                     text: "41 unmodified lines",
                     kind: DiffPatchRowKind::Meta,
                 },
                 DiffPatchRow {
                     old_line: Some(42),
                     new_line: None,
-                    marker: "-",
                     text: "    draw_static_terminal();",
                     kind: DiffPatchRowKind::Deletion,
                 },
                 DiffPatchRow {
                     old_line: None,
                     new_line: Some(42),
-                    marker: "+",
                     text: "    draw_split_terminal();",
                     kind: DiffPatchRowKind::Addition,
                 },
                 DiffPatchRow {
                     old_line: None,
                     new_line: Some(43),
-                    marker: "+",
                     text: "    draw_terminal_sidebar();",
                     kind: DiffPatchRowKind::Addition,
                 },
                 DiffPatchRow {
                     old_line: Some(44),
                     new_line: Some(44),
-                    marker: "",
                     text: "}",
                     kind: DiffPatchRowKind::Context,
                 },
@@ -2253,7 +2247,6 @@ impl R3Shell {
             _ => vec![DiffPatchRow {
                 old_line: None,
                 new_line: None,
-                marker: "",
                 text: "No patch available for this file.",
                 kind: DiffPatchRowKind::Meta,
             }],
@@ -2290,15 +2283,22 @@ impl R3Shell {
             }
         };
         let text_color = match row.kind {
-            DiffPatchRowKind::Addition | DiffPatchRowKind::Deletion => {
-                self.theme.foreground.opacity(0.80)
-            }
+            DiffPatchRowKind::Addition | DiffPatchRowKind::Deletion => diff_syntax_plain_color(),
             DiffPatchRowKind::Meta => self.theme.foreground.opacity(0.74),
-            DiffPatchRowKind::Context => self.theme.foreground.opacity(0.78),
+            DiffPatchRowKind::Context => diff_syntax_plain_color(),
         };
         let line_number = match row.kind {
             DiffPatchRowKind::Deletion => row.old_line,
             _ => row.new_line.or(row.old_line),
+        };
+        let line_number_color = match row.kind {
+            DiffPatchRowKind::Addition | DiffPatchRowKind::Deletion => marker_color,
+            DiffPatchRowKind::Context => self.theme.foreground.opacity(0.58),
+            DiffPatchRowKind::Meta => self.theme.muted_foreground.opacity(0.60),
+        };
+        let change_bar_color = match row.kind {
+            DiffPatchRowKind::Addition | DiffPatchRowKind::Deletion => marker_color,
+            DiffPatchRowKind::Meta | DiffPatchRowKind::Context => self.theme.background,
         };
         let row_height = if matches!(row.kind, DiffPatchRowKind::Meta) {
             32.0
@@ -2316,19 +2316,19 @@ impl R3Shell {
             .line_height(px(20.0))
             .child(
                 div()
-                    .w(px(34.0))
+                    .w(px(4.0))
+                    .h(px(row_height))
                     .flex_shrink_0()
-                    .text_align(TextAlign::Right)
-                    .pr_2()
-                    .text_color(self.theme.muted_foreground.opacity(0.60))
-                    .child(line_number.map(|line| line.to_string()).unwrap_or_default()),
+                    .bg(change_bar_color),
             )
             .child(
                 div()
-                    .w(px(16.0))
+                    .w(px(40.0))
                     .flex_shrink_0()
-                    .text_color(marker_color)
-                    .child(row.marker),
+                    .text_align(TextAlign::Right)
+                    .pr_2()
+                    .text_color(line_number_color)
+                    .child(line_number.map(|line| line.to_string()).unwrap_or_default()),
             )
             .child(self.diff_patch_text(row.text, text_color))
             .into_any_element()
@@ -2354,23 +2354,37 @@ impl R3Shell {
     }
 
     fn diff_panel_file_stat_label(&self, stat: TurnDiffStat) -> impl IntoElement {
-        div()
+        let mut label = div()
             .flex()
             .items_center()
             .gap_1()
             .flex_shrink_0()
             .font_family(SharedString::from(MONO_FONT_FAMILY))
-            .text_size(px(13.0))
-            .child(
-                div()
-                    .text_color(diff_success_color())
-                    .child(format!("+{}", stat.additions)),
-            )
-            .child(
+            .text_size(px(13.0));
+
+        if stat.deletions > 0 {
+            label = label.child(
                 div()
                     .text_color(diff_destructive_color())
                     .child(format!("-{}", stat.deletions)),
-            )
+            );
+        }
+        if stat.additions > 0 {
+            label = label.child(
+                div()
+                    .text_color(diff_success_color())
+                    .child(format!("+{}", stat.additions)),
+            );
+        }
+        if stat.additions == 0 && stat.deletions == 0 {
+            label = label.child(
+                div()
+                    .text_color(self.theme.muted_foreground.opacity(0.70))
+                    .child("0"),
+            );
+        }
+
+        label
     }
 
     fn diff_stat_label(&self, stat: TurnDiffStat, show_parentheses: bool) -> impl IntoElement {
@@ -9785,6 +9799,13 @@ fn diff_patch_text_segments(
     segments
 }
 
+fn diff_patch_word_is_function(text: &str, word_end: usize) -> bool {
+    text[word_end..]
+        .chars()
+        .find(|character| !character.is_whitespace())
+        == Some('(')
+}
+
 fn diff_patch_word_color(
     text: &str,
     word_end: usize,
@@ -9803,25 +9824,26 @@ fn diff_patch_word_color(
     ) {
         return diff_syntax_type_color();
     }
-    let next_non_space = text[word_end..]
-        .chars()
-        .find(|character| !character.is_whitespace());
-    if next_non_space == Some('(') {
+    if diff_patch_word_is_function(text, word_end) {
         return diff_syntax_function_color();
     }
     default_color
 }
 
 fn diff_syntax_keyword_color() -> gpui::Hsla {
-    rgb_to_hsla(85.0 / 255.0, 134.0 / 255.0, 193.0 / 255.0)
+    rgb_to_hsla(255.0 / 255.0, 91.0 / 255.0, 158.0 / 255.0)
 }
 
 fn diff_syntax_type_color() -> gpui::Hsla {
-    rgb_to_hsla(193.0 / 255.0, 134.0 / 255.0, 85.0 / 255.0)
+    rgb_to_hsla(198.0 / 255.0, 53.0 / 255.0, 228.0 / 255.0)
 }
 
 fn diff_syntax_function_color() -> gpui::Hsla {
-    rgb_to_hsla(212.0 / 255.0, 118.0 / 255.0, 40.0 / 255.0)
+    rgb_to_hsla(139.0 / 255.0, 67.0 / 255.0, 244.0 / 255.0)
+}
+
+fn diff_syntax_plain_color() -> gpui::Hsla {
+    rgb_to_hsla(208.0 / 255.0, 120.0 / 255.0, 40.0 / 255.0)
 }
 
 fn diff_success_color() -> gpui::Hsla {
