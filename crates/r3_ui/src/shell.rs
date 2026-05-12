@@ -11,21 +11,22 @@ use r3_core::{
     CommandPaletteItemKind, ComposerCommandItem, ComposerMenuNudgeDirection, ComposerPromptSegment,
     ComposerSlashCommand, ComposerTrigger, DiagnosticsDescriptionInput, DiffOpenValue,
     DiffRouteSearch, DraftThreadEnvMode, EditorOption, GitActionIconName, GitActionMenuItem,
-    GitStatusSnapshot, MAX_TERMINALS_PER_GROUP, MAX_VISIBLE_WORK_LOG_ENTRIES, ModelPickerItem,
-    ModelPickerSelectedInstance, ModelPickerState, PendingApproval, PendingUserInputProgress,
-    ProcessDiagnosticsEntry, ProcessDiagnosticsResult, ProjectEntry, ProjectEntryKind,
-    ProjectScript, ProjectScriptIcon, ProjectSummary, ProviderInstanceEntry,
-    RECENT_COMMAND_PALETTE_THREAD_LIMIT, ServerProviderModel, ServerProviderSkill,
-    ServerProviderSlashCommand, SidebarOptionsState, SidebarProjectGroupingMode,
-    SidebarProjectSortOrder, SidebarThreadSortOrder, TerminalEvent, ThreadStatus,
-    TraceDiagnosticsFailureSummary, TraceDiagnosticsLogEvent, TraceDiagnosticsRecentFailure,
-    TraceDiagnosticsResult, TraceDiagnosticsSpanOccurrence, TraceDiagnosticsSpanSummary,
-    TurnDiffFileChange, TurnDiffStat, TurnDiffSummary, TurnDiffTreeNode, WorkLogEntry,
-    build_composer_menu_items, build_git_action_menu_items, build_project_action_items,
-    build_root_command_palette_groups, build_thread_action_items, build_turn_diff_tree,
-    close_thread_terminal, composer_menu_search_key, default_sidebar_options_state,
-    detect_composer_trigger, filter_command_palette_groups, format_diagnostics_bytes,
-    format_diagnostics_count, format_diagnostics_description, format_diagnostics_duration_ms,
+    GitStatusSnapshot, KeybindingSettingsRow, MAX_TERMINALS_PER_GROUP,
+    MAX_VISIBLE_WORK_LOG_ENTRIES, ModelPickerItem, ModelPickerSelectedInstance, ModelPickerState,
+    PendingApproval, PendingUserInputProgress, ProcessDiagnosticsEntry, ProcessDiagnosticsResult,
+    ProjectEntry, ProjectEntryKind, ProjectScript, ProjectScriptIcon, ProjectSummary,
+    ProviderInstanceEntry, RECENT_COMMAND_PALETTE_THREAD_LIMIT, ServerProviderModel,
+    ServerProviderSkill, ServerProviderSlashCommand, SidebarOptionsState,
+    SidebarProjectGroupingMode, SidebarProjectSortOrder, SidebarThreadSortOrder, TerminalEvent,
+    ThreadStatus, TraceDiagnosticsFailureSummary, TraceDiagnosticsLogEvent,
+    TraceDiagnosticsRecentFailure, TraceDiagnosticsResult, TraceDiagnosticsSpanOccurrence,
+    TraceDiagnosticsSpanSummary, TurnDiffFileChange, TurnDiffStat, TurnDiffSummary,
+    TurnDiffTreeNode, WorkLogEntry, build_composer_menu_items, build_default_keybinding_rows,
+    build_git_action_menu_items, build_project_action_items, build_root_command_palette_groups,
+    build_thread_action_items, build_turn_diff_tree, close_thread_terminal,
+    composer_menu_search_key, default_sidebar_options_state, detect_composer_trigger,
+    filter_command_palette_groups, format_diagnostics_bytes, format_diagnostics_count,
+    format_diagnostics_description, format_diagnostics_duration_ms,
     format_provider_skill_display_name, format_working_timer_at, get_display_model_name,
     get_provider_summary, get_provider_version_advisory_presentation, get_provider_version_label,
     group_composer_command_items, new_thread_terminal, nudge_composer_menu_highlight,
@@ -319,13 +320,6 @@ struct SettingsNavItem {
     label: &'static str,
     icon: SettingsNavIcon,
     section: SettingsSection,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct KeybindingRow {
-    command: &'static str,
-    key: &'static str,
-    when: &'static str,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -5557,7 +5551,7 @@ impl R3Shell {
     }
 
     fn settings_keybindings_panel(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let rows = keybinding_rows();
+        let rows = build_default_keybinding_rows();
         let mut table = div()
             .flex()
             .flex_col()
@@ -5565,7 +5559,7 @@ impl R3Shell {
             .child(self.keybindings_table_header());
 
         for (index, row) in rows.iter().enumerate() {
-            table = table.child(self.keybindings_table_row(*row, index));
+            table = table.child(self.keybindings_table_row(row, index));
         }
 
         div()
@@ -6139,13 +6133,13 @@ impl R3Shell {
             .text_size(px(11.0))
             .font_weight(FontWeight(650.0))
             .text_color(self.theme.muted_foreground)
-            .child(div().w(px(282.0)).child("Command"))
-            .child(div().w(px(292.0)).child("Keybinding"))
-            .child(div().w(px(294.0)).child("When"))
-            .child(div().w(px(60.0)).child("Status"))
+            .child(div().w(px(282.0)).child("COMMAND"))
+            .child(div().w(px(292.0)).child("KEYBINDING"))
+            .child(div().w(px(294.0)).child("WHEN"))
+            .child(div().w(px(60.0)).child("STATUS"))
     }
 
-    fn keybindings_table_row(&self, row: KeybindingRow, index: usize) -> impl IntoElement {
+    fn keybindings_table_row(&self, row: &KeybindingSettingsRow, index: usize) -> impl IntoElement {
         div()
             .flex()
             .items_center()
@@ -6165,7 +6159,7 @@ impl R3Shell {
                     .pr_4()
                     .text_size(px(13.0))
                     .font_weight(FontWeight(500.0))
-                    .child(row.command),
+                    .child(row.command_label.clone()),
             )
             .child(
                 div()
@@ -10262,166 +10256,6 @@ fn work_log_tone_color(tone: ActivityTone, theme: Theme) -> gpui::Hsla {
         ActivityTone::Thinking => theme.muted_foreground.opacity(0.50),
         ActivityTone::Info | ActivityTone::Approval => theme.muted_foreground.opacity(0.55),
     }
-}
-
-fn keybinding_rows() -> &'static [KeybindingRow] {
-    &[
-        KeybindingRow {
-            command: "Chat: New",
-            key: "mod+n",
-            when: "!terminalFocus",
-        },
-        KeybindingRow {
-            command: "Chat: New",
-            key: "mod+shift+o",
-            when: "!terminalFocus",
-        },
-        KeybindingRow {
-            command: "Chat: New Local",
-            key: "mod+shift+n",
-            when: "!terminalFocus",
-        },
-        KeybindingRow {
-            command: "Command Palette: Toggle",
-            key: "mod+k",
-            when: "!terminalFocus",
-        },
-        KeybindingRow {
-            command: "Diff: Toggle",
-            key: "mod+d",
-            when: "!terminalFocus",
-        },
-        KeybindingRow {
-            command: "Editor: Open Favorite",
-            key: "mod+o",
-            when: "",
-        },
-        KeybindingRow {
-            command: "Model Picker: Jump: 1",
-            key: "mod+1",
-            when: "modelPickerOpen",
-        },
-        KeybindingRow {
-            command: "Model Picker: Jump: 2",
-            key: "mod+2",
-            when: "modelPickerOpen",
-        },
-        KeybindingRow {
-            command: "Model Picker: Jump: 3",
-            key: "mod+3",
-            when: "modelPickerOpen",
-        },
-        KeybindingRow {
-            command: "Model Picker: Jump: 4",
-            key: "mod+4",
-            when: "modelPickerOpen",
-        },
-        KeybindingRow {
-            command: "Model Picker: Jump: 5",
-            key: "mod+5",
-            when: "modelPickerOpen",
-        },
-        KeybindingRow {
-            command: "Model Picker: Jump: 6",
-            key: "mod+6",
-            when: "modelPickerOpen",
-        },
-        KeybindingRow {
-            command: "Model Picker: Jump: 7",
-            key: "mod+7",
-            when: "modelPickerOpen",
-        },
-        KeybindingRow {
-            command: "Model Picker: Jump: 8",
-            key: "mod+8",
-            when: "modelPickerOpen",
-        },
-        KeybindingRow {
-            command: "Model Picker: Jump: 9",
-            key: "mod+9",
-            when: "modelPickerOpen",
-        },
-        KeybindingRow {
-            command: "Model Picker: Toggle",
-            key: "mod+shift+m",
-            when: "!terminalFocus",
-        },
-        KeybindingRow {
-            command: "Terminal: Close",
-            key: "mod+w",
-            when: "terminalFocus",
-        },
-        KeybindingRow {
-            command: "Terminal: New",
-            key: "mod+n",
-            when: "terminalFocus",
-        },
-        KeybindingRow {
-            command: "Terminal: Split",
-            key: "mod+d",
-            when: "terminalFocus",
-        },
-        KeybindingRow {
-            command: "Terminal: Toggle",
-            key: "mod+j",
-            when: "",
-        },
-        KeybindingRow {
-            command: "Thread: Jump: 1",
-            key: "mod+1",
-            when: "",
-        },
-        KeybindingRow {
-            command: "Thread: Jump: 2",
-            key: "mod+2",
-            when: "",
-        },
-        KeybindingRow {
-            command: "Thread: Jump: 3",
-            key: "mod+3",
-            when: "",
-        },
-        KeybindingRow {
-            command: "Thread: Jump: 4",
-            key: "mod+4",
-            when: "",
-        },
-        KeybindingRow {
-            command: "Thread: Jump: 5",
-            key: "mod+5",
-            when: "",
-        },
-        KeybindingRow {
-            command: "Thread: Jump: 6",
-            key: "mod+6",
-            when: "",
-        },
-        KeybindingRow {
-            command: "Thread: Jump: 7",
-            key: "mod+7",
-            when: "",
-        },
-        KeybindingRow {
-            command: "Thread: Jump: 8",
-            key: "mod+8",
-            when: "",
-        },
-        KeybindingRow {
-            command: "Thread: Jump: 9",
-            key: "mod+9",
-            when: "",
-        },
-        KeybindingRow {
-            command: "Thread: Next",
-            key: "mod+shift+]",
-            when: "",
-        },
-        KeybindingRow {
-            command: "Thread: Previous",
-            key: "mod+shift+[",
-            when: "",
-        },
-    ]
 }
 
 impl Focusable for R3Shell {

@@ -4,7 +4,7 @@ R3Code is still an early static Rust/GPUI shell, not a full Rust port of T3 Code
 
 Reference commit: `8fc317939f5c8bbef4afbe309ae897abbc221631`
 
-Current local baseline: R3Code `main` after the keybindings table, pending-user-input composer footer, and diff-panel compact-composer/renderer parity slices.
+Current local baseline: R3Code `main` after the keybindings default-rule projection, pending-user-input composer footer, and diff-panel compact-composer/renderer parity slices.
 
 ## Size Check
 

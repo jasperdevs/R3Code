@@ -2974,6 +2974,246 @@ pub fn build_model_picker_search_text(model: &ModelPickerItem) -> String {
     )
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeybindingRule {
+    pub command: &'static str,
+    pub key: &'static str,
+    pub when: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeybindingSettingsRow {
+    pub command_id: &'static str,
+    pub command_label: String,
+    pub key: &'static str,
+    pub when: &'static str,
+}
+
+const DEFAULT_KEYBINDING_RULES: &[KeybindingRule] = &[
+    KeybindingRule {
+        command: "terminal.toggle",
+        key: "mod+j",
+        when: "",
+    },
+    KeybindingRule {
+        command: "terminal.split",
+        key: "mod+d",
+        when: "terminalFocus",
+    },
+    KeybindingRule {
+        command: "terminal.new",
+        key: "mod+n",
+        when: "terminalFocus",
+    },
+    KeybindingRule {
+        command: "terminal.close",
+        key: "mod+w",
+        when: "terminalFocus",
+    },
+    KeybindingRule {
+        command: "diff.toggle",
+        key: "mod+d",
+        when: "!terminalFocus",
+    },
+    KeybindingRule {
+        command: "commandPalette.toggle",
+        key: "mod+k",
+        when: "!terminalFocus",
+    },
+    KeybindingRule {
+        command: "chat.new",
+        key: "mod+n",
+        when: "!terminalFocus",
+    },
+    KeybindingRule {
+        command: "chat.new",
+        key: "mod+shift+o",
+        when: "!terminalFocus",
+    },
+    KeybindingRule {
+        command: "chat.newLocal",
+        key: "mod+shift+n",
+        when: "!terminalFocus",
+    },
+    KeybindingRule {
+        command: "modelPicker.toggle",
+        key: "mod+shift+m",
+        when: "!terminalFocus",
+    },
+    KeybindingRule {
+        command: "editor.openFavorite",
+        key: "mod+o",
+        when: "",
+    },
+    KeybindingRule {
+        command: "thread.previous",
+        key: "mod+shift+[",
+        when: "",
+    },
+    KeybindingRule {
+        command: "thread.next",
+        key: "mod+shift+]",
+        when: "",
+    },
+    KeybindingRule {
+        command: "thread.jump.1",
+        key: "mod+1",
+        when: "",
+    },
+    KeybindingRule {
+        command: "thread.jump.2",
+        key: "mod+2",
+        when: "",
+    },
+    KeybindingRule {
+        command: "thread.jump.3",
+        key: "mod+3",
+        when: "",
+    },
+    KeybindingRule {
+        command: "thread.jump.4",
+        key: "mod+4",
+        when: "",
+    },
+    KeybindingRule {
+        command: "thread.jump.5",
+        key: "mod+5",
+        when: "",
+    },
+    KeybindingRule {
+        command: "thread.jump.6",
+        key: "mod+6",
+        when: "",
+    },
+    KeybindingRule {
+        command: "thread.jump.7",
+        key: "mod+7",
+        when: "",
+    },
+    KeybindingRule {
+        command: "thread.jump.8",
+        key: "mod+8",
+        when: "",
+    },
+    KeybindingRule {
+        command: "thread.jump.9",
+        key: "mod+9",
+        when: "",
+    },
+    KeybindingRule {
+        command: "modelPicker.jump.1",
+        key: "mod+1",
+        when: "modelPickerOpen",
+    },
+    KeybindingRule {
+        command: "modelPicker.jump.2",
+        key: "mod+2",
+        when: "modelPickerOpen",
+    },
+    KeybindingRule {
+        command: "modelPicker.jump.3",
+        key: "mod+3",
+        when: "modelPickerOpen",
+    },
+    KeybindingRule {
+        command: "modelPicker.jump.4",
+        key: "mod+4",
+        when: "modelPickerOpen",
+    },
+    KeybindingRule {
+        command: "modelPicker.jump.5",
+        key: "mod+5",
+        when: "modelPickerOpen",
+    },
+    KeybindingRule {
+        command: "modelPicker.jump.6",
+        key: "mod+6",
+        when: "modelPickerOpen",
+    },
+    KeybindingRule {
+        command: "modelPicker.jump.7",
+        key: "mod+7",
+        when: "modelPickerOpen",
+    },
+    KeybindingRule {
+        command: "modelPicker.jump.8",
+        key: "mod+8",
+        when: "modelPickerOpen",
+    },
+    KeybindingRule {
+        command: "modelPicker.jump.9",
+        key: "mod+9",
+        when: "modelPickerOpen",
+    },
+];
+
+pub fn default_keybinding_rules() -> &'static [KeybindingRule] {
+    DEFAULT_KEYBINDING_RULES
+}
+
+pub fn keybinding_command_label(command: &str) -> String {
+    if let Some(script_name) = command
+        .strip_prefix("script.")
+        .and_then(|value| value.strip_suffix(".run"))
+    {
+        return format!("Run Script: {}", title_case_command_segment(script_name));
+    }
+
+    command
+        .split('.')
+        .map(title_case_command_segment)
+        .collect::<Vec<_>>()
+        .join(": ")
+}
+
+fn title_case_command_segment(segment: &str) -> String {
+    let mut separated = String::new();
+    let mut previous_was_lower_or_digit = false;
+    for ch in segment.chars() {
+        if ch.is_ascii_uppercase() && previous_was_lower_or_digit {
+            separated.push(' ');
+        }
+        separated.push(ch);
+        previous_was_lower_or_digit = ch.is_ascii_lowercase() || ch.is_ascii_digit();
+    }
+
+    separated
+        .split(|ch: char| ch == '-' || ch == '_' || ch.is_whitespace())
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => {
+                    let mut out = String::new();
+                    out.push(first.to_ascii_uppercase());
+                    out.push_str(chars.as_str());
+                    out
+                }
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub fn build_default_keybinding_rows() -> Vec<KeybindingSettingsRow> {
+    let mut rows = DEFAULT_KEYBINDING_RULES
+        .iter()
+        .map(|rule| KeybindingSettingsRow {
+            command_id: rule.command,
+            command_label: keybinding_command_label(rule.command),
+            key: rule.key,
+            when: rule.when,
+        })
+        .collect::<Vec<_>>();
+    rows.sort_by(|left, right| {
+        left.command_id
+            .cmp(right.command_id)
+            .then_with(|| left.key.cmp(right.key))
+    });
+    rows
+}
+
 pub fn score_model_picker_search(model: &ModelPickerItem, query: &str) -> Option<isize> {
     const FAVORITE_SCORE_BOOST: isize = 24;
     let tokens = normalize_search_query(query)
@@ -10167,6 +10407,57 @@ mod tests {
         );
         assert_eq!(env.get("CUSTOM_FLAG").map(String::as_str), Some("1"));
         assert!(!env.contains_key("T3CODE_WORKTREE_PATH"));
+    }
+
+    #[test]
+    fn keybinding_default_rows_match_upstream_settings_projection() {
+        assert_eq!(default_keybinding_rules().len(), 31);
+        assert_eq!(
+            keybinding_command_label("commandPalette.toggle"),
+            "Command Palette: Toggle"
+        );
+        assert_eq!(
+            keybinding_command_label("script.setup-db.run"),
+            "Run Script: Setup Db"
+        );
+
+        let rows = build_default_keybinding_rows();
+        assert_eq!(rows.len(), 31);
+        assert_eq!(
+            rows.iter()
+                .take(6)
+                .map(|row| (
+                    row.command_id,
+                    row.command_label.as_str(),
+                    row.key,
+                    row.when
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                ("chat.new", "Chat: New", "mod+n", "!terminalFocus"),
+                ("chat.new", "Chat: New", "mod+shift+o", "!terminalFocus"),
+                (
+                    "chat.newLocal",
+                    "Chat: New Local",
+                    "mod+shift+n",
+                    "!terminalFocus"
+                ),
+                (
+                    "commandPalette.toggle",
+                    "Command Palette: Toggle",
+                    "mod+k",
+                    "!terminalFocus"
+                ),
+                ("diff.toggle", "Diff: Toggle", "mod+d", "!terminalFocus"),
+                ("editor.openFavorite", "Editor: Open Favorite", "mod+o", ""),
+            ]
+        );
+        assert_eq!(
+            rows.iter()
+                .filter(|row| row.when == "modelPickerOpen")
+                .count(),
+            9
+        );
     }
 
     #[test]
