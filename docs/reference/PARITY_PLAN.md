@@ -29,6 +29,7 @@ The task currently captures:
 
 - `reference/screenshots/upstream-empty-reference.png`
 - `reference/screenshots/upstream-command-palette-reference.png`
+- `reference/screenshots/upstream-draft-reference.png`
 - `reference/screenshots/upstream-settings-reference.png`
 - `reference/screenshots/upstream-settings-keybindings-reference.png`
 - `reference/screenshots/upstream-settings-source-control-reference.png`
@@ -103,6 +104,25 @@ Last measured result: `3.267%`.
 
 The R3Code command palette capture launches the normal empty shell and opens the palette through the native sidebar click target before taking the screenshot.
 
+## Current Draft Chat Baseline
+
+Reference: `reference/screenshots/upstream-draft-reference.png`
+
+R3Code capture: `reference/screenshots/r3code-draft-window.png`
+
+Allowed brand-copy difference: `--ignore-rect 0,0,120,45`
+
+Current measured diff:
+
+```text
+cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen draft --output reference\screenshots\r3code-draft-window.png
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-draft-reference.png --actual reference\screenshots\r3code-draft-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
+```
+
+Last measured result: `3.538%`.
+
+The upstream draft reference is produced by the real T3 command-palette add-project flow, which creates a `/draft/$draftId` route and captures the active empty chat surface after dismissing unrelated provider-update toast chrome.
+
 ## Current Settings Baseline
 
 Reference: `reference/screenshots/upstream-settings-reference.png`
@@ -140,7 +160,7 @@ cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-keybindings-reference.png --actual reference\screenshots\r3code-settings-keybindings-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 10
 ```
 
-Last measured result: `8.796%`.
+Last measured result: `8.794%`.
 
 ## Current Settings Source Control Baseline
 
@@ -157,7 +177,7 @@ cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-source-control-reference.png --actual reference\screenshots\r3code-settings-source-control-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
 ```
 
-Last measured result: `2.937%`.
+Last measured result: `3.507%`.
 
 ## Current Settings Archive Baseline
 
@@ -208,7 +228,7 @@ cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-theme-menu-reference.png --actual reference\screenshots\r3code-settings-theme-menu-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
 ```
 
-Last measured result: `5.788%`.
+Last measured result: `5.787%`.
 
 The R3Code capture opens the settings route in forced light mode, opens the native GPUI theme select with the settings keyboard path, and then screenshots the open `System / Light / Dark` popup. The reference selects `Light` before opening the menu so both screenshots compare the same selected value.
 
@@ -227,7 +247,7 @@ cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-dark-reference.png --actual reference\screenshots\r3code-settings-dark-window.png --channel-tolerance 11 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6
 ```
 
-Last measured result: `5.263%`.
+Last measured result: `5.264%`.
 
 The dark settings comparison uses a slightly higher channel tolerance because the Chromium reference and GPUI render the same dark text with different subpixel antialiasing, while the layout and pixel-percent gate remain unchanged.
 

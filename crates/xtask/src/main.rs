@@ -219,6 +219,26 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
     })?;
 
     capture_r3code_window(CaptureR3CodeOptions {
+        screen: Some("draft".to_string()),
+        theme: Some("light".to_string()),
+        output: resolve_repo_path("reference/screenshots/r3code-draft-window.png"),
+        allow_window_capture: true,
+        ..CaptureR3CodeOptions::default()
+    })?;
+    compare_screenshots(CompareOptions {
+        expected: resolve_repo_path("reference/screenshots/upstream-draft-reference.png"),
+        actual: resolve_repo_path("reference/screenshots/r3code-draft-window.png"),
+        max_different_pixels_percent: 6.0,
+        channel_tolerance: 8,
+        ignore_rects: vec![Rect {
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 45,
+        }],
+    })?;
+
+    capture_r3code_window(CaptureR3CodeOptions {
         screen: Some("settings".to_string()),
         theme: Some("light".to_string()),
         output: resolve_repo_path("reference/screenshots/r3code-settings-window.png"),
@@ -1052,6 +1072,9 @@ fn capture_reference_browser(options: CaptureReferenceOptions) -> Result<()> {
         .args(["checkout", "--detach", REFERENCE_COMMIT])
         .current_dir(&options.repo))?;
 
+    if options.home.exists() {
+        fs::remove_dir_all(&options.home)?;
+    }
     fs::create_dir_all(&options.home)?;
     fs::create_dir_all(&options.output_dir)?;
 
@@ -1087,24 +1110,39 @@ fn capture_reference_browser(options: CaptureReferenceOptions) -> Result<()> {
         .spawn()?;
 
     let result = (|| -> Result<()> {
-        let pairing_url = wait_for_pairing_url(
+        let mut pairing_url = wait_for_pairing_url(
             &mut child,
             &stdout_path,
             &stderr_path,
             options.startup_timeout,
         )?;
+        thread::sleep(Duration::from_secs(15));
+        if let Some(status) = child.try_wait()? {
+            let stdout = fs::read_to_string(&stdout_path).unwrap_or_default();
+            let stderr = fs::read_to_string(&stderr_path).unwrap_or_default();
+            return Err(format!(
+                "Reference dev server exited after pairing URL was available. Exit={status}\nSTDOUT:\n{stdout}\nSTDERR:\n{stderr}"
+            )
+            .into());
+        }
+        if let Ok(stdout) = fs::read_to_string(&stdout_path) {
+            if let Some(latest_pairing_url) = extract_pairing_url(&stdout) {
+                pairing_url = latest_pairing_url;
+            }
+        }
         let script_path = env::temp_dir().join("capture-reference-browser.cjs");
         fs::write(&script_path, browser_capture_script())?;
         run(Command::new("node")
             .arg(&script_path)
             .env("PLAYWRIGHT_PATH", &playwright_path)
             .env("PAIRING_URL", pairing_url)
-            .env("OUTPUT_DIR", &options.output_dir))?;
+            .env("OUTPUT_DIR", &options.output_dir)
+            .env("REFERENCE_PROJECT_PATH", &options.repo))?;
 
         fs::write(
             options.output_dir.join("CAPTURE_MANIFEST.txt"),
             format!(
-                "Upstream reference repository: {}\nReference commit: {}\nIsolated reference home: {}\nOutput directory: {}\nCaptured:\n- upstream-empty-reference.png\n- upstream-command-palette-reference.png\n- upstream-settings-reference.png\n- upstream-settings-keybindings-reference.png\n- upstream-settings-source-control-reference.png\n- upstream-settings-archive-reference.png\n- upstream-settings-theme-menu-reference.png\n- upstream-settings-dark-reference.png\n",
+                "Upstream reference repository: {}\nReference commit: {}\nIsolated reference home: {}\nOutput directory: {}\nCaptured:\n- upstream-empty-reference.png\n- upstream-command-palette-reference.png\n- upstream-draft-reference.png\n- upstream-settings-reference.png\n- upstream-settings-keybindings-reference.png\n- upstream-settings-source-control-reference.png\n- upstream-settings-archive-reference.png\n- upstream-settings-theme-menu-reference.png\n- upstream-settings-dark-reference.png\n",
                 options.repo.display(),
                 commit.trim(),
                 options.home.display(),
@@ -1175,6 +1213,23 @@ const path = require("path");
   await page.getByPlaceholder("Search commands, projects, and threads...").waitFor({ timeout: 15000 });
   await page.waitForTimeout(350);
   await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-command-palette-reference.png"), fullPage: true });
+  await page.keyboard.press("Escape");
+  await page.getByTestId("command-palette-trigger").click();
+  const palette = page.getByTestId("command-palette");
+  await palette.getByText("Add project", { exact: true }).click();
+  await palette.getByText("Local folder", { exact: true }).click();
+  const addProjectPlaceholder = "Enter path (e.g. ~/projects/my-app)";
+  await page.getByPlaceholder(addProjectPlaceholder).fill(process.env.REFERENCE_PROJECT_PATH);
+  await palette.getByRole("button", { name: "Add (Enter)" }).waitFor({ timeout: 15000 });
+  await page.keyboard.press("Enter");
+  await page.waitForURL(/\/draft\/[^/]+$/, { timeout: 30000 });
+  await page.getByText("Send a message to start the conversation.").waitFor({ timeout: 30000 });
+  await page.waitForTimeout(350);
+  if (await page.getByText("Updates Available").first().isVisible({ timeout: 500 }).catch(() => false)) {
+    await page.mouse.click(1242, 89);
+    await page.waitForTimeout(250);
+  }
+  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-draft-reference.png"), fullPage: true });
   await page.goto(new URL("/settings", appOrigin).toString(), { waitUntil: "networkidle", timeout: 30000 });
   await page.getByLabel("Theme preference").waitFor({ timeout: 15000 });
   await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-settings-reference.png"), fullPage: true });
