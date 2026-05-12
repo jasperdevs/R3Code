@@ -6,20 +6,21 @@ use gpui::{
 };
 use r3_core::{
     APP_NAME, ActivityTone, AppSnapshot, ChatMessage, CommandPaletteGroup, CommandPaletteItem,
-    CommandPaletteItemKind, DiffOpenValue, DiffRouteSearch, DraftThreadEnvMode, EditorOption,
-    MAX_TERMINALS_PER_GROUP, MAX_VISIBLE_WORK_LOG_ENTRIES, ModelPickerItem,
-    ModelPickerSelectedInstance, ModelPickerState, PendingApproval, PendingUserInputProgress,
-    ProjectScript, ProjectScriptIcon, ProjectSummary, ProviderInstanceEntry,
-    RECENT_COMMAND_PALETTE_THREAD_LIMIT, ServerProviderModel, SidebarThreadSortOrder,
-    TerminalEvent, ThreadStatus, TurnDiffFileChange, TurnDiffStat, TurnDiffSummary,
-    TurnDiffTreeNode, WorkLogEntry, build_project_action_items, build_root_command_palette_groups,
-    build_thread_action_items, build_turn_diff_tree, close_thread_terminal,
-    filter_command_palette_groups, get_display_model_name, get_provider_summary,
-    get_provider_version_advisory_presentation, get_provider_version_label, new_thread_terminal,
-    parse_diff_route_search, primary_project_script, provider_instance_initials,
-    resolve_model_picker_state, resolve_selectable_model, set_pending_user_input_custom_answer,
-    set_thread_active_terminal, set_thread_terminal_open, split_thread_terminal,
-    summarize_turn_diff_stats, toggle_pending_user_input_option_selection,
+    CommandPaletteItemKind, DiagnosticsDescriptionInput, DiffOpenValue, DiffRouteSearch,
+    DraftThreadEnvMode, EditorOption, MAX_TERMINALS_PER_GROUP, MAX_VISIBLE_WORK_LOG_ENTRIES,
+    ModelPickerItem, ModelPickerSelectedInstance, ModelPickerState, PendingApproval,
+    PendingUserInputProgress, ProjectScript, ProjectScriptIcon, ProjectSummary,
+    ProviderInstanceEntry, RECENT_COMMAND_PALETTE_THREAD_LIMIT, ServerProviderModel,
+    SidebarThreadSortOrder, TerminalEvent, ThreadStatus, TurnDiffFileChange, TurnDiffStat,
+    TurnDiffSummary, TurnDiffTreeNode, WorkLogEntry, build_project_action_items,
+    build_root_command_palette_groups, build_thread_action_items, build_turn_diff_tree,
+    close_thread_terminal, filter_command_palette_groups, format_diagnostics_description,
+    get_display_model_name, get_provider_summary, get_provider_version_advisory_presentation,
+    get_provider_version_label, new_thread_terminal, parse_diff_route_search,
+    primary_project_script, provider_instance_initials, resolve_model_picker_state,
+    resolve_selectable_model, set_pending_user_input_custom_answer, set_thread_active_terminal,
+    set_thread_terminal_open, split_thread_terminal, summarize_turn_diff_stats,
+    toggle_pending_user_input_option_selection,
 };
 
 use crate::theme::{FONT_FAMILY, MONO_FONT_FAMILY, SIDEBAR_MIN_WIDTH, Theme, ThemeMode};
@@ -6392,11 +6393,13 @@ impl R3Shell {
         } else {
             "Current version of the application."
         };
-        let diagnostics_description = if self.settings_diagnostics_opened {
-            "Diagnostics view selected."
-        } else {
-            "View runtime, environment, and integration diagnostics."
-        };
+        let diagnostics_description = format_diagnostics_description(DiagnosticsDescriptionInput {
+            local_tracing_enabled: false,
+            otlp_traces_enabled: false,
+            otlp_traces_url: None,
+            otlp_metrics_enabled: false,
+            otlp_metrics_url: None,
+        });
 
         div()
             .flex()
@@ -6439,10 +6442,11 @@ impl R3Shell {
     fn settings_about_row(
         &self,
         title: &'static str,
-        description: &'static str,
+        description: impl Into<SharedString>,
         control: impl IntoElement,
         first: bool,
     ) -> impl IntoElement {
+        let description = description.into();
         div()
             .flex()
             .items_center()

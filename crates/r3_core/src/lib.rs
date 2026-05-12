@@ -2253,6 +2253,688 @@ fn is_leap_year(year: i32) -> bool {
     (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DesktopSshEnvironmentTarget {
+    pub alias: String,
+    pub hostname: String,
+    pub username: Option<String>,
+    pub port: Option<u16>,
+}
+
+pub fn format_desktop_ssh_target(target: &DesktopSshEnvironmentTarget) -> String {
+    let authority = if let Some(username) = target.username.as_deref() {
+        format!("{username}@{}", target.hostname)
+    } else {
+        target.hostname.clone()
+    };
+    if let Some(port) = target.port {
+        format!("{authority}:{port}")
+    } else {
+        authority
+    }
+}
+
+pub fn parse_manual_desktop_ssh_target(
+    host: &str,
+    username: &str,
+    port: &str,
+) -> Result<DesktopSshEnvironmentTarget, String> {
+    let raw_host = host.trim();
+    if raw_host.is_empty() {
+        return Err("SSH host or alias is required.".to_string());
+    }
+
+    let mut hostname = raw_host.to_string();
+    let mut username = trimmed_non_empty(username).map(str::to_string);
+    let mut parsed_port = None;
+    let mut parsed_port_was_provided = false;
+
+    if let Some(at_index) = hostname.rfind('@') {
+        if at_index > 0 {
+            let inline_username = hostname[..at_index].trim().to_string();
+            hostname = hostname[at_index + 1..].trim().to_string();
+            if username.is_none() && !inline_username.is_empty() {
+                username = Some(inline_username);
+            }
+        }
+    }
+
+    if let Some((bracketed_host, bracketed_port)) = parse_bracketed_host_port(&hostname) {
+        hostname = bracketed_host;
+        if let Some(port) = bracketed_port {
+            parsed_port = Some(port);
+            parsed_port_was_provided = true;
+        }
+    } else if let Some((host_part, port_part)) = hostname.split_once(':') {
+        if !host_part.contains(':')
+            && !port_part.contains(':')
+            && !port_part.is_empty()
+            && port_part.chars().all(|ch| ch.is_ascii_digit())
+        {
+            let next_hostname = host_part.trim().to_string();
+            parsed_port = port_part.parse::<i64>().ok();
+            hostname = next_hostname;
+            parsed_port_was_provided = true;
+        }
+    }
+
+    let raw_port = port.trim();
+    if !raw_port.is_empty() {
+        parsed_port = parse_js_base10_int(raw_port);
+        parsed_port_was_provided = true;
+    }
+
+    if hostname.is_empty() {
+        return Err("SSH host or alias is required.".to_string());
+    }
+
+    let port = if parsed_port_was_provided {
+        let Some(port) = parsed_port else {
+            return Err("SSH port must be between 1 and 65535.".to_string());
+        };
+        if !(1..=65_535).contains(&port) {
+            return Err("SSH port must be between 1 and 65535.".to_string());
+        }
+        Some(port as u16)
+    } else {
+        None
+    };
+
+    Ok(DesktopSshEnvironmentTarget {
+        alias: hostname.clone(),
+        hostname,
+        username,
+        port,
+    })
+}
+
+fn parse_bracketed_host_port(value: &str) -> Option<(String, Option<i64>)> {
+    let rest = value.strip_prefix('[')?;
+    let closing_index = rest.find(']')?;
+    let hostname = rest[..closing_index].trim().to_string();
+    let suffix = &rest[closing_index + 1..];
+    if suffix.is_empty() {
+        return Some((hostname, None));
+    }
+    let raw_port = suffix.strip_prefix(':')?;
+    if raw_port.is_empty() || !raw_port.chars().all(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    Some((hostname, raw_port.parse::<i64>().ok()))
+}
+
+fn parse_js_base10_int(value: &str) -> Option<i64> {
+    let value = value.trim_start();
+    let mut sign = 1_i64;
+    let mut start = 0_usize;
+    if let Some(first) = value.as_bytes().first().copied() {
+        if first == b'-' {
+            sign = -1;
+            start = 1;
+        } else if first == b'+' {
+            start = 1;
+        }
+    }
+
+    let digits = value[start..]
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    if digits.is_empty() {
+        return None;
+    }
+    digits.parse::<i64>().ok().map(|value| value * sign)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemotePairingFields {
+    pub host: String,
+    pub pairing_code: String,
+}
+
+pub fn parse_pairing_url_fields(input: &str) -> Option<RemotePairingFields> {
+    let parsed = ParsedPairingUrl::parse(input.trim())?;
+    let token = parsed.pairing_token()?;
+
+    if let Some(host) = parsed.query_param("host") {
+        let host = host.trim().to_string();
+        if !host.is_empty() && !token.trim().is_empty() {
+            return Some(RemotePairingFields {
+                host,
+                pairing_code: token.trim().to_string(),
+            });
+        }
+    }
+
+    Some(RemotePairingFields {
+        host: parsed.origin,
+        pairing_code: token.trim().to_string(),
+    })
+}
+
+pub fn parse_remote_pairing_fields(
+    host: &str,
+    pairing_code: &str,
+) -> Result<RemotePairingFields, String> {
+    if let Some(parsed) = parse_pairing_url_fields(host) {
+        return Ok(parsed);
+    }
+
+    let host = host.trim();
+    let pairing_code = pairing_code.trim();
+    if host.is_empty() {
+        return Err("Enter a backend host.".to_string());
+    }
+    if pairing_code.is_empty() {
+        return Err("Enter a pairing code.".to_string());
+    }
+    Ok(RemotePairingFields {
+        host: host.to_string(),
+        pairing_code: pairing_code.to_string(),
+    })
+}
+
+pub fn format_desktop_ssh_connection_error(error_message: Option<&str>) -> String {
+    const FALLBACK: &str = "Failed to connect SSH host.";
+    let raw_message = error_message.unwrap_or(FALLBACK);
+    let without_ipc_prefix = raw_message
+        .strip_prefix("Error invoking remote method 'desktop:ensure-ssh-environment':")
+        .map(str::trim_start)
+        .unwrap_or(raw_message);
+    let without_tagged_prefix =
+        strip_ssh_tagged_error_prefix(without_ipc_prefix).unwrap_or(without_ipc_prefix);
+    let message = without_tagged_prefix.trim();
+    if message.is_empty() {
+        FALLBACK.to_string()
+    } else {
+        message.to_string()
+    }
+}
+
+fn strip_ssh_tagged_error_prefix(value: &str) -> Option<&str> {
+    let suffix = value.strip_prefix("Ssh")?;
+    let marker = suffix.find("Error:")?;
+    let tag = &suffix[..marker];
+    if tag.is_empty() || !tag.chars().all(|ch| ch.is_ascii_alphabetic()) {
+        return None;
+    }
+    Some(suffix[marker + "Error:".len()..].trim_start())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdvertisedEndpointStatus {
+    Available,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostedHttpsAppCompatibility {
+    Compatible,
+    Incompatible,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdvertisedEndpoint {
+    pub id: String,
+    pub provider_id: String,
+    pub label: String,
+    pub http_base_url: String,
+    pub reachability: String,
+    pub status: AdvertisedEndpointStatus,
+    pub is_default: bool,
+    pub hosted_https_app: HostedHttpsAppCompatibility,
+}
+
+pub fn is_tailscale_https_endpoint(endpoint: &AdvertisedEndpoint) -> bool {
+    endpoint.id.starts_with("tailscale-magicdns:")
+}
+
+pub fn endpoint_default_preference_key(endpoint: &AdvertisedEndpoint) -> String {
+    if endpoint.id.starts_with("desktop-loopback:") {
+        return "desktop-core:loopback:http".to_string();
+    }
+    if endpoint.id.starts_with("desktop-lan:") {
+        return "desktop-core:lan:http".to_string();
+    }
+    if endpoint.id.starts_with("tailscale-ip:") {
+        return "tailscale:ip:http".to_string();
+    }
+    if is_tailscale_https_endpoint(endpoint) {
+        return "tailscale:magicdns:https".to_string();
+    }
+
+    let scheme = ParsedPairingUrl::parse(&endpoint.http_base_url)
+        .map(|url| url.scheme)
+        .unwrap_or_else(|| "unknown".to_string());
+    format!(
+        "{}:{}:{}:{}",
+        endpoint.provider_id, endpoint.reachability, scheme, endpoint.label
+    )
+}
+
+pub fn select_pairing_endpoint<'a>(
+    endpoints: &'a [AdvertisedEndpoint],
+    default_endpoint_key: Option<&str>,
+) -> Option<&'a AdvertisedEndpoint> {
+    let available = endpoints
+        .iter()
+        .filter(|endpoint| endpoint.status != AdvertisedEndpointStatus::Unavailable)
+        .collect::<Vec<_>>();
+
+    if let Some(default_endpoint_key) = default_endpoint_key {
+        if let Some(endpoint) = available
+            .iter()
+            .copied()
+            .find(|endpoint| endpoint_default_preference_key(endpoint) == default_endpoint_key)
+        {
+            return Some(endpoint);
+        }
+    }
+
+    available
+        .iter()
+        .copied()
+        .find(|endpoint| endpoint.is_default)
+        .or_else(|| {
+            available
+                .iter()
+                .copied()
+                .find(|endpoint| endpoint.reachability != "loopback")
+        })
+        .or_else(|| {
+            available.iter().copied().find(|endpoint| {
+                endpoint.hosted_https_app == HostedHttpsAppCompatibility::Compatible
+            })
+        })
+}
+
+pub fn resolve_desktop_pairing_url(endpoint_url: &str, credential: &str) -> Option<String> {
+    let parsed = ParsedPairingUrl::parse(endpoint_url)?;
+    Some(format!(
+        "{}/pair#token={}",
+        parsed.origin,
+        form_url_encode_component(credential)
+    ))
+}
+
+pub fn resolve_hosted_pairing_url(endpoint_url: &str, credential: &str) -> Option<String> {
+    let parsed = ParsedPairingUrl::parse(endpoint_url)?;
+    if parsed.scheme != "https" {
+        return None;
+    }
+    Some(format!(
+        "https://app.t3.codes/pair?host={}#token={}",
+        form_url_encode_component(endpoint_url),
+        form_url_encode_component(credential)
+    ))
+}
+
+pub fn resolve_advertised_endpoint_pairing_url(
+    endpoint: &AdvertisedEndpoint,
+    credential: &str,
+) -> Option<String> {
+    if endpoint.hosted_https_app == HostedHttpsAppCompatibility::Compatible {
+        return resolve_hosted_pairing_url(&endpoint.http_base_url, credential)
+            .or_else(|| resolve_desktop_pairing_url(&endpoint.http_base_url, credential));
+    }
+    resolve_desktop_pairing_url(&endpoint.http_base_url, credential)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerPairingLinkRecord {
+    pub id: String,
+    pub created_at: String,
+}
+
+pub fn sort_desktop_pairing_links(
+    links: &[ServerPairingLinkRecord],
+) -> Vec<ServerPairingLinkRecord> {
+    let mut sorted = links.to_vec();
+    sorted.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+    sorted
+}
+
+pub fn upsert_desktop_pairing_link(
+    current: &[ServerPairingLinkRecord],
+    next: ServerPairingLinkRecord,
+) -> Vec<ServerPairingLinkRecord> {
+    let mut updated = current.to_vec();
+    if let Some(existing_index) = updated
+        .iter()
+        .position(|pairing_link| pairing_link.id == next.id)
+    {
+        updated[existing_index] = next;
+    } else {
+        updated.push(next);
+    }
+    sort_desktop_pairing_links(&updated)
+}
+
+pub fn remove_desktop_pairing_link(
+    current: &[ServerPairingLinkRecord],
+    id: &str,
+) -> Vec<ServerPairingLinkRecord> {
+    current
+        .iter()
+        .filter(|pairing_link| pairing_link.id != id)
+        .cloned()
+        .collect()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerClientSessionRecord {
+    pub session_id: String,
+    pub issued_at: String,
+    pub current: bool,
+    pub connected: bool,
+}
+
+pub fn sort_desktop_client_sessions(
+    sessions: &[ServerClientSessionRecord],
+) -> Vec<ServerClientSessionRecord> {
+    let mut sorted = sessions.to_vec();
+    sorted.sort_by(|left, right| {
+        right
+            .current
+            .cmp(&left.current)
+            .then(right.connected.cmp(&left.connected))
+            .then(right.issued_at.cmp(&left.issued_at))
+    });
+    sorted
+}
+
+pub fn upsert_desktop_client_session(
+    current: &[ServerClientSessionRecord],
+    next: ServerClientSessionRecord,
+) -> Vec<ServerClientSessionRecord> {
+    let mut updated = current.to_vec();
+    if let Some(existing_index) = updated
+        .iter()
+        .position(|client_session| client_session.session_id == next.session_id)
+    {
+        updated[existing_index] = next;
+    } else {
+        updated.push(next);
+    }
+    sort_desktop_client_sessions(&updated)
+}
+
+pub fn remove_desktop_client_session(
+    current: &[ServerClientSessionRecord],
+    session_id: &str,
+) -> Vec<ServerClientSessionRecord> {
+    current
+        .iter()
+        .filter(|client_session| client_session.session_id != session_id)
+        .cloned()
+        .collect()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DiagnosticsDescriptionInput<'a> {
+    pub local_tracing_enabled: bool,
+    pub otlp_traces_enabled: bool,
+    pub otlp_traces_url: Option<&'a str>,
+    pub otlp_metrics_enabled: bool,
+    pub otlp_metrics_url: Option<&'a str>,
+}
+
+pub fn collapse_otel_signals_url(traces_url: &str, metrics_url: &str) -> Option<String> {
+    let traces_suffix = "/traces";
+    let metrics_suffix = "/metrics";
+    if !traces_url.ends_with(traces_suffix) || !metrics_url.ends_with(metrics_suffix) {
+        return None;
+    }
+
+    let traces_base = &traces_url[..traces_url.len() - traces_suffix.len()];
+    let metrics_base = &metrics_url[..metrics_url.len() - metrics_suffix.len()];
+    if traces_base != metrics_base {
+        return None;
+    }
+
+    Some(format!("{traces_base}/{{traces,metrics}}"))
+}
+
+pub fn format_diagnostics_description(input: DiagnosticsDescriptionInput<'_>) -> String {
+    let mode = if input.local_tracing_enabled {
+        "Local trace file"
+    } else {
+        "Terminal logs only"
+    };
+    let traces_url = input
+        .otlp_traces_enabled
+        .then_some(input.otlp_traces_url)
+        .flatten();
+    let metrics_url = input
+        .otlp_metrics_enabled
+        .then_some(input.otlp_metrics_url)
+        .flatten();
+
+    match (traces_url, metrics_url) {
+        (Some(traces_url), Some(metrics_url)) => {
+            if let Some(collapsed_url) = collapse_otel_signals_url(traces_url, metrics_url) {
+                format!("{mode}. Exporting OTEL to {collapsed_url}.")
+            } else {
+                format!(
+                    "{mode}. Exporting OTEL traces to {traces_url} and metrics to {metrics_url}."
+                )
+            }
+        }
+        (Some(traces_url), None) => format!("{mode}. Exporting OTEL traces to {traces_url}."),
+        (None, Some(metrics_url)) => format!("{mode}. Exporting OTEL metrics to {metrics_url}."),
+        (None, None) => format!("{mode}."),
+    }
+}
+
+pub fn format_diagnostics_count(value: u64) -> String {
+    let digits = value.to_string();
+    let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
+    for (index, ch) in digits.chars().rev().enumerate() {
+        if index > 0 && index % 3 == 0 {
+            grouped.push(',');
+        }
+        grouped.push(ch);
+    }
+    grouped.chars().rev().collect()
+}
+
+pub fn format_diagnostics_duration_ms(value: f64) -> String {
+    if value < 1_000.0 {
+        return format!("{} ms", value.round() as i64);
+    }
+    if value >= 10_000.0 {
+        format!("{:.1} s", value / 1_000.0)
+    } else {
+        format!("{:.2} s", value / 1_000.0)
+    }
+}
+
+pub fn format_diagnostics_bytes(value: u64) -> String {
+    if value < 1024 {
+        return format!("{value} B");
+    }
+    let units = ["KB", "MB", "GB"];
+    let mut unit_index = 0_usize;
+    let mut next = value as f64 / 1024.0;
+    while next >= 1024.0 && unit_index < units.len() - 1 {
+        next /= 1024.0;
+        unit_index += 1;
+    }
+    if next >= 10.0 {
+        format!("{next:.1} {}", units[unit_index])
+    } else {
+        format!("{next:.2} {}", units[unit_index])
+    }
+}
+
+pub fn shorten_trace_id(trace_id: &str) -> String {
+    if trace_id.len() <= 32 {
+        return trace_id.to_string();
+    }
+    format!("{}...{}", &trace_id[..18], &trace_id[trace_id.len() - 10..])
+}
+
+pub fn is_stale_process_signal_message(message: Option<&str>) -> bool {
+    message
+        .map(|message| message.contains("not a live descendant"))
+        .unwrap_or(false)
+}
+
+fn trimmed_non_empty(value: &str) -> Option<&str> {
+    let value = value.trim();
+    if value.is_empty() { None } else { Some(value) }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ParsedPairingUrl {
+    scheme: String,
+    origin: String,
+    query: String,
+    hash: String,
+}
+
+impl ParsedPairingUrl {
+    fn parse(input: &str) -> Option<Self> {
+        if input.is_empty() {
+            return None;
+        }
+        let url_like_input = if input.starts_with("//") {
+            format!("https:{input}")
+        } else if has_url_scheme_prefix(input) {
+            input.to_string()
+        } else {
+            format!("https://{input}")
+        };
+
+        let scheme_end = url_like_input.find("://")?;
+        let scheme = url_like_input[..scheme_end].to_ascii_lowercase();
+        if scheme.is_empty() {
+            return None;
+        }
+        let after_scheme = &url_like_input[scheme_end + 3..];
+        let authority_end = after_scheme
+            .find(|ch| matches!(ch, '/' | '?' | '#'))
+            .unwrap_or(after_scheme.len());
+        let authority = &after_scheme[..authority_end];
+        if authority.is_empty() {
+            return None;
+        }
+        let remainder = &after_scheme[authority_end..];
+        let query = extract_url_query(remainder).unwrap_or_default();
+        let hash = extract_url_hash(remainder).unwrap_or_default();
+
+        Some(Self {
+            scheme: scheme.clone(),
+            origin: format!("{scheme}://{authority}"),
+            query,
+            hash,
+        })
+    }
+
+    fn query_param(&self, name: &str) -> Option<String> {
+        get_url_param(&self.query, name)
+    }
+
+    fn hash_param(&self, name: &str) -> Option<String> {
+        get_url_param(&self.hash, name)
+    }
+
+    fn pairing_token(&self) -> Option<String> {
+        self.hash_param("token")
+            .filter(|token| !token.trim().is_empty())
+            .or_else(|| {
+                self.query_param("token")
+                    .filter(|token| !token.trim().is_empty())
+            })
+    }
+}
+
+fn has_url_scheme_prefix(input: &str) -> bool {
+    let Some((scheme, _)) = input.split_once("://") else {
+        return false;
+    };
+    let mut chars = scheme.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    first.is_ascii_alphabetic()
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '.' | '-'))
+}
+
+fn extract_url_query(remainder: &str) -> Option<String> {
+    let query_start = remainder.find('?')? + 1;
+    let query_end = remainder[query_start..]
+        .find('#')
+        .map(|index| query_start + index)
+        .unwrap_or(remainder.len());
+    Some(remainder[query_start..query_end].to_string())
+}
+
+fn extract_url_hash(remainder: &str) -> Option<String> {
+    let hash_start = remainder.find('#')? + 1;
+    Some(remainder[hash_start..].to_string())
+}
+
+fn get_url_param(params: &str, name: &str) -> Option<String> {
+    params.split('&').find_map(|part| {
+        let (key, value) = part.split_once('=').unwrap_or((part, ""));
+        (percent_decode_form_component(key) == name).then(|| percent_decode_form_component(value))
+    })
+}
+
+fn percent_decode_form_component(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut index = 0_usize;
+    while index < bytes.len() {
+        match bytes[index] {
+            b'+' => {
+                output.push(b' ');
+                index += 1;
+            }
+            b'%' if index + 2 < bytes.len() => {
+                let high = hex_value(bytes[index + 1]);
+                let low = hex_value(bytes[index + 2]);
+                if let (Some(high), Some(low)) = (high, low) {
+                    output.push(high * 16 + low);
+                    index += 3;
+                } else {
+                    output.push(bytes[index]);
+                    index += 1;
+                }
+            }
+            byte => {
+                output.push(byte);
+                index += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&output).into_owned()
+}
+
+fn hex_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn form_url_encode_component(value: &str) -> String {
+    let mut output = String::new();
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            output.push(byte as char);
+        } else if byte == b' ' {
+            output.push('+');
+        } else {
+            output.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    output
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SessionPhase {
     Disconnected,
@@ -5166,6 +5848,299 @@ mod tests {
         };
         overrides(&mut provider);
         provider
+    }
+
+    fn advertised_endpoint(
+        id: &str,
+        http_base_url: &str,
+        reachability: &str,
+        is_default: bool,
+        status: AdvertisedEndpointStatus,
+        hosted_https_app: HostedHttpsAppCompatibility,
+    ) -> AdvertisedEndpoint {
+        AdvertisedEndpoint {
+            id: id.to_string(),
+            provider_id: "desktop-core".to_string(),
+            label: "Local network".to_string(),
+            http_base_url: http_base_url.to_string(),
+            reachability: reachability.to_string(),
+            status,
+            is_default,
+            hosted_https_app,
+        }
+    }
+
+    #[test]
+    fn parses_manual_desktop_ssh_targets_like_upstream() {
+        let target = parse_manual_desktop_ssh_target("alice@example.com:2222", "", "").unwrap();
+        assert_eq!(
+            target,
+            DesktopSshEnvironmentTarget {
+                alias: "example.com".to_string(),
+                hostname: "example.com".to_string(),
+                username: Some("alice".to_string()),
+                port: Some(2222),
+            }
+        );
+        assert_eq!(format_desktop_ssh_target(&target), "alice@example.com:2222");
+
+        let explicit_username =
+            parse_manual_desktop_ssh_target("alice@example.com", "root", "").unwrap();
+        assert_eq!(explicit_username.username.as_deref(), Some("root"));
+
+        let ipv6 = parse_manual_desktop_ssh_target("bob@[fe80::1]:2200", "", "").unwrap();
+        assert_eq!(ipv6.hostname, "fe80::1");
+        assert_eq!(ipv6.username.as_deref(), Some("bob"));
+        assert_eq!(ipv6.port, Some(2200));
+        assert_eq!(format_desktop_ssh_target(&ipv6), "bob@fe80::1:2200");
+
+        let explicit_port_parse_int =
+            parse_manual_desktop_ssh_target("devbox", "", "22abc").unwrap();
+        assert_eq!(explicit_port_parse_int.port, Some(22));
+    }
+
+    #[test]
+    fn rejects_manual_desktop_ssh_targets_with_upstream_messages() {
+        assert_eq!(
+            parse_manual_desktop_ssh_target("  ", "", "").unwrap_err(),
+            "SSH host or alias is required."
+        );
+        assert_eq!(
+            parse_manual_desktop_ssh_target("alice@:22", "", "").unwrap_err(),
+            "SSH host or alias is required."
+        );
+        assert_eq!(
+            parse_manual_desktop_ssh_target("example.com:70000", "", "").unwrap_err(),
+            "SSH port must be between 1 and 65535."
+        );
+        assert_eq!(
+            parse_manual_desktop_ssh_target("example.com", "", "nope").unwrap_err(),
+            "SSH port must be between 1 and 65535."
+        );
+    }
+
+    #[test]
+    fn parses_remote_pairing_fields_from_urls_and_manual_fields() {
+        assert_eq!(
+            parse_remote_pairing_fields("https://remote.example.com/pair#token=pairing-token", "")
+                .unwrap(),
+            RemotePairingFields {
+                host: "https://remote.example.com".to_string(),
+                pairing_code: "pairing-token".to_string(),
+            }
+        );
+        assert_eq!(
+            parse_remote_pairing_fields(
+                "https://app.t3.codes/pair?host=https%3A%2F%2Fdesktop.tailnet.ts.net%3A44342%2F#token=pairing-token",
+                "",
+            )
+            .unwrap(),
+            RemotePairingFields {
+                host: "https://desktop.tailnet.ts.net:44342/".to_string(),
+                pairing_code: "pairing-token".to_string(),
+            }
+        );
+        assert_eq!(
+            parse_remote_pairing_fields("backend.example.com", "PAIRCODE").unwrap(),
+            RemotePairingFields {
+                host: "backend.example.com".to_string(),
+                pairing_code: "PAIRCODE".to_string(),
+            }
+        );
+
+        assert_eq!(
+            parse_remote_pairing_fields("", "PAIRCODE").unwrap_err(),
+            "Enter a backend host."
+        );
+        assert_eq!(
+            parse_remote_pairing_fields("backend.example.com", "").unwrap_err(),
+            "Enter a pairing code."
+        );
+    }
+
+    #[test]
+    fn formats_desktop_ssh_connection_errors_like_upstream() {
+        assert_eq!(
+            format_desktop_ssh_connection_error(Some(
+                "Error invoking remote method 'desktop:ensure-ssh-environment': SshConnectionError: bad host"
+            )),
+            "bad host"
+        );
+        assert_eq!(
+            format_desktop_ssh_connection_error(Some("SshLaunchError: timed out")),
+            "timed out"
+        );
+        assert_eq!(
+            format_desktop_ssh_connection_error(Some("   ")),
+            "Failed to connect SSH host."
+        );
+        assert_eq!(
+            format_desktop_ssh_connection_error(None),
+            "Failed to connect SSH host."
+        );
+    }
+
+    #[test]
+    fn selects_and_resolves_advertised_pairing_endpoints() {
+        let loopback = advertised_endpoint(
+            "desktop-loopback:127.0.0.1",
+            "http://127.0.0.1:8765",
+            "loopback",
+            true,
+            AdvertisedEndpointStatus::Available,
+            HostedHttpsAppCompatibility::Incompatible,
+        );
+        let lan = advertised_endpoint(
+            "desktop-lan:192.168.1.44",
+            "http://192.168.1.44:8765",
+            "lan",
+            false,
+            AdvertisedEndpointStatus::Available,
+            HostedHttpsAppCompatibility::Incompatible,
+        );
+        let tailscale_https = advertised_endpoint(
+            "tailscale-magicdns:desktop.tailnet.ts.net",
+            "https://desktop.tailnet.ts.net:8765",
+            "tailscale",
+            false,
+            AdvertisedEndpointStatus::Available,
+            HostedHttpsAppCompatibility::Compatible,
+        );
+        let unavailable_preference = advertised_endpoint(
+            "desktop-lan:stale",
+            "http://stale.local:8765",
+            "lan",
+            false,
+            AdvertisedEndpointStatus::Unavailable,
+            HostedHttpsAppCompatibility::Incompatible,
+        );
+
+        assert_eq!(
+            endpoint_default_preference_key(&loopback),
+            "desktop-core:loopback:http"
+        );
+        assert_eq!(
+            endpoint_default_preference_key(&tailscale_https),
+            "tailscale:magicdns:https"
+        );
+
+        let endpoints = vec![
+            unavailable_preference,
+            loopback.clone(),
+            lan.clone(),
+            tailscale_https.clone(),
+        ];
+        assert_eq!(
+            select_pairing_endpoint(&endpoints, Some("desktop-core:lan:http"))
+                .unwrap()
+                .id,
+            lan.id
+        );
+        assert_eq!(
+            resolve_advertised_endpoint_pairing_url(&lan, "PAIRCODE").unwrap(),
+            "http://192.168.1.44:8765/pair#token=PAIRCODE"
+        );
+        assert_eq!(
+            resolve_advertised_endpoint_pairing_url(&tailscale_https, "PAIRCODE").unwrap(),
+            "https://app.t3.codes/pair?host=https%3A%2F%2Fdesktop.tailnet.ts.net%3A8765#token=PAIRCODE"
+        );
+    }
+
+    #[test]
+    fn sorts_and_upserts_access_records_like_upstream() {
+        let old_link = ServerPairingLinkRecord {
+            id: "old".to_string(),
+            created_at: "2026-03-01T00:00:00.000Z".to_string(),
+        };
+        let new_link = ServerPairingLinkRecord {
+            id: "new".to_string(),
+            created_at: "2026-03-02T00:00:00.000Z".to_string(),
+        };
+        assert_eq!(
+            sort_desktop_pairing_links(&[old_link.clone(), new_link.clone()])
+                .into_iter()
+                .map(|link| link.id)
+                .collect::<Vec<_>>(),
+            vec!["new", "old"]
+        );
+        assert_eq!(
+            upsert_desktop_pairing_link(&[old_link], new_link)
+                .into_iter()
+                .map(|link| link.id)
+                .collect::<Vec<_>>(),
+            vec!["new", "old"]
+        );
+
+        let disconnected_current = ServerClientSessionRecord {
+            session_id: "current".to_string(),
+            issued_at: "2026-03-01T00:00:00.000Z".to_string(),
+            current: true,
+            connected: false,
+        };
+        let connected_other = ServerClientSessionRecord {
+            session_id: "other".to_string(),
+            issued_at: "2026-03-03T00:00:00.000Z".to_string(),
+            current: false,
+            connected: true,
+        };
+        assert_eq!(
+            sort_desktop_client_sessions(&[connected_other, disconnected_current])
+                .into_iter()
+                .map(|session| session.session_id)
+                .collect::<Vec<_>>(),
+            vec!["current", "other"]
+        );
+    }
+
+    #[test]
+    fn formats_diagnostics_helpers_like_upstream() {
+        assert_eq!(format_diagnostics_count(1234567), "1,234,567");
+        assert_eq!(format_diagnostics_duration_ms(999.4), "999 ms");
+        assert_eq!(format_diagnostics_duration_ms(1500.0), "1.50 s");
+        assert_eq!(format_diagnostics_duration_ms(10_000.0), "10.0 s");
+        assert_eq!(format_diagnostics_bytes(1023), "1023 B");
+        assert_eq!(format_diagnostics_bytes(1536), "1.50 KB");
+        assert_eq!(format_diagnostics_bytes(12 * 1024), "12.0 KB");
+        assert_eq!(
+            shorten_trace_id("0123456789abcdef0123456789abcdef0123456789"),
+            "0123456789abcdef01...0123456789"
+        );
+        assert!(is_stale_process_signal_message(Some(
+            "process is not a live descendant"
+        )));
+        assert!(!is_stale_process_signal_message(None));
+    }
+
+    #[test]
+    fn formats_diagnostics_settings_description_like_upstream() {
+        assert_eq!(
+            collapse_otel_signals_url(
+                "http://localhost:4318/v1/traces",
+                "http://localhost:4318/v1/metrics",
+            )
+            .as_deref(),
+            Some("http://localhost:4318/v1/{traces,metrics}")
+        );
+        assert_eq!(
+            format_diagnostics_description(DiagnosticsDescriptionInput {
+                local_tracing_enabled: true,
+                otlp_traces_enabled: true,
+                otlp_traces_url: Some("http://localhost:4318/v1/traces"),
+                otlp_metrics_enabled: true,
+                otlp_metrics_url: Some("http://localhost:4318/v1/metrics"),
+            }),
+            "Local trace file. Exporting OTEL to http://localhost:4318/v1/{traces,metrics}."
+        );
+        assert_eq!(
+            format_diagnostics_description(DiagnosticsDescriptionInput {
+                local_tracing_enabled: false,
+                otlp_traces_enabled: false,
+                otlp_traces_url: Some("http://localhost:4318/v1/traces"),
+                otlp_metrics_enabled: false,
+                otlp_metrics_url: None,
+            }),
+            "Terminal logs only."
+        );
     }
 
     #[test]

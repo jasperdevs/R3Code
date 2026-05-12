@@ -178,6 +178,7 @@ The settings sidebar renders the upstream settings nav icon set through GPUI SVG
 The footer Back affordance is a native GPUI click target, and the parity gate follows that click path for settings-to-empty verification.
 The settings nav rows are native GPUI click targets; the parity gate opens Keybindings through the native settings nav click path.
 The parity gate also captures provider and connections settings smoke screens at `reference/screenshots/r3code-settings-providers-window.png` and `reference/screenshots/r3code-settings-connections-window.png`. These remain R3-only smoke captures until matching upstream provider/connection fixtures are added.
+The Rust core now ports the deterministic settings helpers from upstream `ConnectionsSettings.tsx`, `pairingUrls.ts`, `pairingUrl.ts`, `hostedPairing.ts`, `DiagnosticsSettings.tsx`, and `SettingsPanels.logic.ts`: manual SSH target parsing, remote pairing URL/field parsing, desktop SSH error normalization, advertised endpoint preference/selection and pairing URL resolution, pairing/client-session sorting, diagnostics count/duration/byte/trace formatting, stale process signal detection, and diagnostics description collapse rules. The general settings diagnostics row consumes the Rust diagnostics description helper; the connections UI still needs live saved-environment state, owner pairing links, client sessions, discovered SSH hosts, Tailscale Serve controls, and matching upstream fixture captures.
 
 ## Current Settings Keybindings Baseline
 
