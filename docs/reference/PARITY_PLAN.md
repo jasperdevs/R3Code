@@ -44,6 +44,7 @@ The task currently captures:
 - `reference/screenshots/upstream-pending-approval-reference.png`
 - `reference/screenshots/upstream-settings-reference.png`
 - `reference/screenshots/upstream-settings-keybindings-reference.png`
+- `reference/screenshots/upstream-settings-keybindings-add-reference.png`
 - `reference/screenshots/upstream-settings-providers-reference.png`
 - `reference/screenshots/upstream-settings-source-control-reference.png`
 - `reference/screenshots/upstream-settings-connections-reference.png`
@@ -499,6 +500,23 @@ cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstr
 Last measured result: `6.259%`.
 
 Current ported parity scope: native keybindings table now follows the upstream `SettingsSection` table proportions more closely: upstream `InfoIcon` warning banner, T3 Code warning copy, `muted/25` and `muted/15` table backgrounds, `border/70` and `border/60` dividers, upstream grid column math, uppercase table headers, upstream Windows shortcut glyph labels, upstream `Kbd` chip sizing/color/weight, upstream `border-input` when triggers, upstream light `foreground` token, and the visible rows now render from upstream-shaped resolved keybinding rows instead of a UI-only display string table. Rust core also ports `KeybindingsSettings.logic.ts` shortcut serialization, keyboard-event capture, when-expression parsing/formatting, known/unknown when-variable handling, command options, source/default-row derivation, conflict labels, row draft state, reset/save payloads, and visual when-builder condition helpers. The GPUI add-keybinding action now opens an in-table draft row with the upstream cancel icon instead of the older side-card mock.
+
+## Current Settings Keybindings Add Baseline
+
+Reference: `reference/screenshots/upstream-settings-keybindings-add-reference.png`
+
+R3Code capture: `reference/screenshots/r3code-settings-keybindings-add-window.png`
+
+Allowed brand-copy difference: `--ignore-rect 0,0,120,45`
+
+Current measured diff:
+
+```text
+cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen settings-keybindings-add --output reference\screenshots\r3code-settings-keybindings-add-window.png
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-settings-keybindings-add-reference.png --actual reference\screenshots\r3code-settings-keybindings-add-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 6.45
+```
+
+Last measured result: `6.431%`.
 
 ## Current Settings Source Control Baseline
 

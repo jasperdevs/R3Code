@@ -47,6 +47,7 @@ These screens have automated reference captures and native GPUI comparisons:
 | Pending user input composer state | 5.1% |
 | Settings general | 6% |
 | Settings keybindings | 6.35% |
+| Settings keybindings add row | 6.45% |
 | Settings providers | 5% |
 | Settings source control | 6% |
 | Settings connections | 4% |

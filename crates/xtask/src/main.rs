@@ -112,7 +112,7 @@ fn print_usage() {
         "Usage:
   cargo run -p xtask -- check-parity --allow-window-capture [--refresh-reference]
   cargo run -p xtask -- compare-screenshots --expected <png> --actual <png> [--channel-tolerance <n>] [--ignore-rect x,y,w,h] [--max-different-pixels-percent <n>]
-  cargo run -p xtask -- capture-r3code-window --allow-window-capture [--screen draft|composer-focused|composer-menu|composer-inline-tokens|active-chat|project-scripts-menu|running-turn|pending-approval|pending-user-input|terminal-drawer|diff-panel|branch-toolbar|sidebar-options-menu|open-in-menu|git-actions-menu|provider-model-picker|settings|settings-diagnostics|command-palette|settings-theme-menu|settings-dark|settings-back|settings-keybindings|settings-providers|settings-source-control|settings-connections|settings-archive] [--theme light|dark|system] [--output <png>]
+  cargo run -p xtask -- capture-r3code-window --allow-window-capture [--screen draft|composer-focused|composer-menu|composer-inline-tokens|active-chat|project-scripts-menu|running-turn|pending-approval|pending-user-input|terminal-drawer|diff-panel|branch-toolbar|sidebar-options-menu|open-in-menu|git-actions-menu|provider-model-picker|settings|settings-diagnostics|command-palette|settings-theme-menu|settings-dark|settings-back|settings-keybindings|settings-keybindings-add|settings-providers|settings-source-control|settings-connections|settings-archive] [--theme light|dark|system] [--output <png>]
   cargo run -p xtask -- capture-reference-browser"
     );
 }
@@ -597,6 +597,32 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
     })?;
 
     capture_r3code_window(CaptureR3CodeOptions {
+        screen: Some("settings-keybindings-add".to_string()),
+        theme: Some("light".to_string()),
+        output: resolve_repo_path(
+            "reference/screenshots/r3code-settings-keybindings-add-window.png",
+        ),
+        allow_window_capture: true,
+        ..CaptureR3CodeOptions::default()
+    })?;
+    compare_screenshots(CompareOptions {
+        expected: resolve_repo_path(
+            "reference/screenshots/upstream-settings-keybindings-add-reference.png",
+        ),
+        actual: resolve_repo_path(
+            "reference/screenshots/r3code-settings-keybindings-add-window.png",
+        ),
+        max_different_pixels_percent: 6.45,
+        channel_tolerance: 8,
+        ignore_rects: vec![Rect {
+            x: 0,
+            y: 0,
+            width: 120,
+            height: 45,
+        }],
+    })?;
+
+    capture_r3code_window(CaptureR3CodeOptions {
         screen: Some("settings-providers".to_string()),
         theme: Some("light".to_string()),
         output: resolve_repo_path("reference/screenshots/r3code-settings-providers-window.png"),
@@ -1065,6 +1091,7 @@ fn capture_r3code_window_direct(options: &CaptureR3CodeOptions) -> Result<()> {
             | "settings-dark"
             | "settings-back"
             | "settings-keybindings"
+            | "settings-keybindings-add"
             | "settings-providers"
             | "settings-source-control"
             | "settings-connections"
@@ -1108,6 +1135,11 @@ fn capture_r3code_window_direct(options: &CaptureR3CodeOptions) -> Result<()> {
             thread::sleep(Duration::from_millis(350));
         } else if options.screen.as_deref() == Some("settings-keybindings") {
             click_settings_keybindings_nav(hwnd)?;
+            thread::sleep(Duration::from_millis(350));
+        } else if options.screen.as_deref() == Some("settings-keybindings-add") {
+            click_settings_keybindings_nav(hwnd)?;
+            thread::sleep(Duration::from_millis(250));
+            click_settings_keybindings_add(hwnd)?;
             thread::sleep(Duration::from_millis(350));
         } else if options.screen.as_deref() == Some("settings-providers") {
             click_settings_providers_nav(hwnd)?;
@@ -1198,6 +1230,11 @@ fn click_settings_back(hwnd: HWND) -> Result<()> {
 #[cfg(windows)]
 fn click_settings_keybindings_nav(hwnd: HWND) -> Result<()> {
     send_client_click(hwnd, 78, 102)
+}
+
+#[cfg(windows)]
+fn click_settings_keybindings_add(hwnd: HWND) -> Result<()> {
+    send_client_click(hwnd, 1208, 84)
 }
 
 #[cfg(windows)]
@@ -1569,7 +1606,7 @@ fn capture_reference_browser(options: CaptureReferenceOptions) -> Result<()> {
         fs::write(
             options.output_dir.join("CAPTURE_MANIFEST.txt"),
             format!(
-                "Upstream reference repository: {}\nReference commit: {}\nIsolated reference home: {}\nOutput directory: {}\nCaptured:\n- upstream-empty-reference.png\n- upstream-command-palette-reference.png\n- upstream-draft-reference.png\n- upstream-composer-focused-reference.png\n- upstream-composer-menu-reference.png\n- upstream-composer-inline-tokens-reference.png\n- upstream-provider-model-picker-reference.png\n- upstream-branch-toolbar-reference.png\n- upstream-sidebar-options-menu-reference.png\n- upstream-open-in-menu-reference.png\n- upstream-git-actions-menu-reference.png\n- upstream-active-chat-reference.png\n- upstream-project-scripts-menu-reference.png\n- upstream-running-turn-reference.png\n- upstream-terminal-drawer-reference.png\n- upstream-diff-panel-reference.png\n- upstream-pending-user-input-reference.png\n- upstream-pending-approval-reference.png\n- upstream-settings-reference.png\n- upstream-settings-keybindings-reference.png\n- upstream-settings-providers-reference.png\n- upstream-settings-source-control-reference.png\n- upstream-settings-connections-reference.png\n- upstream-settings-diagnostics-reference.png\n- upstream-settings-archive-reference.png\n- upstream-settings-theme-menu-reference.png\n- upstream-settings-dark-reference.png\n- upstream-empty-dark-reference.png\n",
+                "Upstream reference repository: {}\nReference commit: {}\nIsolated reference home: {}\nOutput directory: {}\nCaptured:\n- upstream-empty-reference.png\n- upstream-command-palette-reference.png\n- upstream-draft-reference.png\n- upstream-composer-focused-reference.png\n- upstream-composer-menu-reference.png\n- upstream-composer-inline-tokens-reference.png\n- upstream-provider-model-picker-reference.png\n- upstream-branch-toolbar-reference.png\n- upstream-sidebar-options-menu-reference.png\n- upstream-open-in-menu-reference.png\n- upstream-git-actions-menu-reference.png\n- upstream-active-chat-reference.png\n- upstream-project-scripts-menu-reference.png\n- upstream-running-turn-reference.png\n- upstream-terminal-drawer-reference.png\n- upstream-diff-panel-reference.png\n- upstream-pending-user-input-reference.png\n- upstream-pending-approval-reference.png\n- upstream-settings-reference.png\n- upstream-settings-keybindings-reference.png\n- upstream-settings-keybindings-add-reference.png\n- upstream-settings-providers-reference.png\n- upstream-settings-source-control-reference.png\n- upstream-settings-connections-reference.png\n- upstream-settings-diagnostics-reference.png\n- upstream-settings-archive-reference.png\n- upstream-settings-theme-menu-reference.png\n- upstream-settings-dark-reference.png\n- upstream-empty-dark-reference.png\n",
                 options.repo.display(),
                 commit.trim(),
                 options.home.display(),
@@ -2491,6 +2528,11 @@ const path = require("path");
   await page.goto(new URL("/settings/keybindings", appOrigin).toString(), { waitUntil: "networkidle", timeout: 30000 });
   await page.getByText("Command").first().waitFor({ timeout: 15000 });
   await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-settings-keybindings-reference.png"), fullPage: true });
+  await page.getByLabel("Add keybinding").click();
+  await page.getByLabel("Cancel new keybinding").waitFor({ timeout: 15000 });
+  await page.waitForTimeout(350);
+  await dismissUpdatesToast();
+  await page.screenshot({ path: path.join(process.env.OUTPUT_DIR, "upstream-settings-keybindings-add-reference.png"), fullPage: true });
   await page.goto(new URL("/settings/providers", appOrigin).toString(), { waitUntil: "networkidle", timeout: 30000 });
   await page.getByLabel("Refresh provider status").waitFor({ timeout: 15000 });
   await page.waitForTimeout(500);

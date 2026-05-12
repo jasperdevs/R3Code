@@ -6255,14 +6255,15 @@ impl R3Shell {
                             .h(px(28.0))
                             .rounded(px(6.0))
                             .border_1()
-                            .border_color(self.theme.border.opacity(0.60))
-                            .bg(self.theme.accent.opacity(0.44))
+                            .border_color(hsla(224.0 / 360.0, 0.68, 0.66, 1.0))
+                            .bg(hsla(224.0 / 360.0, 0.68, 0.66, 1.0))
                             .px_3()
                             .flex()
                             .items_center()
                             .justify_center()
                             .text_size(px(12.0))
-                            .text_color(self.theme.muted_foreground.opacity(0.62))
+                            .font_weight(FontWeight(600.0))
+                            .text_color(self.theme.background)
                             .child("Save"),
                     ),
             )
@@ -6448,6 +6449,11 @@ impl R3Shell {
         action: KeybindingsHeaderAction,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let active = match action {
+            KeybindingsHeaderAction::ToggleSearch => self.keybindings_search_open,
+            KeybindingsHeaderAction::ToggleAdd => self.keybindings_add_dialog_open,
+            KeybindingsHeaderAction::MarkFileOpened => self.keybindings_file_opened,
+        };
         div()
             .id(id)
             .flex()
@@ -6456,6 +6462,11 @@ impl R3Shell {
             .w(px(20.0))
             .h(px(20.0))
             .rounded(px(4.0))
+            .bg(if active {
+                self.theme.accent
+            } else {
+                gpui::transparent_black()
+            })
             .cursor_pointer()
             .on_click(cx.listener(move |this, _, _, cx| {
                 match action {
