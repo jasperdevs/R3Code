@@ -159,7 +159,11 @@ impl R3Shell {
             composer_highlighted_search_key: None,
             model_picker_open: screen == R3Screen::ProviderModelPicker,
             model_picker_query: String::new(),
-            model_picker_selected_instance: ModelPickerSelectedInstance::Favorites,
+            model_picker_selected_instance: if screen == R3Screen::ProviderModelPicker {
+                ModelPickerSelectedInstance::Instance("codex".to_string())
+            } else {
+                ModelPickerSelectedInstance::Favorites
+            },
             composer_runtime_index: 2,
             composer_plan_mode: false,
             composer_submitted_count: 0,
@@ -9291,7 +9295,9 @@ pub fn open_main_window(cx: &mut App) {
                 R3Screen::TerminalDrawer => AppSnapshot::terminal_drawer_reference_state(),
                 R3Screen::DiffPanel => AppSnapshot::diff_panel_reference_state(),
                 R3Screen::BranchToolbar => AppSnapshot::branch_toolbar_reference_state(),
-                R3Screen::ProviderModelPicker => AppSnapshot::active_chat_reference_state(),
+                R3Screen::ProviderModelPicker => {
+                    AppSnapshot::provider_model_picker_reference_state()
+                }
                 R3Screen::Empty | R3Screen::Settings | R3Screen::SettingsDiagnostics => {
                     AppSnapshot::empty_reference_state()
                 }

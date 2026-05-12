@@ -7497,23 +7497,44 @@ impl AppSnapshot {
                 unavailable_reason: None,
                 models: vec![
                     ServerProviderModel {
+                        slug: "gpt-5.5".to_string(),
+                        name: "GPT-5.5".to_string(),
+                        short_name: None,
+                        sub_provider: None,
+                        is_custom: false,
+                    },
+                    ServerProviderModel {
                         slug: "gpt-5.4".to_string(),
                         name: "GPT-5.4".to_string(),
-                        short_name: Some("5.4".to_string()),
+                        short_name: None,
                         sub_provider: None,
                         is_custom: false,
                     },
                     ServerProviderModel {
                         slug: "gpt-5.4-mini".to_string(),
-                        name: "GPT-5.4 Mini".to_string(),
-                        short_name: Some("5.4 Mini".to_string()),
+                        name: "GPT-5.4-Mini".to_string(),
+                        short_name: None,
                         sub_provider: None,
                         is_custom: false,
                     },
                     ServerProviderModel {
                         slug: "gpt-5.3-codex".to_string(),
-                        name: "GPT-5.3 Codex".to_string(),
-                        short_name: Some("5.3".to_string()),
+                        name: "GPT-5.3-Codex".to_string(),
+                        short_name: None,
+                        sub_provider: None,
+                        is_custom: false,
+                    },
+                    ServerProviderModel {
+                        slug: "gpt-5.3-codex-spark".to_string(),
+                        name: "GPT-5.3-Codex-Spark".to_string(),
+                        short_name: None,
+                        sub_provider: None,
+                        is_custom: false,
+                    },
+                    ServerProviderModel {
+                        slug: "gpt-5.2".to_string(),
+                        name: "GPT-5.2".to_string(),
+                        short_name: None,
                         sub_provider: None,
                         is_custom: false,
                     },
@@ -7708,7 +7729,7 @@ impl AppSnapshot {
             preferred_editor: None,
             providers: Self::reference_providers(),
             selected_provider_instance_id: "codex".to_string(),
-            selected_model: DEFAULT_GIT_TEXT_GENERATION_MODEL.to_string(),
+            selected_model: DEFAULT_MODEL.to_string(),
             model_favorites: Self::reference_model_favorites(),
             messages: Vec::new(),
             activities: Vec::new(),
@@ -7752,7 +7773,7 @@ impl AppSnapshot {
             preferred_editor: Some(EditorId::VsCode),
             providers: Self::reference_providers(),
             selected_provider_instance_id: "codex".to_string(),
-            selected_model: DEFAULT_GIT_TEXT_GENERATION_MODEL.to_string(),
+            selected_model: DEFAULT_MODEL.to_string(),
             model_favorites: Self::reference_model_favorites(),
             messages: Vec::new(),
             activities: Vec::new(),
@@ -7869,6 +7890,13 @@ impl AppSnapshot {
             diff_route: DiffRouteSearch::default(),
             turn_diff_summaries: Vec::new(),
         }
+    }
+
+    pub fn provider_model_picker_reference_state() -> Self {
+        let mut snapshot = Self::draft_reference_state();
+        snapshot.selected_model = DEFAULT_MODEL.to_string();
+        snapshot.model_favorites = Vec::new();
+        snapshot
     }
 
     pub fn active_chat_reference_state() -> Self {
@@ -9992,8 +10020,8 @@ mod tests {
         let snapshot = AppSnapshot::mock_reference_state();
         let state = resolve_model_picker_state(&snapshot, "", None, None, None);
 
-        assert_eq!(state.trigger_title, "5.4 Mini");
-        assert_eq!(state.trigger_label, "5.4 Mini");
+        assert_eq!(state.trigger_title, "GPT-5.4-Mini");
+        assert_eq!(state.trigger_label, "GPT-5.4-Mini");
         assert!(state.show_instance_badge);
         assert_eq!(
             state.selected_instance,
@@ -10043,7 +10071,7 @@ mod tests {
             Some("gpt-5.4".to_string())
         );
         assert_eq!(
-            resolve_selectable_model("codex", Some("GPT-5.3 Codex"), codex_models),
+            resolve_selectable_model("codex", Some("GPT-5.3-Codex"), codex_models),
             Some("gpt-5.3-codex".to_string())
         );
         assert_eq!(
@@ -10064,7 +10092,7 @@ mod tests {
         assert!(score_model_picker_search(&sorted[0], "5.4").unwrap() < 10);
         assert_eq!(
             build_model_picker_search_text(&sorted[0]),
-            "gpt-5.4 5.4 codex codex"
+            "gpt-5.4 codex codex"
         );
     }
 
