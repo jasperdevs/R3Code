@@ -27,17 +27,34 @@ use r3_core::{
     format_provider_skill_display_name, get_display_model_name, get_provider_summary,
     get_provider_version_advisory_presentation, get_provider_version_label,
     group_composer_command_items, new_thread_terminal, nudge_composer_menu_highlight,
-    parse_diff_route_search, primary_project_script, provider_instance_initials,
-    replace_text_range, resolve_composer_command_selection, resolve_composer_menu_active_item_id,
-    resolve_model_picker_state, resolve_selectable_model, set_pending_user_input_custom_answer,
-    set_thread_active_terminal, set_thread_terminal_open, shorten_trace_id,
-    split_prompt_into_composer_segments, split_thread_terminal, summarize_turn_diff_stats,
-    toggle_pending_user_input_option_selection,
+    ordered_turn_diff_files, parse_diff_route_search, primary_project_script,
+    provider_instance_initials, replace_text_range, resolve_composer_command_selection,
+    resolve_composer_menu_active_item_id, resolve_model_picker_state, resolve_selectable_model,
+    set_pending_user_input_custom_answer, set_thread_active_terminal, set_thread_terminal_open,
+    shorten_trace_id, split_prompt_into_composer_segments, split_thread_terminal,
+    summarize_turn_diff_stats, toggle_pending_user_input_option_selection,
 };
 
 use crate::theme::{FONT_FAMILY, MONO_FONT_FAMILY, SIDEBAR_MIN_WIDTH, Theme, ThemeMode};
 
 const COMMAND_PALETTE_REFERENCE_NOW_ISO: &str = "2026-03-25T12:00:00.000Z";
+
+#[derive(Debug, Clone, Copy)]
+struct DiffPatchRow {
+    old_line: Option<u32>,
+    new_line: Option<u32>,
+    marker: &'static str,
+    text: &'static str,
+    kind: DiffPatchRowKind,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum DiffPatchRowKind {
+    Context,
+    Meta,
+    Addition,
+    Deletion,
+}
 
 pub struct R3Shell {
     snapshot: AppSnapshot,
@@ -1717,7 +1734,7 @@ impl R3Shell {
             .flex_col()
             .h_full()
             .min_w(px(360.0))
-            .w(px(520.0))
+            .w(px(424.0))
             .flex_shrink_0()
             .border_l_1()
             .border_color(self.theme.border)
@@ -1975,11 +1992,9 @@ impl R3Shell {
                 .into_any_element();
         }
 
-        let total_stat = summarize_turn_diff_stats(&files);
-        let tree = build_turn_diff_tree(&files);
         let mut patch_surface = div().flex().flex_col().gap_2().p_2();
         for (index, file) in files.iter().enumerate() {
-            patch_surface = patch_surface.child(self.diff_file_card(file, index));
+            patch_surface = patch_surface.child(self.diff_file_card(file, index, cx));
         }
 
         div()
@@ -1988,44 +2003,6 @@ impl R3Shell {
             .min_w_0()
             .flex_1()
             .overflow_y_scroll()
-            .p_2()
-            .child(
-                div()
-                    .rounded(px(6.0))
-                    .border_1()
-                    .border_color(self.theme.border.opacity(0.60))
-                    .bg(self.theme.card.opacity(0.25))
-                    .mb_2()
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .justify_between()
-                            .gap_2()
-                            .border_b_1()
-                            .border_color(self.theme.border.opacity(0.50))
-                            .px_3()
-                            .py_2()
-                            .child(
-                                div()
-                                    .text_size(px(10.0))
-                                    .font_weight(FontWeight(650.0))
-                                    .text_color(self.theme.muted_foreground.opacity(0.65))
-                                    .child(
-                                        format!("Changed files ({})", files.len()).to_uppercase(),
-                                    ),
-                            )
-                            .child(self.diff_stat_label(total_stat, false)),
-                    )
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(2.0))
-                            .p_2()
-                            .child(self.diff_tree_nodes(&tree, 0, cx)),
-                    ),
-            )
             .child(patch_surface)
             .into_any_element()
     }
@@ -2045,165 +2022,59 @@ impl R3Shell {
 
     fn diff_panel_files(&self) -> Vec<TurnDiffFileChange> {
         if let Some(summary) = self.snapshot.selected_turn_diff_summary() {
-            return summary.files.clone();
+            return ordered_turn_diff_files(&summary.files);
         }
 
-        self.snapshot
+        let files = self
+            .snapshot
             .turn_diff_summaries
             .iter()
             .flat_map(|summary| summary.files.clone())
-            .collect()
+            .collect::<Vec<_>>();
+        ordered_turn_diff_files(&files)
     }
 
-    fn diff_tree_nodes(
+    fn diff_file_card(
         &self,
-        nodes: &[TurnDiffTreeNode],
-        depth: usize,
+        file: &TurnDiffFileChange,
+        index: usize,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let mut list = div().flex().flex_col().gap(px(2.0));
-        for node in nodes {
-            list = list.child(self.diff_tree_node(node, depth, cx));
-        }
-        list
-    }
-
-    fn diff_tree_node(
-        &self,
-        node: &TurnDiffTreeNode,
-        depth: usize,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
-        let left_padding = 8.0 + depth as f32 * 14.0;
-        match node {
-            TurnDiffTreeNode::Directory {
-                name,
-                path,
-                stat,
-                children,
-            } => div()
-                .id(SharedString::from(format!("diff-tree-dir-{path}")))
-                .flex()
-                .flex_col()
-                .gap(px(2.0))
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_1p5()
-                        .rounded(px(6.0))
-                        .py_1()
-                        .pr_2()
-                        .pl(px(left_padding))
-                        .text_size(px(11.0))
-                        .text_color(self.theme.muted_foreground.opacity(0.90))
-                        .child(
-                            svg()
-                                .path("icons/chevron-down.svg")
-                                .size_3()
-                                .text_color(self.theme.muted_foreground.opacity(0.70)),
-                        )
-                        .child(
-                            svg()
-                                .path("icons/folder.svg")
-                                .size_3()
-                                .text_color(self.theme.muted_foreground.opacity(0.75)),
-                        )
-                        .child(
-                            div()
-                                .min_w_0()
-                                .flex_1()
-                                .font_family(SharedString::from(MONO_FONT_FAMILY))
-                                .child(name.clone()),
-                        )
-                        .when(stat.additions > 0 || stat.deletions > 0, |row| {
-                            row.child(self.diff_stat_label(*stat, false))
-                        }),
-                )
-                .child(self.diff_tree_nodes(children, depth + 1, cx))
-                .into_any_element(),
-            TurnDiffTreeNode::File { name, path, stat } => {
-                let turn_id = self
-                    .snapshot
-                    .selected_turn_diff_summary()
-                    .map(|summary| summary.turn_id.clone());
-                let path_for_click = path.clone();
-                let selected = self.snapshot.selected_diff_file_path() == Some(path.as_str());
-                div()
-                    .id(SharedString::from(format!("diff-tree-file-{path}")))
-                    .flex()
-                    .items_center()
-                    .gap_1p5()
-                    .rounded(px(6.0))
-                    .py_1()
-                    .pr_2()
-                    .pl(px(left_padding))
-                    .bg(if selected {
-                        self.theme.accent.opacity(0.70)
-                    } else {
-                        self.theme.background.alpha(0.0)
-                    })
-                    .text_size(px(11.0))
-                    .text_color(if selected {
-                        self.theme.foreground.opacity(0.90)
-                    } else {
-                        self.theme.muted_foreground.opacity(0.80)
-                    })
-                    .cursor_pointer()
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.snapshot.diff_route = parse_diff_route_search(
-                            Some(DiffOpenValue::from("1")),
-                            turn_id.as_deref(),
-                            Some(&path_for_click),
-                        );
-                        cx.notify();
-                    }))
-                    .child(div().w(px(14.0)).h(px(14.0)).flex_shrink_0())
-                    .child(
-                        svg()
-                            .path("icons/file-json.svg")
-                            .size_3()
-                            .text_color(self.theme.muted_foreground.opacity(0.70)),
-                    )
-                    .child(
-                        div()
-                            .min_w_0()
-                            .flex_1()
-                            .font_family(SharedString::from(MONO_FONT_FAMILY))
-                            .child(name.clone()),
-                    )
-                    .when_some(*stat, |row, stat| {
-                        row.child(self.diff_stat_label(stat, false))
-                    })
-                    .into_any_element()
-            }
-        }
-    }
-
-    fn diff_file_card(&self, file: &TurnDiffFileChange, index: usize) -> impl IntoElement {
         let stat = TurnDiffStat {
             additions: file.additions.unwrap_or(0),
             deletions: file.deletions.unwrap_or(0),
         };
         let selected = self.snapshot.selected_diff_file_path() == Some(file.path.as_str());
-        div()
+        let header_icon_color = if selected {
+            diff_success_color()
+        } else {
+            self.diff_kind_color(file.kind.as_deref())
+        };
+        let file_path_for_selection = file.path.clone();
+        let mut card = div()
             .id(SharedString::from(format!("diff-render-file-{index}")))
             .rounded(px(6.0))
             .border_1()
             .border_color(if selected {
                 self.theme.border
             } else {
-                self.theme.border.opacity(0.70)
+                self.theme.border.opacity(0.60)
             })
             .bg(self.theme.card.opacity(0.90))
             .overflow_hidden()
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.snapshot
+                    .select_diff_file_path(file_path_for_selection.clone());
+                cx.notify();
+            }))
             .child(
                 div()
                     .flex()
                     .items_center()
                     .gap_2()
                     .border_b_1()
-                    .border_color(self.theme.border)
+                    .border_color(self.theme.border.opacity(0.70))
                     .bg(self.theme.card.opacity(0.94))
                     .px_3()
                     .py_2()
@@ -2211,96 +2082,178 @@ impl R3Shell {
                     .child(
                         svg()
                             .path("icons/chevron-down.svg")
-                            .size_4()
-                            .text_color(self.diff_kind_color(file.kind.as_deref())),
+                            .size_3p5()
+                            .text_color(header_icon_color),
+                    )
+                    .child(
+                        svg()
+                            .path("icons/square-pen.svg")
+                            .size_3p5()
+                            .text_color(header_icon_color),
                     )
                     .child(
                         div()
                             .min_w_0()
                             .flex_1()
                             .font_family(SharedString::from(MONO_FONT_FAMILY))
+                            .font_weight(FontWeight(600.0))
                             .text_color(self.theme.foreground.opacity(0.90))
                             .child(file.path.clone()),
                     )
-                    .child(self.diff_file_kind_badge(file.kind.as_deref()))
                     .child(self.diff_stat_label(stat, false)),
-            )
-            .child(self.diff_line_row(" ", "context", "checkpoint summary", self.theme.background))
-            .when(file.deletions.unwrap_or(0) > 0, |card| {
-                card.child(self.diff_line_row(
-                    "-",
-                    "old",
-                    "removed lines represented by this turn diff",
-                    diff_destructive_color().opacity(0.10),
-                ))
-            })
-            .when(file.additions.unwrap_or(0) > 0, |card| {
-                card.child(self.diff_line_row(
-                    "+",
-                    "new",
-                    "added lines represented by this turn diff",
-                    diff_success_color().opacity(0.10),
-                ))
-            })
+            );
+
+        for row in self.diff_file_rows(file.path.as_str()) {
+            card = card.child(self.diff_patch_row(row));
+        }
+
+        card
     }
 
-    fn diff_file_kind_badge(&self, kind: Option<&str>) -> impl IntoElement {
-        let label = match kind {
-            Some("added") | Some("new") => "added",
-            Some("deleted") => "deleted",
-            Some("renamed") => "renamed",
-            _ => "modified",
+    fn diff_file_rows(&self, path: &str) -> Vec<DiffPatchRow> {
+        match path {
+            "crates/r3_core/src/lib.rs" => vec![
+                DiffPatchRow {
+                    old_line: None,
+                    new_line: None,
+                    marker: "",
+                    text: "9 unmodified lines",
+                    kind: DiffPatchRowKind::Meta,
+                },
+                DiffPatchRow {
+                    old_line: Some(10),
+                    new_line: Some(10),
+                    marker: "",
+                    text: "    pub terminal_open: bool,",
+                    kind: DiffPatchRowKind::Context,
+                },
+                DiffPatchRow {
+                    old_line: None,
+                    new_line: Some(11),
+                    marker: "+",
+                    text: "    pub active_terminal_group_id: String,",
+                    kind: DiffPatchRowKind::Addition,
+                },
+                DiffPatchRow {
+                    old_line: Some(12),
+                    new_line: Some(12),
+                    marker: "",
+                    text: "}",
+                    kind: DiffPatchRowKind::Context,
+                },
+            ],
+            "crates/r3_ui/src/shell.rs" => vec![
+                DiffPatchRow {
+                    old_line: None,
+                    new_line: None,
+                    marker: "",
+                    text: "41 unmodified lines",
+                    kind: DiffPatchRowKind::Meta,
+                },
+                DiffPatchRow {
+                    old_line: Some(42),
+                    new_line: None,
+                    marker: "-",
+                    text: "    draw_static_terminal();",
+                    kind: DiffPatchRowKind::Deletion,
+                },
+                DiffPatchRow {
+                    old_line: None,
+                    new_line: Some(42),
+                    marker: "+",
+                    text: "    draw_split_terminal();",
+                    kind: DiffPatchRowKind::Addition,
+                },
+                DiffPatchRow {
+                    old_line: None,
+                    new_line: Some(43),
+                    marker: "+",
+                    text: "    draw_terminal_sidebar();",
+                    kind: DiffPatchRowKind::Addition,
+                },
+                DiffPatchRow {
+                    old_line: Some(44),
+                    new_line: Some(44),
+                    marker: "",
+                    text: "}",
+                    kind: DiffPatchRowKind::Context,
+                },
+            ],
+            _ => vec![DiffPatchRow {
+                old_line: None,
+                new_line: None,
+                marker: "",
+                text: "No patch available for this file.",
+                kind: DiffPatchRowKind::Meta,
+            }],
+        }
+    }
+
+    fn diff_patch_row(&self, row: DiffPatchRow) -> impl IntoElement {
+        let background = match row.kind {
+            DiffPatchRowKind::Addition => diff_success_color().opacity(0.10),
+            DiffPatchRowKind::Deletion => diff_destructive_color().opacity(0.10),
+            DiffPatchRowKind::Meta => self.theme.accent.opacity(0.42),
+            DiffPatchRowKind::Context => self.theme.background,
         };
-        div()
-            .rounded(px(999.0))
-            .border_1()
-            .border_color(self.theme.border.opacity(0.70))
-            .px_1p5()
-            .py_0p5()
-            .text_size(px(10.0))
-            .text_color(self.theme.muted_foreground.opacity(0.80))
-            .child(label)
-    }
+        let marker_color = match row.kind {
+            DiffPatchRowKind::Addition => diff_success_color(),
+            DiffPatchRowKind::Deletion => diff_destructive_color(),
+            DiffPatchRowKind::Meta | DiffPatchRowKind::Context => {
+                self.theme.muted_foreground.opacity(0.45)
+            }
+        };
+        let text_color = match row.kind {
+            DiffPatchRowKind::Addition => diff_success_color(),
+            DiffPatchRowKind::Deletion => diff_destructive_color(),
+            DiffPatchRowKind::Meta => self.theme.foreground.opacity(0.74),
+            DiffPatchRowKind::Context => self.theme.foreground.opacity(0.78),
+        };
 
-    fn diff_line_row(
-        &self,
-        marker: &'static str,
-        gutter: &'static str,
-        text: &'static str,
-        bg: gpui::Hsla,
-    ) -> impl IntoElement {
         div()
             .flex()
             .items_center()
             .min_h(px(24.0))
-            .bg(bg)
+            .bg(background)
             .font_family(SharedString::from(MONO_FONT_FAMILY))
-            .text_size(px(11.0))
+            .text_size(px(12.0))
             .child(
                 div()
                     .w(px(34.0))
                     .flex_shrink_0()
                     .text_align(TextAlign::Center)
-                    .text_color(self.theme.muted_foreground.opacity(0.45))
-                    .child(gutter),
+                    .text_color(self.theme.muted_foreground.opacity(0.60))
+                    .child(
+                        row.old_line
+                            .map(|line| line.to_string())
+                            .unwrap_or_default(),
+                    ),
+            )
+            .child(
+                div()
+                    .w(px(34.0))
+                    .flex_shrink_0()
+                    .text_align(TextAlign::Center)
+                    .text_color(self.theme.muted_foreground.opacity(0.60))
+                    .child(
+                        row.new_line
+                            .map(|line| line.to_string())
+                            .unwrap_or_default(),
+                    ),
             )
             .child(
                 div()
                     .w(px(18.0))
                     .flex_shrink_0()
-                    .text_color(match marker {
-                        "+" => diff_success_color(),
-                        "-" => diff_destructive_color(),
-                        _ => self.theme.muted_foreground.opacity(0.45),
-                    })
-                    .child(marker),
+                    .text_color(marker_color)
+                    .child(row.marker),
             )
             .child(
                 div()
                     .min_w_0()
                     .flex_1()
-                    .text_color(self.theme.foreground.opacity(0.76))
-                    .child(text),
+                    .text_color(text_color)
+                    .child(row.text),
             )
     }
 

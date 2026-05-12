@@ -4,7 +4,7 @@ R3Code is still an early static Rust/GPUI shell, not a full Rust port of T3 Code
 
 Reference commit: `8fc317939f5c8bbef4afbe309ae897abbc221631`
 
-Current local baseline: R3Code `main` after the terminal drawer reference-gate slice.
+Current local baseline: R3Code `main` after the diff panel reference-gate slice.
 
 ## Size Check
 
@@ -34,6 +34,7 @@ These screens have automated reference captures and native GPUI comparisons:
 | Active chat with user and assistant messages | 6% |
 | Running turn with work-log rows | 6% |
 | Terminal drawer split view | 6% |
+| Diff panel selected turn patch view | 12% |
 | Composer slash-command menu | 5% |
 | Composer inline mention/skill chips | 5% |
 | Provider/model picker | 6% |
@@ -63,7 +64,7 @@ These T3 surfaces have no complete Rust implementation yet:
 | Running agent turn, work log, tool output | `apps/web/src/session-logic.ts`, `MessagesTimeline.tsx` | Seeded upstream reference gate for running session/work-log shell; live provider stream and tool output runtime still missing |
 | Pending approval and pending user input panels | `ChatComposer.tsx`, `ComposerPendingApproval*`, `pendingUserInput.ts` | Seeded upstream reference gates for approval and user-input composer states. Core pending-input, composer send-state, trigger/cursor, command-menu, slash-menu, and inline-token contracts are partial |
 | Terminal drawer and xterm integration | `ThreadTerminalDrawer.tsx`, `terminalStateStore.ts`, `terminalContext.ts` | Seeded upstream reference gate for the split drawer shell plus terminal state, event replay, terminal-context, and composer inline-token contracts; live terminal runtime/xterm backend still missing |
-| Diff panel and changed-file browsing | `DiffPanel.tsx`, `diffRouteSearch.ts`, `turnDiffTree.ts` | Partial static GPUI smoke |
+| Diff panel and changed-file browsing | `DiffPanel.tsx`, `DiffPanelShell.tsx`, `diffRouteSearch.ts`, `turnDiffTree.ts` | Seeded upstream reference gate for selected-turn patch view; route/tree/header contracts are partial and real checkpoint-diff query plus full `@pierre/diffs` rendering are still missing |
 | Branch/worktree toolbar | `BranchToolbar.tsx`, `BranchToolbar.logic.ts`, `BranchToolbarBranchSelector.tsx` | Partial core logic + GPUI smoke |
 | Provider/model picker behavior | `ProviderModelPicker.tsx`, `ModelPickerContent.tsx`, `providerModels.ts` | Partial core logic + GPUI picker comparison gate |
 | Project scripts and open-in-editor picker | `ProjectScriptsControl.tsx`, `projectScripts.ts`, `OpenInPicker.tsx` | Partial core logic + header smoke |
@@ -94,4 +95,4 @@ These upstream backend/runtime areas have no Rust equivalent yet:
 3. Replace static GPUI panels with state-driven panels one screen at a time.
 4. Add real runtime layers after the matching static surface exists and is gated.
 
-The current port is visually promising for the gated static shell, but it is far from a full T3 Code port. The next meaningful milestones should add reference captures for active chat, running turns, approvals, terminal, and diff panel, then port the backing Rust state for each.
+The current port is visually promising for the gated static shell, but it is far from a full T3 Code port. The next meaningful milestones should deepen the seeded reference gates and add the missing runtime-backed behavior, especially real provider streams, checkpoint diff retrieval/rendering, git/project actions, sidebar state, and backend contracts.

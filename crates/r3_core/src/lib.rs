@@ -7217,6 +7217,16 @@ pub fn build_turn_diff_tree(files: &[TurnDiffFileChange]) -> Vec<TurnDiffTreeNod
     to_turn_diff_tree_nodes(root)
 }
 
+pub fn ordered_turn_diff_files(files: &[TurnDiffFileChange]) -> Vec<TurnDiffFileChange> {
+    let mut ordered = files.to_vec();
+    ordered.sort_by(|left, right| {
+        let left_path = normalize_diff_path_segments(&left.path).join("/");
+        let right_path = normalize_diff_path_segments(&right.path).join("/");
+        compare_diff_names(&left_path, &right_path)
+    });
+    ordered
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurnDiffSummary {
     pub turn_id: String,
@@ -8384,6 +8394,22 @@ impl AppSnapshot {
             .as_ref()
             .and(self.diff_route.diff_file_path.as_deref())
     }
+
+    pub fn select_diff_file_path(&mut self, path: impl Into<String>) {
+        let path = path.into();
+        let Some(turn_id) = self.diff_route.diff_turn_id.clone().or_else(|| {
+            self.ordered_turn_diff_summaries()
+                .first()
+                .map(|turn| turn.turn_id.clone())
+        }) else {
+            return;
+        };
+        self.diff_route = parse_diff_route_search(
+            Some(DiffOpenValue::from("1")),
+            Some(turn_id.as_str()),
+            Some(path.as_str()),
+        );
+    }
 }
 
 fn reference_turn_diff_summaries() -> Vec<TurnDiffSummary> {
@@ -8416,22 +8442,16 @@ fn reference_turn_diff_summaries() -> Vec<TurnDiffSummary> {
             status: Some("completed".to_string()),
             files: vec![
                 TurnDiffFileChange {
-                    path: "crates/r3_ui/src/shell.rs".to_string(),
-                    kind: Some("modified".to_string()),
-                    additions: Some(126),
-                    deletions: Some(18),
-                },
-                TurnDiffFileChange {
                     path: "crates/r3_core/src/lib.rs".to_string(),
                     kind: Some("modified".to_string()),
-                    additions: Some(74),
-                    deletions: Some(4),
+                    additions: Some(1),
+                    deletions: Some(0),
                 },
                 TurnDiffFileChange {
-                    path: "docs/reference/PARITY_PLAN.md".to_string(),
+                    path: "crates/r3_ui/src/shell.rs".to_string(),
                     kind: Some("modified".to_string()),
-                    additions: Some(8),
-                    deletions: Some(0),
+                    additions: Some(2),
+                    deletions: Some(1),
                 },
             ],
             checkpoint_ref: Some("checkpoint-turn-2".to_string()),
@@ -11648,9 +11668,26 @@ mod tests {
         assert_eq!(
             summarize_turn_diff_stats(&selected.files),
             TurnDiffStat {
-                additions: 208,
-                deletions: 22,
+                additions: 3,
+                deletions: 1,
             }
+        );
+        assert_eq!(
+            ordered_turn_diff_files(&selected.files)
+                .into_iter()
+                .map(|file| file.path)
+                .collect::<Vec<_>>(),
+            vec![
+                "crates/r3_core/src/lib.rs".to_string(),
+                "crates/r3_ui/src/shell.rs".to_string(),
+            ]
+        );
+
+        let mut snapshot = snapshot;
+        snapshot.select_diff_file_path("crates/r3_core/src/lib.rs");
+        assert_eq!(
+            snapshot.selected_diff_file_path(),
+            Some("crates/r3_core/src/lib.rs")
         );
     }
 

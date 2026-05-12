@@ -38,6 +38,7 @@ The task currently captures:
 - `reference/screenshots/upstream-active-chat-reference.png`
 - `reference/screenshots/upstream-running-turn-reference.png`
 - `reference/screenshots/upstream-terminal-drawer-reference.png`
+- `reference/screenshots/upstream-diff-panel-reference.png`
 - `reference/screenshots/upstream-pending-user-input-reference.png`
 - `reference/screenshots/upstream-pending-approval-reference.png`
 - `reference/screenshots/upstream-settings-reference.png`
@@ -172,7 +173,7 @@ Last measured result: `5.502%`.
 
 The upstream active-chat reference seeds the real T3 Code app store with a deterministic server thread, then captures the actual `/$environmentId/$threadId` route from pinned commit `8fc317939f5c8bbef4afbe309ae897abbc221631`.
 
-## Current Active Chat Smoke Captures
+## Current Native Captures
 
 R3Code composer command menu capture: `reference/screenshots/r3code-composer-menu-window.png`
 R3Code composer inline-token capture: `reference/screenshots/r3code-composer-inline-tokens-window.png`
@@ -196,7 +197,7 @@ cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen provider-model-picker --output reference\screenshots\r3code-provider-model-picker-window.png
 ```
 
-This is a native Rust/GPUI smoke capture for the first server-thread state: active header title/project badge, project script and open-in controls, sidebar thread row, user/assistant timeline rows, changed-files summary tree, and composer chrome. It is intentionally not a parity comparison yet because the current upstream reference harness has deterministic captures for empty/draft/settings, but not a full active server-thread route with persisted messages. The next parity step is to add a source-backed upstream fixture capture for the same `ChatView.browser.tsx` message state.
+These are native Rust/GPUI captures for seeded chat states. Active chat, running turn, pending approval, pending user input, terminal drawer, diff panel, provider/model picker, composer command menu, composer inline tokens, and focused composer are now covered by source-backed upstream reference comparisons. Branch toolbar remains a native smoke capture until it receives the same upstream route fixture and comparison gate.
 The running turn capture ports the upstream work-log derivation shape first: activity ordering, ignored lifecycle rows, checkpoint filtering, simple tool update/completion collapse, command previews, changed-file previews, and the `WorkGroupSection` surface. It is not a live provider stream yet.
 The Rust core also ports upstream `ChatView.logic.ts`, `terminalContext.ts`, `composer-editor-mentions.ts`, `composer-logic.ts`, `ComposerPromptEditor.tsx`, `composerInlineChip.ts`, `vscode-icons.ts`, `composerSlashCommandSearch.ts`, `composerMenuHighlight.ts`, `providerSkillSearch.ts`, and `providerSkillPresentation.ts` composer contracts: inline terminal-context placeholders, terminal-context block append/extract/display state, expired terminal-context filtering, expired-context toast copy, completed `@path` and `$skill` segment parsing, inline mention/skill chip rendering, terminal-context prompt segments, mention-boundary selection detection, collapsed/expanded cursor mapping, active `/`, `@`, and `$` trigger detection, standalone `/plan` and `/default` command parsing, text-range replacement, built-in and provider slash command search, provider skill search/presentation, composer menu grouping, active-item highlight reset, keyboard nudging, and command selection replacement behavior. The `composer-menu` GPUI capture renders the slash-command menu from those Rust contracts and is now compared against `upstream-composer-menu-reference.png` at a 5% threshold. The `composer-inline-tokens` GPUI capture renders completed `@AGENTS.md` and `$agent-browser` chips against a pinned upstream controlled-draft browser capture at a 5% threshold.
 
@@ -309,7 +310,24 @@ cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstr
 Last measured result: `5.692%`.
 
 The terminal drawer capture ports the upstream terminal UI state contract into Rust first: default drawer height, terminal IDs, active terminal/group, split/new/close behavior, running activity, event replay filtering, terminal-context prompt materialization, split pane/sidebar layout, and xterm-style snapshot history rendering. The GPUI surface is now compared against a deterministic upstream `ThreadTerminalDrawer` capture, but the native runtime/xterm layer is still incomplete.
-The diff panel capture ports the upstream diff route parser, turn-diff summary ordering, changed-file tree/stat contracts, and the inline `DiffPanelShell` header controls. It remains a smoke screen until the Rust side has the real checkpoint-diff query and patch renderer equivalent to `@pierre/diffs`.
+## Current Diff Panel Baseline
+
+Reference: `reference/screenshots/upstream-diff-panel-reference.png`
+
+R3Code capture: `reference/screenshots/r3code-diff-panel-window.png`
+
+Allowed brand-copy difference: `--ignore-rect 0,0,120,45`
+
+Current measured diff:
+
+```text
+cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen diff-panel --output reference\screenshots\r3code-diff-panel-window.png
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-diff-panel-reference.png --actual reference\screenshots\r3code-diff-panel-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 12
+```
+
+Last measured result: `11.192%`.
+
+The diff panel capture ports the upstream diff route parser, turn-diff summary ordering, changed-file tree/stat contracts, inline `DiffPanelShell` header controls, selected-turn/selected-file route state, path-normalized file ordering, and a deterministic parsed-patch-style panel surface. It is now compared against a seeded upstream `DiffPanel` reference, but the Rust side still lacks the real checkpoint-diff query and the full `@pierre/diffs` renderer. The 12% threshold is a provisional gate for the simplified Rust patch renderer and should tighten after the renderer is replaced with a closer `@pierre/diffs` equivalent.
 The branch toolbar capture ports upstream `BranchToolbar.logic.ts`, the shared remote-branch dedupe helpers, the environment/worktree labels, current/new-worktree mode resolution, branch trigger text, worktree selection target rules, and lucide `Monitor`, `Cloud`, `FolderGit`, and `FolderGit2` assets. It is still a GPUI smoke screen: the full combobox, async git ref query, create-ref, PR checkout, and real environment switching paths remain missing.
 The project script/open-in header controls port upstream `projectScripts.ts`, `ProjectScriptsControl.tsx` primary/add button behavior, `OpenInPicker.tsx` visibility rules, editor option labels, script runtime cwd/env helpers, and the lucide script icon set. The add/edit/delete dialogs, custom editor SVG icon set, keybinding capture UI, and real shell/project-script process execution are still missing.
 The provider/model picker capture ports upstream `ProviderModelPicker.tsx`, `ModelPickerContent.tsx`, `providerInstances.ts`, `modelOrdering.ts`, `modelPickerSearch.ts`, provider trigger labels, duplicate-instance badges, active-instance sidebar selection, locked-provider filtering, selectable-model aliases, and the provider/lucide icon set used by the picker. It is now compared against a pinned upstream draft-route picker capture. Live provider snapshots, editable provider settings, real favorites persistence, and full combobox/input behavior are still incomplete.
