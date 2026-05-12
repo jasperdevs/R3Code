@@ -29,8 +29,8 @@ These screens have automated reference captures and native GPUI comparisons:
 | --- | ---: |
 | Empty/no active thread | 2% |
 | Command palette | 5% |
-| Draft empty chat | 2% |
-| Composer focused empty state | 2% |
+| Draft empty chat | 1.75% |
+| Composer focused empty state | 1.9% |
 | Active chat with user and assistant messages | 4.1% |
 | Running turn with work-log rows | 4% |
 | Terminal drawer split view | 6% |
@@ -40,9 +40,9 @@ These screens have automated reference captures and native GPUI comparisons:
 | Project scripts action menu | 4.2% |
 | Open In editor picker menu | 3% |
 | Git actions options menu | 3% |
-| Composer slash-command menu | 5% |
-| Composer inline mention/skill chips | 5% |
-| Provider/model picker | 4.7% |
+| Composer slash-command menu | 4.5% |
+| Composer inline mention/skill chips | 2.2% |
+| Provider/model picker | 4.45% |
 | Pending approval composer state | 5% |
 | Pending user input composer state | 5.1% |
 | Settings general | 6% |
@@ -57,7 +57,7 @@ These screens have automated reference captures and native GPUI comparisons:
 | Settings dark selection | 6% |
 | Empty/no active thread, dark theme | 2% |
 
-The strongest parity areas are the empty shell, draft chat chrome, archive empty state, and settings back path. The weakest implemented area is now the diff panel renderer, followed by Keybindings; the diff panel gate is tightened to 8.8% after source-backed row geometry, stat-label, compact composer, and syntax-palette improvements, while the simplified renderer still carries browser-vs-GPUI and missing `@pierre/diffs` differences. The active-chat gate is tightened to 4.1% after the seeded active reference model matched upstream `gpt-5.4`. The provider/model picker gate is tightened to 4.7% after matching the upstream draft capture rail order, popup anchor, and coming-soon icon treatment. The pending-user-input composer now restores the upstream footer controls and tighter editor height, with the gate reduced to 5.1%.
+The strongest parity areas are the empty shell, draft chat chrome, archive empty state, and settings back path. The weakest implemented area is now the diff panel renderer, followed by Keybindings; the diff panel gate is tightened to 8.8% after source-backed row geometry, stat-label, compact composer, and syntax-palette improvements, while the simplified renderer still carries browser-vs-GPUI and missing `@pierre/diffs` differences. The active-chat gate is tightened to 4.1% after the seeded active reference model matched upstream `gpt-5.4`. The draft-family gates now hide project-only header chrome in draft references, lowering draft to 1.75%, focused composer to 1.9%, composer menu to 4.5%, inline composer tokens to 2.2%, and provider/model picker to 4.45%. The pending-user-input composer now restores the upstream footer controls and tighter editor height, with the gate reduced to 5.1%.
 
 ## Major Missing Product Surfaces
 

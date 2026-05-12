@@ -131,10 +131,10 @@ Current measured diff:
 
 ```text
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen draft --output reference\screenshots\r3code-draft-window.png
-cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-draft-reference.png --actual reference\screenshots\r3code-draft-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 2
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-draft-reference.png --actual reference\screenshots\r3code-draft-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 1.75
 ```
 
-Last measured result: `1.814%`.
+Last measured result: `1.692%`.
 
 The upstream draft reference is produced by the real T3 command-palette add-project flow, which creates a `/draft/$draftId` route and captures the active empty chat surface after dismissing unrelated provider-update toast chrome.
 
@@ -150,10 +150,10 @@ Current measured diff:
 
 ```text
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen composer-focused --output reference\screenshots\r3code-composer-focused-window.png
-cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-composer-focused-reference.png --actual reference\screenshots\r3code-composer-focused-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 2
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-composer-focused-reference.png --actual reference\screenshots\r3code-composer-focused-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 1.9
 ```
 
-Last measured result: `1.911%`.
+Last measured result: `1.790%`.
 
 ## Current Active Chat Baseline
 
@@ -209,7 +209,7 @@ cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light
 
 These are native Rust/GPUI captures for seeded chat states. Active chat, running turn, pending approval, pending user input, terminal drawer, diff panel, branch toolbar, sidebar options menu, project scripts menu, Open In menu, Git actions menu, provider/model picker, composer command menu, composer inline tokens, and focused composer are now covered by source-backed upstream reference comparisons.
 The running turn capture ports the upstream work-log derivation shape first: activity ordering, ignored lifecycle rows, checkpoint filtering, simple tool update/completion collapse, command previews, changed-file previews, and the `WorkGroupSection` surface. It is not a live provider stream yet.
-The Rust core also ports upstream `ChatView.logic.ts`, `terminalContext.ts`, `composer-editor-mentions.ts`, `composer-logic.ts`, `ComposerPromptEditor.tsx`, `composerInlineChip.ts`, `vscode-icons.ts`, `composerSlashCommandSearch.ts`, `composerMenuHighlight.ts`, `providerSkillSearch.ts`, and `providerSkillPresentation.ts` composer contracts: inline terminal-context placeholders, terminal-context block append/extract/display state, expired terminal-context filtering, expired-context toast copy, completed `@path` and `$skill` segment parsing, inline mention/skill chip rendering, terminal-context prompt segments, mention-boundary selection detection, collapsed/expanded cursor mapping, active `/`, `@`, and `$` trigger detection, standalone `/plan` and `/default` command parsing, text-range replacement, built-in and provider slash command search, provider skill search/presentation, composer menu grouping, active-item highlight reset, keyboard nudging, and command selection replacement behavior. The `composer-menu` GPUI capture renders the slash-command menu from those Rust contracts and is now compared against `upstream-composer-menu-reference.png` at a 5% threshold. The `composer-inline-tokens` GPUI capture renders completed `@AGENTS.md` and `$agent-browser` chips against a pinned upstream controlled-draft browser capture at a 5% threshold.
+The Rust core also ports upstream `ChatView.logic.ts`, `terminalContext.ts`, `composer-editor-mentions.ts`, `composer-logic.ts`, `ComposerPromptEditor.tsx`, `composerInlineChip.ts`, `vscode-icons.ts`, `composerSlashCommandSearch.ts`, `composerMenuHighlight.ts`, `providerSkillSearch.ts`, and `providerSkillPresentation.ts` composer contracts: inline terminal-context placeholders, terminal-context block append/extract/display state, expired terminal-context filtering, expired-context toast copy, completed `@path` and `$skill` segment parsing, inline mention/skill chip rendering, terminal-context prompt segments, mention-boundary selection detection, collapsed/expanded cursor mapping, active `/`, `@`, and `$` trigger detection, standalone `/plan` and `/default` command parsing, text-range replacement, built-in and provider slash command search, provider skill search/presentation, composer menu grouping, active-item highlight reset, keyboard nudging, and command selection replacement behavior. The `composer-menu` GPUI capture renders the slash-command menu from those Rust contracts and is now compared against `upstream-composer-menu-reference.png` at a 4.5% threshold. The `composer-inline-tokens` GPUI capture renders completed `@AGENTS.md` and `$agent-browser` chips against a pinned upstream controlled-draft browser capture at a 2.2% threshold.
 
 ## Current Pending Approval Baseline
 
@@ -280,10 +280,10 @@ Current measured diff:
 
 ```text
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen composer-menu --output reference\screenshots\r3code-composer-menu-window.png
-cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-composer-menu-reference.png --actual reference\screenshots\r3code-composer-menu-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 5
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-composer-menu-reference.png --actual reference\screenshots\r3code-composer-menu-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 4.5
 ```
 
-Last measured result: `4.468%`.
+Last measured result: `4.346%`.
 
 ## Current Composer Inline Tokens Baseline
 
@@ -297,10 +297,10 @@ Current measured diff:
 
 ```text
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen composer-inline-tokens --output reference\screenshots\r3code-composer-inline-tokens-window.png
-cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-composer-inline-tokens-reference.png --actual reference\screenshots\r3code-composer-inline-tokens-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 5
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-composer-inline-tokens-reference.png --actual reference\screenshots\r3code-composer-inline-tokens-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 2.2
 ```
 
-Last measured result: `2.192%`.
+Last measured result: `2.070%`.
 
 ## Current Terminal Drawer Baseline
 
@@ -435,10 +435,10 @@ Current measured diff:
 
 ```text
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen provider-model-picker --output reference\screenshots\r3code-provider-model-picker-window.png
-cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-provider-model-picker-reference.png --actual reference\screenshots\r3code-provider-model-picker-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 4.7
+cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-provider-model-picker-reference.png --actual reference\screenshots\r3code-provider-model-picker-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 4.45
 ```
 
-Last measured result: `4.496%`.
+Last measured result: `4.369%`.
 
 ## Current Settings Baseline
 

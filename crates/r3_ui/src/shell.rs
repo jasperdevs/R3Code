@@ -753,7 +753,10 @@ impl R3Shell {
         } else {
             "No active thread".to_string()
         };
-        let project_name = self.snapshot.active_project_name().map(str::to_string);
+        let project_name = self
+            .snapshot
+            .active_header_project_name()
+            .map(str::to_string);
         let mut toolbar = div()
             .flex()
             .items_center()
@@ -2589,7 +2592,7 @@ impl R3Shell {
     }
 
     fn project_scripts_control(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(project) = self.snapshot.active_project() else {
+        let Some(project) = self.snapshot.active_header_project() else {
             return div().into_any_element();
         };
 

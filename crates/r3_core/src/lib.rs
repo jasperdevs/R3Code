@@ -8607,6 +8607,16 @@ impl AppSnapshot {
         self.projects.first()
     }
 
+    pub fn active_header_project_name(&self) -> Option<&str> {
+        self.is_git_repo
+            .then(|| self.active_project_name())
+            .flatten()
+    }
+
+    pub fn active_header_project(&self) -> Option<&ProjectSummary> {
+        self.is_git_repo.then(|| self.active_project()).flatten()
+    }
+
     pub fn active_environment_id(&self) -> Option<&str> {
         match &self.route {
             ChatRoute::Thread(ThreadRouteTarget::Server { thread_ref }) => {
@@ -8626,7 +8636,7 @@ impl AppSnapshot {
             return false;
         };
         should_show_open_in_picker(
-            self.active_project_name(),
+            self.active_header_project_name(),
             active_environment_id,
             self.primary_environment_id.as_deref(),
         )
@@ -9837,6 +9847,9 @@ mod tests {
         assert_eq!(snapshot.messages, Vec::new());
         assert_eq!(snapshot.active_thread_title(), "New thread");
         assert_eq!(snapshot.active_project_name(), Some("server"));
+        assert_eq!(snapshot.active_header_project_name(), None);
+        assert!(snapshot.active_header_project().is_none());
+        assert!(!snapshot.open_in_picker_visible());
     }
 
     #[test]
@@ -9845,6 +9858,8 @@ mod tests {
 
         assert_eq!(snapshot.active_thread_title(), "Port R3Code UI shell");
         assert_eq!(snapshot.active_project_name(), Some("r3code"));
+        assert_eq!(snapshot.active_header_project_name(), Some("r3code"));
+        assert!(snapshot.active_header_project().is_some());
         assert!(snapshot.turn_diff_summaries.is_empty());
     }
 

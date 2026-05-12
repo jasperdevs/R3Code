@@ -228,7 +228,7 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
     compare_screenshots(CompareOptions {
         expected: resolve_repo_path("reference/screenshots/upstream-draft-reference.png"),
         actual: resolve_repo_path("reference/screenshots/r3code-draft-window.png"),
-        max_different_pixels_percent: 2.0,
+        max_different_pixels_percent: 1.75,
         channel_tolerance: 8,
         ignore_rects: vec![Rect {
             x: 0,
@@ -250,7 +250,7 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
             "reference/screenshots/upstream-composer-focused-reference.png",
         ),
         actual: resolve_repo_path("reference/screenshots/r3code-composer-focused-window.png"),
-        max_different_pixels_percent: 2.0,
+        max_different_pixels_percent: 1.9,
         channel_tolerance: 8,
         ignore_rects: vec![Rect {
             x: 0,
@@ -312,7 +312,7 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
     compare_screenshots(CompareOptions {
         expected: resolve_repo_path("reference/screenshots/upstream-composer-menu-reference.png"),
         actual: resolve_repo_path("reference/screenshots/r3code-composer-menu-window.png"),
-        max_different_pixels_percent: 5.0,
+        max_different_pixels_percent: 4.5,
         channel_tolerance: 8,
         ignore_rects: vec![Rect {
             x: 0,
@@ -334,7 +334,7 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
             "reference/screenshots/upstream-composer-inline-tokens-reference.png",
         ),
         actual: resolve_repo_path("reference/screenshots/r3code-composer-inline-tokens-window.png"),
-        max_different_pixels_percent: 5.0,
+        max_different_pixels_percent: 2.2,
         channel_tolerance: 8,
         ignore_rects: vec![Rect {
             x: 0,
@@ -544,7 +544,7 @@ fn check_parity(options: CheckParityOptions) -> Result<()> {
             "reference/screenshots/upstream-provider-model-picker-reference.png",
         ),
         actual: resolve_repo_path("reference/screenshots/r3code-provider-model-picker-window.png"),
-        max_different_pixels_percent: 4.7,
+        max_different_pixels_percent: 4.45,
         channel_tolerance: 8,
         ignore_rects: vec![Rect {
             x: 0,
