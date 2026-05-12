@@ -6,6 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(windows)]
 use image::{ImageBuffer, Rgba};
 #[cfg(windows)]
 use windows_capture::{
@@ -4720,13 +4721,14 @@ fn stop_child(child: &mut Child) {
     let _ = child.wait();
 }
 
+#[cfg(windows)]
 fn kill_process_tree(pid: u32) {
-    #[cfg(windows)]
-    {
-        let _ = Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status();
-    }
+    let _ = Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status();
 }
+
+#[cfg(not(windows))]
+fn kill_process_tree(_pid: u32) {}

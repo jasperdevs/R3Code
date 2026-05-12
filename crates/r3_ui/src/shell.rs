@@ -4,7 +4,7 @@ use gpui::prelude::{FluentBuilder, InteractiveElement, StatefulInteractiveElemen
 use gpui::{
     AnyElement, App, AppContext, BoxShadow, Context, CursorStyle, FocusHandle, Focusable,
     FontWeight, IntoElement, KeyDownEvent, ParentElement, Pixels, Render, SharedString, Styled,
-    TextAlign, Window, div, hsla, point, px, svg,
+    TextAlign, TitlebarOptions, Window, div, hsla, point, px, svg,
 };
 use r3_core::{
     APP_NAME, ActivityTone, AppSnapshot, ChatMessage, CommandPaletteGroup, CommandPaletteItem,
@@ -467,6 +467,7 @@ const COMPOSER_RUNTIME_MODES: &[ComposerRuntimeMode] = &[
 ];
 
 const SOURCE_CONTROL_FETCH_INTERVAL_STEP_SECONDS: u32 = 5;
+const MAC_SIDEBAR_TOP_INSET: f32 = 32.0;
 
 impl Render for R3Shell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -543,6 +544,11 @@ impl Render for R3Shell {
 
 impl R3Shell {
     fn sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let top_padding = if cfg!(target_os = "macos") {
+            px(MAC_SIDEBAR_TOP_INSET)
+        } else {
+            px(16.0)
+        };
         let mut sidebar = div()
             .flex()
             .flex_col()
@@ -558,7 +564,7 @@ impl R3Shell {
                 .items_center()
                 .justify_between()
                 .px_4()
-                .pt_4()
+                .pt(top_padding)
                 .pb_5()
                 .child(
                     div()
@@ -2998,11 +3004,12 @@ impl R3Shell {
     }
 
     fn open_in_picker(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let platform = r3_core::current_platform_name();
         let option = self
             .snapshot
-            .active_editor_option("Windows")
+            .active_editor_option(platform)
             .unwrap_or(EditorOption {
-                label: "Explorer",
+                label: r3_core::file_manager_label_for_platform(platform),
                 id: r3_core::EditorId::FileManager,
             });
 
@@ -3293,7 +3300,10 @@ impl R3Shell {
     }
 
     fn open_in_menu_popup(&self, cx: &mut Context<Self>) -> AnyElement {
-        let options = resolve_editor_options("Windows", &self.snapshot.available_editors);
+        let options = resolve_editor_options(
+            r3_core::current_platform_name(),
+            &self.snapshot.available_editors,
+        );
         let preferred_editor = self.snapshot.preferred_editor;
         let mut popup = div()
             .id("open-in-menu-popup")
@@ -5303,6 +5313,11 @@ impl R3Shell {
     }
 
     fn settings_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let header_top_padding = if cfg!(target_os = "macos") {
+            px(MAC_SIDEBAR_TOP_INSET)
+        } else {
+            px(12.0)
+        };
         let nav_items = [
             SettingsNavItem {
                 label: "General",
@@ -5350,7 +5365,8 @@ impl R3Shell {
                     .items_center()
                     .gap_2()
                     .px_4()
-                    .py_3()
+                    .pt(header_top_padding)
+                    .pb_3()
                     .child(
                         div()
                             .text_size(px(14.0))
@@ -10637,7 +10653,7 @@ pub fn open_main_window(cx: &mut App) {
     cx.open_window(
         gpui::WindowOptions {
             window_bounds: Some(gpui::WindowBounds::Windowed(bounds)),
-            titlebar: None,
+            titlebar: main_window_titlebar_options(),
             ..Default::default()
         },
         move |window, cx| {
@@ -10690,4 +10706,16 @@ pub fn open_main_window(cx: &mut App) {
         },
     )
     .expect("failed to open R3Code window");
+}
+
+fn main_window_titlebar_options() -> Option<TitlebarOptions> {
+    if cfg!(target_os = "macos") {
+        Some(TitlebarOptions {
+            title: Some(SharedString::from(APP_NAME)),
+            appears_transparent: true,
+            traffic_light_position: Some(point(px(16.0), px(18.0))),
+        })
+    } else {
+        None
+    }
 }

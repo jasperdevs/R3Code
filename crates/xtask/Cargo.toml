@@ -7,5 +7,12 @@ repository.workspace = true
 
 [dependencies]
 image.workspace = true
-windows.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Storage_Xps",
+    "Win32_UI_WindowsAndMessaging",
+] }
 windows-capture = "1.5.0"
