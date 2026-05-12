@@ -4,7 +4,7 @@ use gpui::{
     IntoElement, KeyDownEvent, ParentElement, Render, SharedString, Styled, TextAlign, Window, div,
     hsla, point, px, svg,
 };
-use r3_core::{APP_NAME, AppSnapshot, MessageAuthor, ProjectSummary, ThreadStatus};
+use r3_core::{APP_NAME, AppSnapshot, ProjectSummary, ThreadStatus};
 
 use crate::theme::{FONT_FAMILY, MONO_FONT_FAMILY, SIDEBAR_MIN_WIDTH, Theme, ThemeMode};
 
@@ -727,10 +727,6 @@ impl R3Shell {
         }
 
         for message in &self.snapshot.messages {
-            let author = match message.author {
-                MessageAuthor::User => "You",
-                MessageAuthor::Agent => APP_NAME,
-            };
             timeline = timeline.child(
                 div()
                     .rounded(px(8.0))
@@ -741,9 +737,9 @@ impl R3Shell {
                         div()
                             .text_size(px(12.0))
                             .text_color(self.theme.muted_foreground)
-                            .child(author),
+                            .child(message.role.display_author()),
                     )
-                    .child(div().text_size(px(14.0)).child(message.body.clone())),
+                    .child(div().text_size(px(14.0)).child(message.text.clone())),
             );
         }
 
