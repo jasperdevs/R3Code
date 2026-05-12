@@ -41,6 +41,14 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/chevron-right.svg"),
     ),
     (
+        "icons/claude-ai.svg",
+        include_bytes!("../assets/icons/claude-ai.svg"),
+    ),
+    (
+        "icons/clock-3.svg",
+        include_bytes!("../assets/icons/clock-3.svg"),
+    ),
+    (
         "icons/cloud.svg",
         include_bytes!("../assets/icons/cloud.svg"),
     ),
@@ -49,6 +57,10 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/columns-2.svg"),
     ),
     ("icons/copy.svg", include_bytes!("../assets/icons/copy.svg")),
+    (
+        "icons/cursor.svg",
+        include_bytes!("../assets/icons/cursor.svg"),
+    ),
     ("icons/diff.svg", include_bytes!("../assets/icons/diff.svg")),
     (
         "icons/file-json.svg",
@@ -112,6 +124,14 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/monitor.svg"),
     ),
     (
+        "icons/openai.svg",
+        include_bytes!("../assets/icons/openai.svg"),
+    ),
+    (
+        "icons/opencode.svg",
+        include_bytes!("../assets/icons/opencode.svg"),
+    ),
+    (
         "icons/pen-line.svg",
         include_bytes!("../assets/icons/pen-line.svg"),
     ),
@@ -146,6 +166,10 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/settings-2.svg"),
     ),
     (
+        "icons/sparkles.svg",
+        include_bytes!("../assets/icons/sparkles.svg"),
+    ),
+    (
         "icons/square-split-horizontal.svg",
         include_bytes!("../assets/icons/square-split-horizontal.svg"),
     ),
@@ -153,6 +177,7 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         "icons/square-terminal.svg",
         include_bytes!("../assets/icons/square-terminal.svg"),
     ),
+    ("icons/star.svg", include_bytes!("../assets/icons/star.svg")),
     (
         "icons/terminal.svg",
         include_bytes!("../assets/icons/terminal.svg"),
@@ -235,8 +260,11 @@ mod tests {
             "check.svg",
             "bug.svg",
             "chevron-left.svg",
+            "claude-ai.svg",
+            "clock-3.svg",
             "cloud.svg",
             "columns-2.svg",
+            "cursor.svg",
             "diff.svg",
             "flask-conical.svg",
             "folder-closed.svg",
@@ -248,6 +276,8 @@ mod tests {
             "lock.svg",
             "lock-open.svg",
             "monitor.svg",
+            "openai.svg",
+            "opencode.svg",
             "pen-line.svg",
             "pilcrow.svg",
             "play.svg",
@@ -255,6 +285,8 @@ mod tests {
             "rows-3.svg",
             "square-split-horizontal.svg",
             "square-terminal.svg",
+            "sparkles.svg",
+            "star.svg",
             "text-wrap.svg",
             "triangle-alert.svg",
             "trash-2.svg",

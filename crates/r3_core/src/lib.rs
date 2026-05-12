@@ -467,6 +467,907 @@ pub struct EditorOption {
     pub id: EditorId,
 }
 
+pub const DEFAULT_PROVIDER_DRIVER_KIND: &str = "codex";
+pub const DEFAULT_MODEL: &str = "gpt-5.4";
+pub const DEFAULT_GIT_TEXT_GENERATION_MODEL: &str = "gpt-5.4-mini";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServerProviderState {
+    Ready,
+    Warning,
+    Error,
+    Disabled,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServerProviderAvailability {
+    Available,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerProviderModel {
+    pub slug: String,
+    pub name: String,
+    pub short_name: Option<String>,
+    pub sub_provider: Option<String>,
+    pub is_custom: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerProvider {
+    pub instance_id: String,
+    pub driver: String,
+    pub display_name: Option<String>,
+    pub accent_color: Option<String>,
+    pub continuation_group_key: Option<String>,
+    pub enabled: bool,
+    pub installed: bool,
+    pub status: ServerProviderState,
+    pub availability: ServerProviderAvailability,
+    pub models: Vec<ServerProviderModel>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderInstanceEntry {
+    pub instance_id: String,
+    pub driver_kind: String,
+    pub display_name: String,
+    pub accent_color: Option<String>,
+    pub continuation_group_key: Option<String>,
+    pub enabled: bool,
+    pub installed: bool,
+    pub status: ServerProviderState,
+    pub is_default: bool,
+    pub is_available: bool,
+    pub models: Vec<ServerProviderModel>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderModelFavorite {
+    pub provider: String,
+    pub model: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ModelPickerSelectedInstance {
+    Favorites,
+    Instance(String),
+}
+
+impl ModelPickerSelectedInstance {
+    pub fn instance_id(&self) -> Option<&str> {
+        match self {
+            Self::Favorites => None,
+            Self::Instance(instance_id) => Some(instance_id),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelPickerItem {
+    pub slug: String,
+    pub name: String,
+    pub short_name: Option<String>,
+    pub sub_provider: Option<String>,
+    pub instance_id: String,
+    pub driver_kind: String,
+    pub instance_display_name: String,
+    pub instance_accent_color: Option<String>,
+    pub continuation_group_key: Option<String>,
+    pub is_favorite: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelPickerState {
+    pub active_entry: Option<ProviderInstanceEntry>,
+    pub trigger_title: String,
+    pub trigger_subtitle: Option<String>,
+    pub trigger_label: String,
+    pub show_instance_badge: bool,
+    pub selected_instance: ModelPickerSelectedInstance,
+    pub is_locked: bool,
+    pub show_locked_instance_sidebar: bool,
+    pub show_sidebar: bool,
+    pub sidebar_entries: Vec<ProviderInstanceEntry>,
+    pub locked_header_label: Option<String>,
+    pub filtered_models: Vec<ModelPickerItem>,
+}
+
+pub fn default_instance_id_for_driver(driver: &str) -> String {
+    driver.to_string()
+}
+
+pub fn default_model_by_provider(provider: &str) -> Option<&'static str> {
+    match provider {
+        "codex" => Some(DEFAULT_MODEL),
+        "claudeAgent" => Some("claude-sonnet-4-6"),
+        "cursor" => Some("auto"),
+        "opencode" => Some("openai/gpt-5"),
+        _ => None,
+    }
+}
+
+pub fn default_git_text_generation_model_by_provider(provider: &str) -> Option<&'static str> {
+    match provider {
+        "codex" => Some(DEFAULT_GIT_TEXT_GENERATION_MODEL),
+        "claudeAgent" => Some("claude-haiku-4-5"),
+        "cursor" => Some("composer-2"),
+        "opencode" => Some("openai/gpt-5"),
+        _ => None,
+    }
+}
+
+pub fn provider_display_name(driver: &str) -> String {
+    match driver {
+        "codex" => "Codex".to_string(),
+        "claudeAgent" => "Claude".to_string(),
+        "cursor" => "Cursor".to_string(),
+        "opencode" => "OpenCode".to_string(),
+        _ => format_provider_driver_kind_label(driver),
+    }
+}
+
+pub fn format_provider_driver_kind_label(provider: &str) -> String {
+    title_case_words(&split_label_words(provider))
+}
+
+pub fn provider_instance_initials(label: &str) -> String {
+    let words = split_label_words(label);
+    if words.is_empty() {
+        return String::new();
+    }
+    if words.len() == 1 {
+        return words[0]
+            .chars()
+            .take(2)
+            .flat_map(char::to_uppercase)
+            .collect();
+    }
+    words
+        .iter()
+        .take(2)
+        .filter_map(|word| word.chars().next())
+        .flat_map(char::to_uppercase)
+        .collect()
+}
+
+fn split_label_words(value: &str) -> Vec<String> {
+    let mut normalized = String::new();
+    let mut previous_lowercase = false;
+    for ch in value.trim().chars() {
+        if ch == '_' || ch == '-' {
+            normalized.push(' ');
+            previous_lowercase = false;
+            continue;
+        }
+        if ch.is_ascii_uppercase() && previous_lowercase {
+            normalized.push(' ');
+        }
+        previous_lowercase = ch.is_ascii_lowercase();
+        normalized.push(ch);
+    }
+    normalized
+        .split_whitespace()
+        .filter(|token| !token.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn title_case_words(words: &[String]) -> String {
+    words
+        .iter()
+        .map(|word| {
+            let mut chars = word.chars();
+            match chars.next() {
+                Some(first) => first
+                    .to_uppercase()
+                    .chain(chars.flat_map(char::to_lowercase))
+                    .collect::<String>(),
+                None => String::new(),
+            }
+        })
+        .filter(|word| !word.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub fn normalize_provider_accent_color(value: Option<&str>) -> Option<String> {
+    let trimmed = value?.trim();
+    if trimmed.len() != 7 || !trimmed.starts_with('#') {
+        return None;
+    }
+    if trimmed[1..].chars().all(|ch| ch.is_ascii_hexdigit()) {
+        Some(trimmed.to_string())
+    } else {
+        None
+    }
+}
+
+fn resolve_instance_display_name(
+    snapshot: &ServerProvider,
+    instance_id: &str,
+    driver_kind: &str,
+    is_default: bool,
+) -> String {
+    let trimmed_snapshot_name = snapshot.display_name.as_deref().map(str::trim);
+    let kind_label = provider_display_name(driver_kind);
+    if let Some(name) = trimmed_snapshot_name.filter(|name| !name.is_empty()) {
+        if name != kind_label {
+            return name.to_string();
+        }
+    }
+    if !is_default {
+        let humanized = title_case_words(&split_label_words(instance_id));
+        if !humanized.is_empty() {
+            return humanized;
+        }
+    }
+    trimmed_snapshot_name
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .unwrap_or(kind_label)
+}
+
+pub fn derive_provider_instance_entries(
+    providers: &[ServerProvider],
+) -> Vec<ProviderInstanceEntry> {
+    providers
+        .iter()
+        .map(|snapshot| {
+            let instance_id = snapshot.instance_id.clone();
+            let driver_kind = snapshot.driver.clone();
+            let default_id = default_instance_id_for_driver(&driver_kind);
+            let is_default = instance_id == default_id;
+            ProviderInstanceEntry {
+                display_name: resolve_instance_display_name(
+                    snapshot,
+                    &instance_id,
+                    &driver_kind,
+                    is_default,
+                ),
+                accent_color: normalize_provider_accent_color(snapshot.accent_color.as_deref()),
+                continuation_group_key: snapshot.continuation_group_key.clone(),
+                enabled: snapshot.enabled,
+                installed: snapshot.installed,
+                status: snapshot.status,
+                is_default,
+                is_available: snapshot.availability == ServerProviderAvailability::Available,
+                models: snapshot.models.clone(),
+                instance_id,
+                driver_kind,
+            }
+        })
+        .collect()
+}
+
+pub fn sort_provider_instance_entries(
+    entries: &[ProviderInstanceEntry],
+) -> Vec<ProviderInstanceEntry> {
+    let mut by_kind = BTreeMap::<String, Vec<ProviderInstanceEntry>>::new();
+    let mut kind_order = Vec::<String>::new();
+    for entry in entries {
+        if !by_kind.contains_key(&entry.driver_kind) {
+            kind_order.push(entry.driver_kind.clone());
+        }
+        by_kind
+            .entry(entry.driver_kind.clone())
+            .or_default()
+            .push(entry.clone());
+    }
+
+    let mut sorted = Vec::new();
+    for kind in kind_order {
+        let Some(bucket) = by_kind.remove(&kind) else {
+            continue;
+        };
+        sorted.extend(bucket.iter().filter(|entry| entry.is_default).cloned());
+        sorted.extend(bucket.iter().filter(|entry| !entry.is_default).cloned());
+    }
+    sorted
+}
+
+pub fn get_provider_instance_entry(
+    providers: &[ServerProvider],
+    instance_id: &str,
+) -> Option<ProviderInstanceEntry> {
+    derive_provider_instance_entries(providers)
+        .into_iter()
+        .find(|entry| entry.instance_id == instance_id)
+}
+
+pub fn resolve_selectable_provider_instance(
+    providers: &[ServerProvider],
+    instance_id: Option<&str>,
+) -> Option<String> {
+    let entries = derive_provider_instance_entries(providers);
+    if let Some(instance_id) = instance_id {
+        if entries
+            .iter()
+            .any(|entry| entry.instance_id == instance_id && entry.enabled && entry.is_available)
+        {
+            return Some(instance_id.to_string());
+        }
+    }
+    entries
+        .iter()
+        .find(|entry| entry.enabled && entry.is_available)
+        .map(|entry| entry.instance_id.clone())
+}
+
+pub fn resolve_provider_driver_kind_for_instance_selection(
+    providers: &[ServerProvider],
+    selection: Option<&str>,
+) -> Option<String> {
+    derive_provider_instance_entries(providers)
+        .into_iter()
+        .find(|entry| Some(entry.instance_id.as_str()) == selection)
+        .map(|entry| entry.driver_kind)
+}
+
+pub fn get_display_model_name(model: &ServerProviderModel, prefer_short_name: bool) -> String {
+    if prefer_short_name {
+        if let Some(short_name) = model
+            .short_name
+            .as_deref()
+            .filter(|value| !value.is_empty())
+        {
+            return short_name.to_string();
+        }
+    }
+    model.name.clone()
+}
+
+pub fn get_trigger_display_model_name(model: &ServerProviderModel) -> String {
+    get_display_model_name(model, true)
+}
+
+pub fn get_trigger_display_model_label(model: &ServerProviderModel) -> String {
+    let title = get_trigger_display_model_name(model);
+    model
+        .sub_provider
+        .as_deref()
+        .filter(|sub_provider| !sub_provider.is_empty())
+        .map(|sub_provider| format!("{sub_provider} · {title}"))
+        .unwrap_or(title)
+}
+
+pub fn provider_model_key(instance_id: &str, slug: &str) -> String {
+    format!("{instance_id}:{slug}")
+}
+
+pub fn split_instance_model_key(key: &str) -> (String, String) {
+    key.split_once(':')
+        .map(|(instance_id, slug)| (instance_id.to_string(), slug.to_string()))
+        .unwrap_or_else(|| (key.to_string(), String::new()))
+}
+
+fn favorite_model_key_set(favorites: &[ProviderModelFavorite]) -> Vec<String> {
+    favorites
+        .iter()
+        .map(|favorite| provider_model_key(&favorite.provider, &favorite.model))
+        .collect()
+}
+
+fn is_favorite_model_key(favorites: &[String], instance_id: &str, slug: &str) -> bool {
+    let key = provider_model_key(instance_id, slug);
+    favorites.iter().any(|favorite| favorite == &key)
+}
+
+pub fn normalize_search_query(input: &str) -> String {
+    input.trim().to_ascii_lowercase()
+}
+
+pub fn score_subsequence_match(value: &str, query: &str) -> Option<usize> {
+    if query.is_empty() {
+        return Some(0);
+    }
+
+    let value_chars = value.chars().collect::<Vec<_>>();
+    let query_chars = query.chars().collect::<Vec<_>>();
+    let mut query_index = 0usize;
+    let mut first_match_index = None::<usize>;
+    let mut previous_match_index = None::<usize>;
+    let mut gap_penalty = 0usize;
+
+    for (value_index, value_char) in value_chars.iter().enumerate() {
+        if query_index >= query_chars.len() || value_char != &query_chars[query_index] {
+            continue;
+        }
+
+        if first_match_index.is_none() {
+            first_match_index = Some(value_index);
+        }
+        if let Some(previous) = previous_match_index {
+            gap_penalty += value_index.saturating_sub(previous + 1);
+        }
+
+        previous_match_index = Some(value_index);
+        query_index += 1;
+        if query_index == query_chars.len() {
+            let first = first_match_index.unwrap_or(0);
+            let span_penalty = value_index + 1 - first - query_chars.len();
+            let length_penalty = value_chars.len().saturating_sub(query_chars.len()).min(64);
+            return Some(first * 2 + gap_penalty * 3 + span_penalty + length_penalty);
+        }
+    }
+
+    None
+}
+
+fn length_penalty(value: &str, query: &str) -> usize {
+    value
+        .chars()
+        .count()
+        .saturating_sub(query.chars().count())
+        .min(64)
+}
+
+fn find_boundary_match_index(value: &str, query: &str) -> Option<usize> {
+    [" ", "-", "_", "/"]
+        .iter()
+        .filter_map(|marker| {
+            value
+                .find(&format!("{marker}{query}"))
+                .map(|index| index + marker.len())
+        })
+        .min()
+}
+
+pub fn score_query_match(
+    value: &str,
+    query: &str,
+    exact_base: usize,
+    prefix_base: Option<usize>,
+    boundary_base: Option<usize>,
+    includes_base: Option<usize>,
+    fuzzy_base: Option<usize>,
+) -> Option<usize> {
+    if value.is_empty() || query.is_empty() {
+        return None;
+    }
+    if value == query {
+        return Some(exact_base);
+    }
+    if let Some(prefix_base) = prefix_base {
+        if value.starts_with(query) {
+            return Some(prefix_base + length_penalty(value, query));
+        }
+    }
+    if let Some(boundary_base) = boundary_base {
+        if let Some(boundary_index) = find_boundary_match_index(value, query) {
+            return Some(boundary_base + boundary_index * 2 + length_penalty(value, query));
+        }
+    }
+    if let Some(includes_base) = includes_base {
+        if let Some(includes_index) = value.find(query) {
+            return Some(includes_base + includes_index * 2 + length_penalty(value, query));
+        }
+    }
+    if let Some(fuzzy_base) = fuzzy_base {
+        if let Some(fuzzy_score) = score_subsequence_match(value, query) {
+            return Some(fuzzy_base + fuzzy_score);
+        }
+    }
+    None
+}
+
+pub fn build_model_picker_search_text(model: &ModelPickerItem) -> String {
+    normalize_search_query(
+        &[
+            model.name.as_str(),
+            model.short_name.as_deref().unwrap_or(""),
+            model.sub_provider.as_deref().unwrap_or(""),
+            model.driver_kind.as_str(),
+            model.instance_display_name.as_str(),
+        ]
+        .iter()
+        .filter(|value| !value.is_empty())
+        .copied()
+        .collect::<Vec<_>>()
+        .join(" "),
+    )
+}
+
+pub fn score_model_picker_search(model: &ModelPickerItem, query: &str) -> Option<isize> {
+    const FAVORITE_SCORE_BOOST: isize = 24;
+    let tokens = normalize_search_query(query)
+        .split_whitespace()
+        .filter(|token| !token.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    if tokens.is_empty() {
+        return Some(0);
+    }
+
+    let fields = [
+        normalize_search_query(&model.name),
+        model
+            .short_name
+            .as_deref()
+            .map(normalize_search_query)
+            .unwrap_or_default(),
+        model
+            .sub_provider
+            .as_deref()
+            .map(normalize_search_query)
+            .unwrap_or_default(),
+        normalize_search_query(&model.driver_kind),
+        normalize_search_query(&model.instance_display_name),
+        build_model_picker_search_text(model),
+    ];
+
+    let mut score = 0isize;
+    for token in tokens {
+        let token_score = fields
+            .iter()
+            .enumerate()
+            .filter(|(_, field)| !field.is_empty())
+            .filter_map(|(index, field)| {
+                let field_base = index * 10;
+                score_query_match(
+                    field,
+                    &token,
+                    field_base,
+                    Some(field_base + 2),
+                    Some(field_base + 4),
+                    Some(field_base + 6),
+                    (token.len() >= 3).then_some(field_base + 100),
+                )
+            })
+            .min()?;
+        score += token_score as isize;
+    }
+
+    Some(if model.is_favorite {
+        score - FAVORITE_SCORE_BOOST
+    } else {
+        score
+    })
+}
+
+pub fn sort_provider_model_items(
+    items: &[ModelPickerItem],
+    favorite_model_keys: &[String],
+    group_favorites: bool,
+    instance_order: &[String],
+) -> Vec<ModelPickerItem> {
+    let instance_rank = instance_order
+        .iter()
+        .enumerate()
+        .map(|(index, instance_id)| (instance_id.clone(), index))
+        .collect::<BTreeMap<_, _>>();
+    let original_rank = items
+        .iter()
+        .enumerate()
+        .map(|(index, item)| (provider_model_key(&item.instance_id, &item.slug), index))
+        .collect::<BTreeMap<_, _>>();
+    let mut indexed = items.to_vec();
+    indexed.sort_by(|left, right| {
+        if group_favorites {
+            let left_fav =
+                is_favorite_model_key(favorite_model_keys, &left.instance_id, &left.slug);
+            let right_fav =
+                is_favorite_model_key(favorite_model_keys, &right.instance_id, &right.slug);
+            if left_fav != right_fav {
+                return right_fav.cmp(&left_fav);
+            }
+        }
+
+        let left_instance_rank = instance_rank
+            .get(&left.instance_id)
+            .copied()
+            .unwrap_or(usize::MAX);
+        let right_instance_rank = instance_rank
+            .get(&right.instance_id)
+            .copied()
+            .unwrap_or(usize::MAX);
+        left_instance_rank.cmp(&right_instance_rank).then_with(|| {
+            let left_key = provider_model_key(&left.instance_id, &left.slug);
+            let right_key = provider_model_key(&right.instance_id, &right.slug);
+            original_rank
+                .get(&left_key)
+                .copied()
+                .unwrap_or(usize::MAX)
+                .cmp(&original_rank.get(&right_key).copied().unwrap_or(usize::MAX))
+        })
+    });
+    indexed
+}
+
+pub fn normalize_model_slug(model: Option<&str>, provider: &str) -> Option<String> {
+    let trimmed = model?.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let aliased = match provider {
+        "codex" => match trimmed {
+            "gpt-5-codex" | "5.4" => Some("gpt-5.4"),
+            "5.3" | "gpt-5.3" => Some("gpt-5.3-codex"),
+            "5.3-spark" | "gpt-5.3-spark" => Some("gpt-5.3-codex-spark"),
+            _ => None,
+        },
+        "claudeAgent" => match trimmed {
+            "opus" | "opus-4.7" | "claude-opus-4.7" => Some("claude-opus-4-7"),
+            "opus-4.6" | "claude-opus-4.6" | "claude-opus-4-6-20251117" => Some("claude-opus-4-6"),
+            "sonnet" | "sonnet-4.6" | "claude-sonnet-4.6" | "claude-sonnet-4-6-20251117" => {
+                Some("claude-sonnet-4-6")
+            }
+            "haiku" | "haiku-4.5" | "claude-haiku-4.5" | "claude-haiku-4-5-20251001" => {
+                Some("claude-haiku-4-5")
+            }
+            _ => None,
+        },
+        "cursor" => match trimmed {
+            "composer" => Some("composer-2"),
+            "composer-1" => Some("composer-1.5"),
+            "composer-1.5" => Some("composer-1.5"),
+            "opus-4.6-thinking" | "opus-4.6" => Some("claude-opus-4-6"),
+            "sonnet-4.6-thinking" | "sonnet-4.6" => Some("claude-sonnet-4-6"),
+            "opus-4.5-thinking" | "opus-4.5" => Some("claude-opus-4-5"),
+            _ => None,
+        },
+        _ => None,
+    };
+    Some(aliased.unwrap_or(trimmed).to_string())
+}
+
+pub fn resolve_selectable_model(
+    provider: &str,
+    value: Option<&str>,
+    options: &[ServerProviderModel],
+) -> Option<String> {
+    let trimmed = value?.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(direct) = options.iter().find(|option| option.slug == trimmed) {
+        return Some(direct.slug.clone());
+    }
+    if let Some(by_name) = options
+        .iter()
+        .find(|option| option.name.eq_ignore_ascii_case(trimmed))
+    {
+        return Some(by_name.slug.clone());
+    }
+    let normalized = normalize_model_slug(Some(trimmed), provider)?;
+    options
+        .iter()
+        .find(|option| option.slug == normalized)
+        .map(|option| option.slug.clone())
+}
+
+fn matches_locked_provider(
+    entry: &ProviderInstanceEntry,
+    locked_provider: Option<&str>,
+    locked_continuation_group_key: Option<&str>,
+) -> bool {
+    let Some(locked_provider) = locked_provider else {
+        return true;
+    };
+    if entry.driver_kind != locked_provider {
+        return false;
+    }
+    locked_continuation_group_key
+        .filter(|key| !key.is_empty())
+        .map(|key| entry.continuation_group_key.as_deref() == Some(key))
+        .unwrap_or(true)
+}
+
+pub fn resolve_model_picker_state(
+    snapshot: &AppSnapshot,
+    search_query: &str,
+    selected_instance: Option<ModelPickerSelectedInstance>,
+    locked_provider: Option<&str>,
+    locked_continuation_group_key: Option<&str>,
+) -> ModelPickerState {
+    let entries = derive_provider_instance_entries(&snapshot.providers);
+    let active_entry = entries
+        .iter()
+        .find(|entry| entry.instance_id == snapshot.selected_provider_instance_id)
+        .cloned();
+    let selected_options = active_entry
+        .as_ref()
+        .map(|entry| entry.models.as_slice())
+        .unwrap_or(&[]);
+    let selected_model = selected_options
+        .iter()
+        .find(|option| option.slug == snapshot.selected_model)
+        .or_else(|| selected_options.first());
+    let trigger_title = selected_model
+        .map(get_trigger_display_model_name)
+        .unwrap_or_else(|| snapshot.selected_model.clone());
+    let trigger_subtitle = selected_model.and_then(|model| model.sub_provider.clone());
+    let trigger_label = selected_model
+        .map(get_trigger_display_model_label)
+        .unwrap_or_else(|| snapshot.selected_model.clone());
+    let duplicate_driver_count = active_entry
+        .as_ref()
+        .map(|active| {
+            entries
+                .iter()
+                .filter(|entry| entry.driver_kind == active.driver_kind)
+                .count()
+        })
+        .unwrap_or(0);
+    let show_instance_badge = active_entry
+        .as_ref()
+        .map(|entry| entry.accent_color.is_some() || duplicate_driver_count > 1)
+        .unwrap_or(false);
+    let favorite_keys = favorite_model_key_set(&snapshot.model_favorites);
+    let selected_instance = selected_instance.unwrap_or_else(|| {
+        if locked_provider.is_some() {
+            ModelPickerSelectedInstance::Instance(snapshot.selected_provider_instance_id.clone())
+        } else if !snapshot.model_favorites.is_empty() {
+            ModelPickerSelectedInstance::Favorites
+        } else {
+            ModelPickerSelectedInstance::Instance(snapshot.selected_provider_instance_id.clone())
+        }
+    });
+    let is_locked = locked_provider.is_some();
+    let locked_instance_entries = locked_provider
+        .map(|_| {
+            entries
+                .iter()
+                .filter(|entry| {
+                    matches_locked_provider(entry, locked_provider, locked_continuation_group_key)
+                })
+                .cloned()
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let show_locked_instance_sidebar = is_locked && locked_instance_entries.len() > 1;
+    let is_searching = !search_query.trim().is_empty();
+    let show_sidebar = !is_searching && (!is_locked || show_locked_instance_sidebar);
+    let sidebar_entries = if show_locked_instance_sidebar {
+        locked_instance_entries.clone()
+    } else {
+        entries.clone()
+    };
+    let mut flat_models = Vec::<ModelPickerItem>::new();
+    for entry in &entries {
+        if entry.status != ServerProviderState::Ready {
+            continue;
+        }
+        for model in &entry.models {
+            flat_models.push(ModelPickerItem {
+                slug: model.slug.clone(),
+                name: model.name.clone(),
+                short_name: model.short_name.clone(),
+                sub_provider: model.sub_provider.clone(),
+                instance_id: entry.instance_id.clone(),
+                driver_kind: entry.driver_kind.clone(),
+                instance_display_name: entry.display_name.clone(),
+                instance_accent_color: entry.accent_color.clone(),
+                continuation_group_key: entry.continuation_group_key.clone(),
+                is_favorite: is_favorite_model_key(&favorite_keys, &entry.instance_id, &model.slug),
+            });
+        }
+    }
+
+    let filtered_models = if is_searching {
+        let mut ranked = flat_models
+            .into_iter()
+            .filter(|model| {
+                locked_provider
+                    .map(|_| {
+                        matches_locked_provider(
+                            &ProviderInstanceEntry {
+                                instance_id: model.instance_id.clone(),
+                                driver_kind: model.driver_kind.clone(),
+                                display_name: model.instance_display_name.clone(),
+                                accent_color: model.instance_accent_color.clone(),
+                                continuation_group_key: model.continuation_group_key.clone(),
+                                enabled: true,
+                                installed: true,
+                                status: ServerProviderState::Ready,
+                                is_default: false,
+                                is_available: true,
+                                models: Vec::new(),
+                            },
+                            locked_provider,
+                            locked_continuation_group_key,
+                        )
+                    })
+                    .unwrap_or(true)
+            })
+            .filter_map(|model| {
+                score_model_picker_search(&model, search_query).map(|score| {
+                    let tie_breaker = build_model_picker_search_text(&model);
+                    (model, score, tie_breaker)
+                })
+            })
+            .collect::<Vec<_>>();
+        ranked.sort_by(
+            |(left, left_score, left_tie), (right, right_score, right_tie)| {
+                left_score
+                    .cmp(right_score)
+                    .then_with(|| right.is_favorite.cmp(&left.is_favorite))
+                    .then_with(|| left_tie.cmp(right_tie))
+            },
+        );
+        ranked.into_iter().map(|(model, _, _)| model).collect()
+    } else {
+        let mut result = flat_models
+            .into_iter()
+            .filter(|model| {
+                locked_provider
+                    .map(|_| {
+                        model.driver_kind == locked_provider.unwrap_or_default()
+                            && locked_continuation_group_key
+                                .filter(|key| !key.is_empty())
+                                .map(|key| model.continuation_group_key.as_deref() == Some(key))
+                                .unwrap_or(true)
+                    })
+                    .unwrap_or(true)
+            })
+            .collect::<Vec<_>>();
+
+        if is_locked {
+            if show_locked_instance_sidebar {
+                if let Some(instance_id) = selected_instance.instance_id() {
+                    result.retain(|model| model.instance_id == instance_id);
+                }
+            }
+        } else if selected_instance == ModelPickerSelectedInstance::Favorites {
+            result.retain(|model| model.is_favorite);
+        } else if let Some(instance_id) = selected_instance.instance_id() {
+            result.retain(|model| model.instance_id == instance_id);
+        }
+
+        let instance_order = if selected_instance == ModelPickerSelectedInstance::Favorites {
+            entries
+                .iter()
+                .map(|entry| entry.instance_id.clone())
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        sort_provider_model_items(
+            &result,
+            &favorite_keys,
+            selected_instance != ModelPickerSelectedInstance::Favorites,
+            &instance_order,
+        )
+    };
+
+    let locked_header_label = if is_locked && !show_locked_instance_sidebar {
+        let matches = entries
+            .iter()
+            .filter(|entry| {
+                matches_locked_provider(entry, locked_provider, locked_continuation_group_key)
+            })
+            .collect::<Vec<_>>();
+        if matches.is_empty() {
+            None
+        } else {
+            matches
+                .iter()
+                .find(|entry| entry.instance_id == snapshot.selected_provider_instance_id)
+                .copied()
+                .or_else(|| matches.first().copied())
+                .map(|entry| entry.display_name.clone())
+        }
+    } else {
+        None
+    };
+
+    ModelPickerState {
+        active_entry,
+        trigger_title,
+        trigger_subtitle,
+        trigger_label,
+        show_instance_badge,
+        selected_instance,
+        is_locked,
+        show_locked_instance_sidebar,
+        show_sidebar,
+        sidebar_entries,
+        locked_header_label,
+        filtered_models,
+    }
+}
+
 const MAX_SCRIPT_ID_LENGTH: usize = 64;
 
 pub fn command_for_project_script(script_id: &str) -> String {
@@ -2501,6 +3402,10 @@ pub struct AppSnapshot {
     pub primary_environment_id: Option<String>,
     pub available_editors: Vec<EditorId>,
     pub preferred_editor: Option<EditorId>,
+    pub providers: Vec<ServerProvider>,
+    pub selected_provider_instance_id: String,
+    pub selected_model: String,
+    pub model_favorites: Vec<ProviderModelFavorite>,
     pub messages: Vec<ChatMessage>,
     pub activities: Vec<ThreadActivity>,
     pub draft_sessions: Vec<DraftSessionState>,
@@ -2603,6 +3508,148 @@ impl AppSnapshot {
         ]
     }
 
+    fn reference_providers() -> Vec<ServerProvider> {
+        vec![
+            ServerProvider {
+                instance_id: "codex".to_string(),
+                driver: "codex".to_string(),
+                display_name: Some("Codex".to_string()),
+                accent_color: None,
+                continuation_group_key: Some("codex-default".to_string()),
+                enabled: true,
+                installed: true,
+                status: ServerProviderState::Ready,
+                availability: ServerProviderAvailability::Available,
+                models: vec![
+                    ServerProviderModel {
+                        slug: "gpt-5.4".to_string(),
+                        name: "GPT-5.4".to_string(),
+                        short_name: Some("5.4".to_string()),
+                        sub_provider: None,
+                        is_custom: false,
+                    },
+                    ServerProviderModel {
+                        slug: "gpt-5.4-mini".to_string(),
+                        name: "GPT-5.4 Mini".to_string(),
+                        short_name: Some("5.4 Mini".to_string()),
+                        sub_provider: None,
+                        is_custom: false,
+                    },
+                    ServerProviderModel {
+                        slug: "gpt-5.3-codex".to_string(),
+                        name: "GPT-5.3 Codex".to_string(),
+                        short_name: Some("5.3".to_string()),
+                        sub_provider: None,
+                        is_custom: false,
+                    },
+                ],
+            },
+            ServerProvider {
+                instance_id: "codex_personal".to_string(),
+                driver: "codex".to_string(),
+                display_name: Some("Codex".to_string()),
+                accent_color: Some("#2563EB".to_string()),
+                continuation_group_key: Some("codex-personal".to_string()),
+                enabled: true,
+                installed: true,
+                status: ServerProviderState::Ready,
+                availability: ServerProviderAvailability::Available,
+                models: vec![
+                    ServerProviderModel {
+                        slug: "gpt-5.4".to_string(),
+                        name: "GPT-5.4".to_string(),
+                        short_name: Some("5.4".to_string()),
+                        sub_provider: None,
+                        is_custom: false,
+                    },
+                    ServerProviderModel {
+                        slug: "internal-review".to_string(),
+                        name: "internal-review".to_string(),
+                        short_name: None,
+                        sub_provider: Some("OpenAI".to_string()),
+                        is_custom: true,
+                    },
+                ],
+            },
+            ServerProvider {
+                instance_id: "claudeAgent".to_string(),
+                driver: "claudeAgent".to_string(),
+                display_name: Some("Claude".to_string()),
+                accent_color: None,
+                continuation_group_key: Some("claude-default".to_string()),
+                enabled: true,
+                installed: true,
+                status: ServerProviderState::Ready,
+                availability: ServerProviderAvailability::Available,
+                models: vec![
+                    ServerProviderModel {
+                        slug: "claude-sonnet-4-6".to_string(),
+                        name: "Claude Sonnet 4.6".to_string(),
+                        short_name: Some("Sonnet 4.6".to_string()),
+                        sub_provider: None,
+                        is_custom: false,
+                    },
+                    ServerProviderModel {
+                        slug: "claude-haiku-4-5".to_string(),
+                        name: "Claude Haiku 4.5".to_string(),
+                        short_name: Some("Haiku 4.5".to_string()),
+                        sub_provider: None,
+                        is_custom: false,
+                    },
+                ],
+            },
+            ServerProvider {
+                instance_id: "cursor".to_string(),
+                driver: "cursor".to_string(),
+                display_name: Some("Cursor".to_string()),
+                accent_color: None,
+                continuation_group_key: None,
+                enabled: false,
+                installed: false,
+                status: ServerProviderState::Disabled,
+                availability: ServerProviderAvailability::Unavailable,
+                models: vec![ServerProviderModel {
+                    slug: "composer-2".to_string(),
+                    name: "Composer 2".to_string(),
+                    short_name: Some("Composer".to_string()),
+                    sub_provider: None,
+                    is_custom: false,
+                }],
+            },
+            ServerProvider {
+                instance_id: "opencode".to_string(),
+                driver: "opencode".to_string(),
+                display_name: Some("OpenCode".to_string()),
+                accent_color: None,
+                continuation_group_key: None,
+                enabled: true,
+                installed: true,
+                status: ServerProviderState::Warning,
+                availability: ServerProviderAvailability::Available,
+                models: vec![ServerProviderModel {
+                    slug: "openai/gpt-5".to_string(),
+                    name: "OpenAI GPT-5".to_string(),
+                    short_name: Some("GPT-5".to_string()),
+                    sub_provider: Some("OpenAI".to_string()),
+                    is_custom: false,
+                }],
+            },
+        ]
+    }
+
+    fn reference_model_favorites() -> Vec<ProviderModelFavorite> {
+        vec![
+            ProviderModelFavorite {
+                provider: "codex".to_string(),
+                model: "gpt-5.4".to_string(),
+            },
+            ProviderModelFavorite {
+                provider: "claudeAgent".to_string(),
+                model: "claude-sonnet-4-6".to_string(),
+            },
+        ]
+    }
+
     pub fn empty_reference_state() -> Self {
         Self {
             route: ChatRoute::Index,
@@ -2615,6 +3662,10 @@ impl AppSnapshot {
             primary_environment_id: None,
             available_editors: Vec::new(),
             preferred_editor: None,
+            providers: Self::reference_providers(),
+            selected_provider_instance_id: "codex".to_string(),
+            selected_model: DEFAULT_GIT_TEXT_GENERATION_MODEL.to_string(),
+            model_favorites: Self::reference_model_favorites(),
             messages: Vec::new(),
             activities: Vec::new(),
             draft_sessions: Vec::new(),
@@ -2653,6 +3704,10 @@ impl AppSnapshot {
             primary_environment_id: Some("local".to_string()),
             available_editors: vec![EditorId::VsCode, EditorId::FileManager],
             preferred_editor: Some(EditorId::VsCode),
+            providers: Self::reference_providers(),
+            selected_provider_instance_id: "codex".to_string(),
+            selected_model: DEFAULT_GIT_TEXT_GENERATION_MODEL.to_string(),
+            model_favorites: Self::reference_model_favorites(),
             messages: Vec::new(),
             activities: Vec::new(),
             draft_sessions: vec![DraftSessionState {
@@ -2698,6 +3753,10 @@ impl AppSnapshot {
             primary_environment_id: Some("local".to_string()),
             available_editors: vec![EditorId::VsCode, EditorId::FileManager],
             preferred_editor: Some(EditorId::VsCode),
+            providers: Self::reference_providers(),
+            selected_provider_instance_id: "codex".to_string(),
+            selected_model: DEFAULT_GIT_TEXT_GENERATION_MODEL.to_string(),
+            model_favorites: Self::reference_model_favorites(),
             threads: vec![
                 ThreadSummary {
                     title: "Port R3Code UI shell".to_string(),
@@ -3690,6 +4749,125 @@ mod tests {
                 .map(|option| option.label)
                 .collect::<Vec<_>>(),
             vec!["VS Code Insiders", "VSCodium", "Explorer"]
+        );
+    }
+
+    #[test]
+    fn provider_instance_projection_matches_upstream_logic() {
+        let snapshot = AppSnapshot::mock_reference_state();
+        let entries = derive_provider_instance_entries(&snapshot.providers);
+        let codex = entries
+            .iter()
+            .find(|entry| entry.instance_id == "codex")
+            .unwrap();
+        let personal = entries
+            .iter()
+            .find(|entry| entry.instance_id == "codex_personal")
+            .unwrap();
+        let cursor = entries
+            .iter()
+            .find(|entry| entry.instance_id == "cursor")
+            .unwrap();
+
+        assert_eq!(codex.display_name, "Codex");
+        assert!(codex.is_default);
+        assert_eq!(personal.display_name, "Codex Personal");
+        assert_eq!(personal.accent_color.as_deref(), Some("#2563EB"));
+        assert!(!personal.is_default);
+        assert!(!cursor.is_available);
+        assert_eq!(provider_instance_initials("Codex Personal"), "CP");
+        assert_eq!(normalize_provider_accent_color(Some("not-a-color")), None);
+
+        let sorted = sort_provider_instance_entries(&entries);
+        let codex_index = sorted
+            .iter()
+            .position(|entry| entry.instance_id == "codex")
+            .unwrap();
+        let personal_index = sorted
+            .iter()
+            .position(|entry| entry.instance_id == "codex_personal")
+            .unwrap();
+        assert!(codex_index < personal_index);
+    }
+
+    #[test]
+    fn model_picker_trigger_filtering_and_locking_match_upstream_logic() {
+        let snapshot = AppSnapshot::mock_reference_state();
+        let state = resolve_model_picker_state(&snapshot, "", None, None, None);
+
+        assert_eq!(state.trigger_title, "5.4 Mini");
+        assert_eq!(state.trigger_label, "5.4 Mini");
+        assert!(state.show_instance_badge);
+        assert_eq!(
+            state.selected_instance,
+            ModelPickerSelectedInstance::Favorites
+        );
+        assert!(state.show_sidebar);
+        assert_eq!(
+            state
+                .filtered_models
+                .iter()
+                .map(|model| provider_model_key(&model.instance_id, &model.slug))
+                .collect::<Vec<_>>(),
+            vec!["codex:gpt-5.4", "claudeAgent:claude-sonnet-4-6"]
+        );
+
+        let search = resolve_model_picker_state(&snapshot, "sonnet", None, None, None);
+        assert!(!search.show_sidebar);
+        assert_eq!(search.filtered_models[0].slug, "claude-sonnet-4-6");
+
+        let locked = resolve_model_picker_state(
+            &snapshot,
+            "",
+            Some(ModelPickerSelectedInstance::Instance("codex".to_string())),
+            Some("codex"),
+            Some("codex-default"),
+        );
+        assert!(locked.is_locked);
+        assert!(!locked.show_locked_instance_sidebar);
+        assert_eq!(locked.locked_header_label.as_deref(), Some("Codex"));
+        assert!(
+            locked
+                .filtered_models
+                .iter()
+                .all(|model| model.instance_id == "codex")
+        );
+    }
+
+    #[test]
+    fn model_picker_search_sorting_and_selection_match_upstream_logic() {
+        let snapshot = AppSnapshot::mock_reference_state();
+        let (_, slug) = split_instance_model_key("codex:openai/custom:model");
+        assert_eq!(slug, "openai/custom:model");
+
+        let codex_models = &snapshot.providers[0].models;
+        assert_eq!(
+            resolve_selectable_model("codex", Some("5.4"), codex_models),
+            Some("gpt-5.4".to_string())
+        );
+        assert_eq!(
+            resolve_selectable_model("codex", Some("GPT-5.3 Codex"), codex_models),
+            Some("gpt-5.3-codex".to_string())
+        );
+        assert_eq!(
+            resolve_selectable_provider_instance(&snapshot.providers, Some("missing")),
+            Some("codex".to_string())
+        );
+
+        let favorites = favorite_model_key_set(&snapshot.model_favorites);
+        let state = resolve_model_picker_state(
+            &snapshot,
+            "",
+            Some(ModelPickerSelectedInstance::Instance("codex".to_string())),
+            None,
+            None,
+        );
+        let sorted = sort_provider_model_items(&state.filtered_models, &favorites, true, &[]);
+        assert_eq!(sorted[0].slug, "gpt-5.4");
+        assert!(score_model_picker_search(&sorted[0], "5.4").unwrap() < 10);
+        assert_eq!(
+            build_model_picker_search_text(&sorted[0]),
+            "gpt-5.4 5.4 codex codex"
         );
     }
 

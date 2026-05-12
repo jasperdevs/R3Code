@@ -1,18 +1,21 @@
 use gpui::prelude::{FluentBuilder, InteractiveElement, StatefulInteractiveElement};
 use gpui::{
     AnyElement, App, AppContext, BoxShadow, Context, CursorStyle, FocusHandle, Focusable,
-    FontWeight, IntoElement, KeyDownEvent, ParentElement, Render, SharedString, Styled, TextAlign,
-    Window, div, hsla, point, px, svg,
+    FontWeight, IntoElement, KeyDownEvent, ParentElement, Pixels, Render, SharedString, Styled,
+    TextAlign, Window, div, hsla, point, px, svg,
 };
 use r3_core::{
     APP_NAME, ActivityTone, AppSnapshot, ChatMessage, DiffOpenValue, DiffRouteSearch,
     DraftThreadEnvMode, EditorOption, MAX_TERMINALS_PER_GROUP, MAX_VISIBLE_WORK_LOG_ENTRIES,
-    PendingApproval, PendingUserInputProgress, ProjectScript, ProjectScriptIcon, ProjectSummary,
-    TerminalEvent, ThreadStatus, TurnDiffFileChange, TurnDiffStat, TurnDiffSummary,
-    TurnDiffTreeNode, WorkLogEntry, build_turn_diff_tree, close_thread_terminal,
-    new_thread_terminal, parse_diff_route_search, primary_project_script,
-    set_pending_user_input_custom_answer, set_thread_active_terminal, set_thread_terminal_open,
-    split_thread_terminal, summarize_turn_diff_stats, toggle_pending_user_input_option_selection,
+    ModelPickerItem, ModelPickerSelectedInstance, ModelPickerState, PendingApproval,
+    PendingUserInputProgress, ProjectScript, ProjectScriptIcon, ProjectSummary,
+    ProviderInstanceEntry, ServerProviderModel, TerminalEvent, ThreadStatus, TurnDiffFileChange,
+    TurnDiffStat, TurnDiffSummary, TurnDiffTreeNode, WorkLogEntry, build_turn_diff_tree,
+    close_thread_terminal, get_display_model_name, new_thread_terminal, parse_diff_route_search,
+    primary_project_script, provider_instance_initials, resolve_model_picker_state,
+    resolve_selectable_model, set_pending_user_input_custom_answer, set_thread_active_terminal,
+    set_thread_terminal_open, split_thread_terminal, summarize_turn_diff_stats,
+    toggle_pending_user_input_option_selection,
 };
 
 use crate::theme::{FONT_FAMILY, MONO_FONT_FAMILY, SIDEBAR_MIN_WIDTH, Theme, ThemeMode};
@@ -58,7 +61,9 @@ pub struct R3Shell {
     settings_theme_highlighted_index: usize,
     composer_prompt: String,
     composer_prompt_focused: bool,
-    composer_model_index: usize,
+    model_picker_open: bool,
+    model_picker_query: String,
+    model_picker_selected_instance: ModelPickerSelectedInstance,
     composer_runtime_index: usize,
     composer_plan_mode: bool,
     composer_submitted_count: usize,
@@ -120,7 +125,9 @@ impl R3Shell {
             settings_theme_highlighted_index: 0,
             composer_prompt: String::new(),
             composer_prompt_focused: false,
-            composer_model_index: 0,
+            model_picker_open: screen == R3Screen::ProviderModelPicker,
+            model_picker_query: String::new(),
+            model_picker_selected_instance: ModelPickerSelectedInstance::Favorites,
             composer_runtime_index: 2,
             composer_plan_mode: false,
             composer_submitted_count: 0,
@@ -146,6 +153,7 @@ pub enum R3Screen {
     TerminalDrawer,
     DiffPanel,
     BranchToolbar,
+    ProviderModelPicker,
     Settings,
 }
 
@@ -378,35 +386,10 @@ struct SettingsRow {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct ComposerModel {
-    provider: &'static str,
-    model: &'static str,
-    icon: &'static str,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ComposerRuntimeMode {
     label: &'static str,
     icon: &'static str,
 }
-
-const COMPOSER_MODELS: &[ComposerModel] = &[
-    ComposerModel {
-        provider: "GPT-5.4",
-        model: "",
-        icon: "icons/bot.svg",
-    },
-    ComposerModel {
-        provider: "Claude",
-        model: "Sonnet",
-        icon: "icons/bot.svg",
-    },
-    ComposerModel {
-        provider: "OpenCode",
-        model: "default",
-        icon: "icons/terminal.svg",
-    },
-];
 
 const COMPOSER_RUNTIME_MODES: &[ComposerRuntimeMode] = &[
     ComposerRuntimeMode {
@@ -451,7 +434,10 @@ impl Render for R3Shell {
             | R3Screen::PendingUserInput
             | R3Screen::TerminalDrawer
             | R3Screen::DiffPanel
-            | R3Screen::BranchToolbar => root.child(self.sidebar(cx)).child(self.main_panel(cx)),
+            | R3Screen::BranchToolbar
+            | R3Screen::ProviderModelPicker => {
+                root.child(self.sidebar(cx)).child(self.main_panel(cx))
+            }
             R3Screen::Settings => root
                 .child(self.settings_sidebar(cx))
                 .child(self.settings_panel(cx)),
@@ -459,6 +445,10 @@ impl Render for R3Shell {
 
         if self.command_palette_open {
             root = root.child(self.command_palette_overlay(cx));
+        }
+
+        if self.model_picker_open && self.snapshot.renders_chat_view() {
+            root = root.child(self.model_picker_popup(cx));
         }
 
         root
@@ -3302,7 +3292,8 @@ impl R3Shell {
     }
 
     fn composer_model_picker(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let model = self.composer_model();
+        let state = self.current_model_picker_state();
+        let active_entry = state.active_entry.as_ref();
 
         div()
             .id("chat-composer-model-picker")
@@ -3316,47 +3307,557 @@ impl R3Shell {
             .text_color(self.theme.muted_foreground)
             .cursor_pointer()
             .on_click(cx.listener(|this, _, _, cx| {
-                this.composer_model_index = (this.composer_model_index + 1) % COMPOSER_MODELS.len();
+                this.model_picker_open = !this.model_picker_open;
+                if this.model_picker_open {
+                    this.model_picker_query.clear();
+                }
                 cx.notify();
             }))
-            .child(
-                svg()
-                    .path(model.icon)
-                    .size_4()
-                    .text_color(self.theme.foreground),
-            )
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_1()
-                    .min_w_0()
-                    .child(if model.model.is_empty() {
-                        div()
-                            .text_color(self.theme.foreground)
-                            .font_weight(FontWeight(550.0))
-                            .child(model.provider)
-                    } else {
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            .child(
-                                div()
-                                    .text_color(self.theme.foreground)
-                                    .font_weight(FontWeight(550.0))
-                                    .child(model.provider),
-                            )
-                            .child(div().text_color(self.theme.muted_foreground).child("/"))
-                            .child(div().child(model.model))
-                    }),
-            )
+            .when_some(active_entry, |picker, entry| {
+                picker.child(self.model_provider_instance_icon(
+                    entry,
+                    state.show_instance_badge,
+                    px(20.0),
+                    px(16.0),
+                ))
+            })
+            .child(div().flex().items_center().gap_1p5().min_w_0().child(
+                if let Some(subtitle) = state.trigger_subtitle.as_deref() {
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .min_w_0()
+                        .child(
+                            div()
+                                .max_w(px(82.0))
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .child(subtitle.to_string()),
+                        )
+                        .child(
+                            div()
+                                .text_color(self.theme.muted_foreground.opacity(0.60))
+                                .child("·"),
+                        )
+                        .child(
+                            div()
+                                .max_w(px(82.0))
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .text_color(self.theme.foreground)
+                                .font_weight(FontWeight(550.0))
+                                .child(state.trigger_title.clone()),
+                        )
+                } else {
+                    div()
+                        .max_w(px(142.0))
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .text_color(self.theme.foreground)
+                        .font_weight(FontWeight(550.0))
+                        .child(state.trigger_title.clone())
+                },
+            ))
             .child(
                 svg()
                     .path("icons/chevron-down.svg")
                     .size_3()
                     .text_color(self.theme.muted_foreground.opacity(0.72)),
             )
+    }
+
+    fn current_model_picker_state(&self) -> ModelPickerState {
+        resolve_model_picker_state(
+            &self.snapshot,
+            &self.model_picker_query,
+            Some(self.model_picker_selected_instance.clone()),
+            None,
+            None,
+        )
+    }
+
+    fn model_picker_popup(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let state = self.current_model_picker_state();
+        let mut popup = div()
+            .id("model-picker-content")
+            .absolute()
+            .left(px(SIDEBAR_MIN_WIDTH + 24.0))
+            .bottom(px(76.0))
+            .flex()
+            .w(px(400.0))
+            .h(px(384.0))
+            .overflow_hidden()
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.background)
+            .text_color(self.theme.foreground)
+            .shadow(vec![BoxShadow {
+                color: hsla(0.0, 0.0, 0.0, 0.05),
+                offset: point(px(0.0), px(10.0)),
+                blur_radius: px(15.0),
+                spread_radius: px(-3.0),
+            }]);
+
+        if state.show_sidebar {
+            popup = popup.child(self.model_picker_sidebar(&state, cx));
+        }
+
+        popup.child(self.model_picker_content(&state, cx))
+    }
+
+    fn model_picker_sidebar(
+        &self,
+        state: &ModelPickerState,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let mut rail = div()
+            .id("model-picker-sidebar")
+            .flex()
+            .flex_col()
+            .gap_1()
+            .w(px(48.0))
+            .h_full()
+            .flex_shrink_0()
+            .border_r_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.accent.opacity(0.30))
+            .p_1();
+
+        if !state.is_locked {
+            rail = rail.child(self.model_picker_favorites_button(state, cx));
+        }
+
+        for entry in &state.sidebar_entries {
+            rail = rail.child(self.model_picker_instance_button(entry, state, cx));
+        }
+
+        if !state.is_locked {
+            rail = rail
+                .child(self.model_picker_coming_soon_button("Gemini", "G", cx))
+                .child(self.model_picker_coming_soon_button("Github Copilot", "GH", cx));
+        }
+
+        rail
+    }
+
+    fn model_picker_favorites_button(
+        &self,
+        state: &ModelPickerState,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let selected = state.selected_instance == ModelPickerSelectedInstance::Favorites;
+        div()
+            .relative()
+            .w_full()
+            .pb_1()
+            .mb_1()
+            .border_b_1()
+            .border_color(self.theme.border)
+            .child(
+                self.model_picker_rail_button(
+                    "model-picker-favorites",
+                    selected,
+                    false,
+                    cx,
+                    |this, cx| {
+                        this.model_picker_selected_instance =
+                            ModelPickerSelectedInstance::Favorites;
+                        this.model_picker_query.clear();
+                        cx.notify();
+                    },
+                    div().child(
+                        svg()
+                            .path("icons/star.svg")
+                            .size_5()
+                            .text_color(self.theme.foreground),
+                    ),
+                ),
+            )
+    }
+
+    fn model_picker_instance_button(
+        &self,
+        entry: &ProviderInstanceEntry,
+        state: &ModelPickerState,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let instance_id = entry.instance_id.clone();
+        let selected =
+            state.selected_instance == ModelPickerSelectedInstance::Instance(instance_id.clone());
+        let disabled = !entry.is_available || entry.status != r3_core::ServerProviderState::Ready;
+        let duplicate_driver_count = state
+            .sidebar_entries
+            .iter()
+            .filter(|candidate| candidate.driver_kind == entry.driver_kind)
+            .count();
+        let show_badge = entry.accent_color.is_some() || duplicate_driver_count > 1;
+
+        self.model_picker_rail_button(
+            "model-picker-provider",
+            selected,
+            disabled,
+            cx,
+            move |this, cx| {
+                if !disabled {
+                    this.model_picker_selected_instance =
+                        ModelPickerSelectedInstance::Instance(instance_id.clone());
+                    this.model_picker_query.clear();
+                    cx.notify();
+                }
+            },
+            self.model_provider_instance_icon(entry, show_badge, px(24.0), px(20.0)),
+        )
+    }
+
+    fn model_picker_coming_soon_button(
+        &self,
+        label: &'static str,
+        initials: &'static str,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        self.model_picker_rail_button(
+            "model-picker-coming-soon",
+            false,
+            true,
+            cx,
+            |_, _| {},
+            div()
+                .relative()
+                .flex()
+                .items_center()
+                .justify_center()
+                .w(px(24.0))
+                .h(px(24.0))
+                .text_size(px(9.0))
+                .font_weight(FontWeight(650.0))
+                .text_color(self.theme.muted_foreground.opacity(0.80))
+                .child(initials)
+                .child(
+                    div()
+                        .absolute()
+                        .top(px(0.0))
+                        .right(px(-2.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .w(px(14.0))
+                        .h(px(14.0))
+                        .rounded(px(7.0))
+                        .bg(self.theme.background)
+                        .child(
+                            svg()
+                                .path("icons/clock-3.svg")
+                                .size(px(8.0))
+                                .text_color(self.theme.muted_foreground),
+                        ),
+                )
+                .child(div().w(px(0.0)).h(px(0.0)).child(label)),
+        )
+    }
+
+    fn model_picker_rail_button<F>(
+        &self,
+        id: &'static str,
+        selected: bool,
+        disabled: bool,
+        cx: &mut Context<Self>,
+        on_click: F,
+        child: impl IntoElement,
+    ) -> impl IntoElement
+    where
+        F: Fn(&mut R3Shell, &mut Context<Self>) + 'static,
+    {
+        div()
+            .id(id)
+            .relative()
+            .flex()
+            .items_center()
+            .justify_center()
+            .w_full()
+            .h(px(40.0))
+            .rounded(px(4.0))
+            .bg(if selected {
+                self.theme.background
+            } else {
+                hsla(0.0, 0.0, 0.0, 0.0)
+            })
+            .text_color(if disabled {
+                self.theme.muted_foreground.opacity(0.45)
+            } else {
+                self.theme.foreground
+            })
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                on_click(this, cx);
+            }))
+            .when(selected, |button| {
+                button.child(
+                    div()
+                        .absolute()
+                        .right(px(-4.0))
+                        .top(px(10.0))
+                        .w(px(2.0))
+                        .h(px(20.0))
+                        .rounded(px(2.0))
+                        .bg(self.theme.primary),
+                )
+            })
+            .child(child)
+    }
+
+    fn model_picker_content(
+        &self,
+        state: &ModelPickerState,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let mut list = div()
+            .id("model-picker-list")
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .bg(self.theme.accent.opacity(0.22))
+            .px_2()
+            .py_1();
+
+        for (index, model) in state.filtered_models.iter().enumerate() {
+            list = list.child(self.model_picker_row(index, model, state, cx));
+        }
+
+        div()
+            .id("model-picker-main")
+            .flex()
+            .flex_col()
+            .flex_1()
+            .min_w_0()
+            .child(
+                div()
+                    .id("model-picker-search")
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .border_b_1()
+                    .border_color(self.theme.border)
+                    .px_3()
+                    .py_2()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .w_full()
+                            .h(px(32.0))
+                            .rounded(px(6.0))
+                            .bg(self.theme.background)
+                            .px_2()
+                            .child(
+                                svg()
+                                    .path("icons/search.svg")
+                                    .size_4()
+                                    .text_color(self.theme.muted_foreground.opacity(0.50)),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(13.0))
+                                    .text_color(if self.model_picker_query.is_empty() {
+                                        self.theme.muted_foreground.opacity(0.55)
+                                    } else {
+                                        self.theme.foreground
+                                    })
+                                    .child(if self.model_picker_query.is_empty() {
+                                        "Search models...".to_string()
+                                    } else {
+                                        self.model_picker_query.clone()
+                                    }),
+                            ),
+                    ),
+            )
+            .child(list)
+            .when(state.filtered_models.is_empty(), |content| {
+                content.child(
+                    div()
+                        .absolute()
+                        .bottom(px(18.0))
+                        .left(px(72.0))
+                        .text_size(px(12.0))
+                        .text_color(self.theme.muted_foreground)
+                        .child("No models found"),
+                )
+            })
+    }
+
+    fn model_picker_row(
+        &self,
+        index: usize,
+        model: &ModelPickerItem,
+        state: &ModelPickerState,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let selected = self.snapshot.selected_provider_instance_id == model.instance_id
+            && self.snapshot.selected_model == model.slug;
+        let show_provider = !state.is_locked || state.show_locked_instance_sidebar;
+        let instance_id = model.instance_id.clone();
+        let slug = model.slug.clone();
+
+        div()
+            .id("model-picker-row")
+            .flex()
+            .items_start()
+            .gap_2()
+            .w_full()
+            .rounded(px(4.0))
+            .px_3()
+            .py_2()
+            .text_size(px(12.0))
+            .bg(if selected {
+                self.theme.accent
+            } else if index == 0 {
+                self.theme.accent.opacity(0.60)
+            } else {
+                hsla(0.0, 0.0, 0.0, 0.0)
+            })
+            .cursor_pointer()
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.select_provider_model(&instance_id, &slug);
+                cx.notify();
+            }))
+            .child(
+                svg()
+                    .path("icons/star.svg")
+                    .size_4()
+                    .text_color(if model.is_favorite {
+                        hsla(0.12, 0.92, 0.48, 1.0)
+                    } else {
+                        self.theme.muted_foreground.opacity(0.40)
+                    }),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_0p5()
+                    .min_w_0()
+                    .flex_1()
+                    .child(
+                        div().flex().items_center().justify_between().gap_2().child(
+                            div()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .font_weight(FontWeight(500.0))
+                                .child(get_display_model_name(
+                                    &ServerProviderModel {
+                                        slug: model.slug.clone(),
+                                        name: model.name.clone(),
+                                        short_name: model.short_name.clone(),
+                                        sub_provider: model.sub_provider.clone(),
+                                        is_custom: false,
+                                    },
+                                    !state.is_locked,
+                                )),
+                        ),
+                    )
+                    .when(show_provider, |row| {
+                        row.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_1()
+                                .text_size(px(12.0))
+                                .text_color(self.theme.muted_foreground.opacity(0.70))
+                                .child(
+                                    svg()
+                                        .path(provider_driver_icon_path(&model.driver_kind))
+                                        .size(px(12.0))
+                                        .text_color(self.theme.muted_foreground.opacity(0.80)),
+                                )
+                                .when_some(model.instance_accent_color.as_deref(), |line, color| {
+                                    line.child(div().w(px(6.0)).h(px(6.0)).rounded(px(3.0)).bg(
+                                        provider_accent_color(color).unwrap_or(self.theme.primary),
+                                    ))
+                                })
+                                .child(div().min_w_0().overflow_hidden().text_ellipsis().child(
+                                    if let Some(sub_provider) = model.sub_provider.as_deref() {
+                                        format!(
+                                            "{} · {}",
+                                            model.instance_display_name, sub_provider
+                                        )
+                                    } else {
+                                        model.instance_display_name.clone()
+                                    },
+                                )),
+                        )
+                    }),
+            )
+    }
+
+    fn model_provider_instance_icon(
+        &self,
+        entry: &ProviderInstanceEntry,
+        show_badge: bool,
+        container_size: Pixels,
+        icon_size: Pixels,
+    ) -> impl IntoElement {
+        let initials = provider_instance_initials(&entry.display_name);
+        let badge_initials = initials.clone();
+        let icon_path = provider_driver_icon_path(&entry.driver_kind);
+        div()
+            .relative()
+            .flex()
+            .items_center()
+            .justify_center()
+            .w(container_size)
+            .h(container_size)
+            .flex_shrink_0()
+            .text_color(self.theme.foreground)
+            .child(if icon_path.is_empty() {
+                div()
+                    .text_size(px(10.0))
+                    .font_weight(FontWeight(650.0))
+                    .child(initials)
+                    .into_any_element()
+            } else {
+                svg()
+                    .path(icon_path)
+                    .size(icon_size)
+                    .text_color(provider_icon_color(
+                        &entry.driver_kind,
+                        self.theme.foreground,
+                    ))
+                    .into_any_element()
+            })
+            .when(show_badge, |icon| {
+                icon.child(
+                    div()
+                        .absolute()
+                        .right(px(-2.0))
+                        .bottom(px(-2.0))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .min_w(px(12.0))
+                        .h(px(12.0))
+                        .rounded(px(6.0))
+                        .border_1()
+                        .border_color(self.theme.background)
+                        .bg(entry
+                            .accent_color
+                            .as_deref()
+                            .and_then(provider_accent_color)
+                            .unwrap_or(self.theme.accent))
+                        .px_0p5()
+                        .text_size(px(7.0))
+                        .font_weight(FontWeight(650.0))
+                        .text_color(if entry.accent_color.is_some() {
+                            hsla(0.0, 0.0, 1.0, 1.0)
+                        } else {
+                            self.theme.muted_foreground
+                        })
+                        .child(badge_initials),
+                )
+            })
     }
 
     fn composer_footer_separator(&self) -> impl IntoElement {
@@ -3464,10 +3965,6 @@ impl R3Shell {
                     .size_4()
                     .text_color(hsla(0.0, 0.0, 1.0, 1.0)),
             )
-    }
-
-    fn composer_model(&self) -> ComposerModel {
-        COMPOSER_MODELS[self.composer_model_index % COMPOSER_MODELS.len()]
     }
 
     fn runtime_mode(&self) -> ComposerRuntimeMode {
@@ -6722,6 +7219,11 @@ impl R3Shell {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.model_picker_open {
+            self.handle_model_picker_key(event, cx);
+            return;
+        }
+
         if event.keystroke.key.as_str() == "escape" && self.settings_select_open.is_some() {
             self.settings_select_open = None;
             cx.notify();
@@ -6992,6 +7494,63 @@ impl R3Shell {
         cx.notify();
     }
 
+    fn select_provider_model(&mut self, instance_id: &str, slug: &str) {
+        let Some(provider) = self
+            .snapshot
+            .providers
+            .iter()
+            .find(|provider| provider.instance_id == instance_id)
+        else {
+            return;
+        };
+        let selected_model =
+            resolve_selectable_model(&provider.driver, Some(slug), &provider.models)
+                .unwrap_or_else(|| slug.to_string());
+        self.snapshot.selected_provider_instance_id = instance_id.to_string();
+        self.snapshot.selected_model = selected_model;
+        self.model_picker_selected_instance =
+            ModelPickerSelectedInstance::Instance(instance_id.to_string());
+        self.model_picker_open = false;
+        self.model_picker_query.clear();
+    }
+
+    fn handle_model_picker_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        match event.keystroke.key.as_str() {
+            "escape" => {
+                self.model_picker_open = false;
+                self.model_picker_query.clear();
+                cx.notify();
+            }
+            "backspace" => {
+                self.model_picker_query.pop();
+                cx.notify();
+            }
+            "enter" => {
+                let state = self.current_model_picker_state();
+                if let Some(model) = state.filtered_models.first() {
+                    let instance_id = model.instance_id.clone();
+                    let slug = model.slug.clone();
+                    self.select_provider_model(&instance_id, &slug);
+                    cx.notify();
+                }
+            }
+            _ => {
+                let modifiers = event.keystroke.modifiers;
+                if modifiers.control || modifiers.alt || modifiers.platform || modifiers.function {
+                    return;
+                }
+                if let Some(text) = event.keystroke.key_char.as_deref()
+                    && text != "\n"
+                    && text != "\t"
+                {
+                    self.model_picker_query.push_str(text);
+                    cx.notify();
+                }
+            }
+        }
+        cx.stop_propagation();
+    }
+
     fn on_composer_key_down(
         &mut self,
         event: &KeyDownEvent,
@@ -7184,6 +7743,57 @@ fn editor_option_icon_path(option: EditorOption) -> &'static str {
         r3_core::EditorId::FileManager => "icons/folder-closed.svg",
         _ => "icons/terminal.svg",
     }
+}
+
+fn provider_driver_icon_path(driver: &str) -> &'static str {
+    match driver {
+        "codex" => "icons/openai.svg",
+        "claudeAgent" => "icons/claude-ai.svg",
+        "cursor" => "icons/cursor.svg",
+        "opencode" => "icons/opencode.svg",
+        _ => "icons/bot.svg",
+    }
+}
+
+fn provider_icon_color(driver: &str, fallback: gpui::Hsla) -> gpui::Hsla {
+    match driver {
+        "claudeAgent" => hsla(14.0 / 360.0, 0.62, 0.60, 1.0),
+        _ => fallback,
+    }
+}
+
+fn provider_accent_color(value: &str) -> Option<gpui::Hsla> {
+    let hex = value.trim().strip_prefix('#')?;
+    if hex.len() != 6 {
+        return None;
+    }
+    let red = u8::from_str_radix(&hex[0..2], 16).ok()? as f32 / 255.0;
+    let green = u8::from_str_radix(&hex[2..4], 16).ok()? as f32 / 255.0;
+    let blue = u8::from_str_radix(&hex[4..6], 16).ok()? as f32 / 255.0;
+    Some(rgb_to_hsla(red, green, blue))
+}
+
+fn rgb_to_hsla(red: f32, green: f32, blue: f32) -> gpui::Hsla {
+    let max = red.max(green).max(blue);
+    let min = red.min(green).min(blue);
+    let lightness = (max + min) / 2.0;
+    if (max - min).abs() < f32::EPSILON {
+        return hsla(0.0, 0.0, lightness, 1.0);
+    }
+    let delta = max - min;
+    let saturation = if lightness > 0.5 {
+        delta / (2.0 - max - min)
+    } else {
+        delta / (max + min)
+    };
+    let hue = if (max - red).abs() < f32::EPSILON {
+        ((green - blue) / delta + if green < blue { 6.0 } else { 0.0 }) / 6.0
+    } else if (max - green).abs() < f32::EPSILON {
+        ((blue - red) / delta + 2.0) / 6.0
+    } else {
+        ((red - green) / delta + 4.0) / 6.0
+    };
+    hsla(hue, saturation, lightness, 1.0)
 }
 
 fn pending_blue() -> gpui::Hsla {
@@ -7492,6 +8102,7 @@ pub fn open_main_window(cx: &mut App) {
         Ok("terminal-drawer") | Ok("terminal") => (R3Screen::TerminalDrawer, false),
         Ok("diff-panel") | Ok("diff") => (R3Screen::DiffPanel, false),
         Ok("branch-toolbar") | Ok("branch") => (R3Screen::BranchToolbar, false),
+        Ok("provider-model-picker") | Ok("model-picker") => (R3Screen::ProviderModelPicker, false),
         Ok("settings") => (R3Screen::Settings, false),
         _ => (R3Screen::Empty, false),
     };
@@ -7513,6 +8124,7 @@ pub fn open_main_window(cx: &mut App) {
                 R3Screen::TerminalDrawer => AppSnapshot::terminal_drawer_reference_state(),
                 R3Screen::DiffPanel => AppSnapshot::diff_panel_reference_state(),
                 R3Screen::BranchToolbar => AppSnapshot::branch_toolbar_reference_state(),
+                R3Screen::ProviderModelPicker => AppSnapshot::active_chat_reference_state(),
                 R3Screen::Empty | R3Screen::Settings => AppSnapshot::empty_reference_state(),
             };
             let shell = cx.new(|cx| {

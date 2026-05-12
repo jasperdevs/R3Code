@@ -119,7 +119,7 @@ cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light
 cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstream-draft-reference.png --actual reference\screenshots\r3code-draft-window.png --channel-tolerance 8 --ignore-rect 0,0,120,45 --max-different-pixels-percent 2
 ```
 
-Last measured result: `1.808%`.
+Last measured result: `1.814%`.
 
 The upstream draft reference is produced by the real T3 command-palette add-project flow, which creates a `/draft/$draftId` route and captures the active empty chat surface after dismissing unrelated provider-update toast chrome.
 
@@ -132,6 +132,7 @@ R3Code pending user input capture: `reference/screenshots/r3code-pending-user-in
 R3Code terminal drawer capture: `reference/screenshots/r3code-terminal-drawer-window.png`
 R3Code diff panel capture: `reference/screenshots/r3code-diff-panel-window.png`
 R3Code branch toolbar capture: `reference/screenshots/r3code-branch-toolbar-window.png`
+R3Code provider/model picker capture: `reference/screenshots/r3code-provider-model-picker-window.png`
 
 Command:
 
@@ -143,6 +144,7 @@ cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen terminal-drawer --output reference\screenshots\r3code-terminal-drawer-window.png
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen diff-panel --output reference\screenshots\r3code-diff-panel-window.png
 cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen branch-toolbar --output reference\screenshots\r3code-branch-toolbar-window.png
+cargo run -p xtask -- capture-r3code-window --allow-window-capture --theme light --screen provider-model-picker --output reference\screenshots\r3code-provider-model-picker-window.png
 ```
 
 This is a native Rust/GPUI smoke capture for the first server-thread state: active header title/project badge, project script and open-in controls, sidebar thread row, user/assistant timeline rows, changed-files summary tree, and composer chrome. It is intentionally not a parity comparison yet because the current upstream reference harness has deterministic captures for empty/draft/settings, but not a full active server-thread route with persisted messages. The next parity step is to add a source-backed upstream fixture capture for the same `ChatView.browser.tsx` message state.
@@ -152,6 +154,7 @@ The terminal drawer capture ports the upstream terminal UI state contract into R
 The diff panel capture ports the upstream diff route parser, turn-diff summary ordering, changed-file tree/stat contracts, and the inline `DiffPanelShell` header controls. It remains a smoke screen until the Rust side has the real checkpoint-diff query and patch renderer equivalent to `@pierre/diffs`.
 The branch toolbar capture ports upstream `BranchToolbar.logic.ts`, the shared remote-branch dedupe helpers, the environment/worktree labels, current/new-worktree mode resolution, branch trigger text, worktree selection target rules, and lucide `Monitor`, `Cloud`, `FolderGit`, and `FolderGit2` assets. It is still a GPUI smoke screen: the full combobox, async git ref query, create-ref, PR checkout, and real environment switching paths remain missing.
 The project script/open-in header controls port upstream `projectScripts.ts`, `ProjectScriptsControl.tsx` primary/add button behavior, `OpenInPicker.tsx` visibility rules, editor option labels, script runtime cwd/env helpers, and the lucide script icon set. The add/edit/delete dialogs, custom editor SVG icon set, keybinding capture UI, and real shell/project-script process execution are still missing.
+The provider/model picker capture ports upstream `ProviderModelPicker.tsx`, `ModelPickerContent.tsx`, `providerInstances.ts`, `modelOrdering.ts`, `modelPickerSearch.ts`, provider trigger labels, duplicate-instance badges, favorites/default sidebar selection, locked-provider filtering, selectable-model aliases, and the provider/lucide icon set used by the picker. It remains a GPUI smoke screen until the Rust app has live provider snapshots, editable provider settings, real favorites persistence, and a full combobox/input implementation.
 
 ## Current Settings Baseline
 
