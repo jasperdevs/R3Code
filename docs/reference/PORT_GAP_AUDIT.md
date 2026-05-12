@@ -46,7 +46,7 @@ These screens have automated reference captures and native GPUI comparisons:
 | Pending approval composer state | 5% |
 | Pending user input composer state | 5.1% |
 | Settings general | 6% |
-| Settings keybindings | 6.8% |
+| Settings keybindings | 6.5% |
 | Settings providers | 5% |
 | Settings source control | 6% |
 | Settings connections | 4% |
@@ -57,7 +57,7 @@ These screens have automated reference captures and native GPUI comparisons:
 | Settings dark selection | 6% |
 | Empty/no active thread, dark theme | 2% |
 
-The strongest parity areas are the empty shell, draft chat chrome, archive empty state, and settings back path. The weakest implemented area is now the diff panel renderer, followed by Keybindings; the diff panel gate is tightened to 8.8% after source-backed row geometry, stat-label, compact composer, and syntax-palette improvements, while the simplified renderer still carries browser-vs-GPUI and missing `@pierre/diffs` differences. The active-chat gate is tightened to 4.1% after the seeded active reference model matched upstream `gpt-5.4`. The draft-family gates now hide project-only header chrome in draft references, lowering draft to 1.75%, focused composer to 1.9%, composer menu to 4.5%, inline composer tokens to 2.2%, and provider/model picker to 4.45%. The pending-user-input composer now restores the upstream footer controls and tighter editor height, with the gate reduced to 5.1%.
+The strongest parity areas are the empty shell, draft chat chrome, archive empty state, and settings back path. The weakest implemented area is now the diff panel renderer, followed by Keybindings; the diff panel gate is tightened to 8.8% after source-backed row geometry, stat-label, compact composer, and syntax-palette improvements, while the simplified renderer still carries browser-vs-GPUI and missing `@pierre/diffs` differences. The active-chat gate is tightened to 4.1% after the seeded active reference model matched upstream `gpt-5.4`. The draft-family gates now hide project-only header chrome in draft references, lowering draft to 1.75%, focused composer to 1.9%, composer menu to 4.5%, inline composer tokens to 2.2%, and provider/model picker to 4.45%. Keybindings now ports upstream `Kbd` chip sizing/color/weight and `border-input` when triggers, lowering the gate to 6.5%. The pending-user-input composer now restores the upstream footer controls and tighter editor height, with the gate reduced to 5.1%.
 
 ## Major Missing Product Surfaces
 

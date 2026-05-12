@@ -6211,14 +6211,17 @@ impl R3Shell {
             };
             group = group.child(
                 div()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .h(px(20.0))
                     .min_w(px(24.0))
-                    .rounded(px(5.0))
-                    .bg(hsla(0.0, 0.0, 0.0, 0.05))
+                    .rounded(px(4.0))
+                    .bg(hsla(0.0, 0.0, 0.0, 0.04))
                     .px_1p5()
-                    .py_0p5()
                     .text_align(TextAlign::Center)
-                    .text_size(px(11.0))
-                    .font_weight(FontWeight(600.0))
+                    .text_size(px(12.0))
+                    .font_weight(FontWeight(500.0))
                     .text_color(self.theme.muted_foreground)
                     .child(label),
             );
@@ -6235,7 +6238,7 @@ impl R3Shell {
             .justify_between()
             .rounded(px(6.0))
             .border_1()
-            .border_color(self.theme.border)
+            .border_color(hsla(0.0, 0.0, 0.0, 0.10))
             .bg(self.theme.background)
             .px_2p5()
             .text_size(px(12.0))
@@ -6249,8 +6252,9 @@ impl R3Shell {
             .child(
                 svg()
                     .path("icons/chevron-down.svg")
-                    .size_3()
-                    .text_color(self.theme.muted_foreground),
+                    .w(px(14.0))
+                    .h(px(14.0))
+                    .text_color(self.theme.muted_foreground.opacity(0.60)),
             )
     }
 
