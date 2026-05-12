@@ -5,9 +5,10 @@ use gpui::{
     Window, div, hsla, point, px, svg,
 };
 use r3_core::{
-    APP_NAME, AppSnapshot, ChatMessage, DiffOpenValue, DiffRouteSearch, MAX_TERMINALS_PER_GROUP,
-    PendingApproval, PendingUserInputProgress, ProjectSummary, TerminalEvent, ThreadStatus,
-    TurnDiffFileChange, TurnDiffStat, TurnDiffSummary, TurnDiffTreeNode, build_turn_diff_tree,
+    APP_NAME, ActivityTone, AppSnapshot, ChatMessage, DiffOpenValue, DiffRouteSearch,
+    MAX_TERMINALS_PER_GROUP, MAX_VISIBLE_WORK_LOG_ENTRIES, PendingApproval,
+    PendingUserInputProgress, ProjectSummary, TerminalEvent, ThreadStatus, TurnDiffFileChange,
+    TurnDiffStat, TurnDiffSummary, TurnDiffTreeNode, WorkLogEntry, build_turn_diff_tree,
     close_thread_terminal, new_thread_terminal, parse_diff_route_search,
     set_pending_user_input_custom_answer, set_thread_active_terminal, set_thread_terminal_open,
     split_thread_terminal, summarize_turn_diff_stats, toggle_pending_user_input_option_selection,
@@ -134,6 +135,7 @@ pub enum R3Screen {
     Empty,
     Draft,
     ActiveChat,
+    RunningTurn,
     PendingApproval,
     PendingUserInput,
     TerminalDrawer,
@@ -438,6 +440,7 @@ impl Render for R3Shell {
             R3Screen::Empty
             | R3Screen::Draft
             | R3Screen::ActiveChat
+            | R3Screen::RunningTurn
             | R3Screen::PendingApproval
             | R3Screen::PendingUserInput
             | R3Screen::TerminalDrawer
@@ -839,6 +842,10 @@ impl R3Shell {
         for message in &self.snapshot.messages {
             content = content.child(self.timeline_message(message, cx));
         }
+        let work_log_entries = self.snapshot.work_log_entries();
+        if !work_log_entries.is_empty() {
+            content = content.child(self.work_log_group(&work_log_entries));
+        }
 
         div()
             .id("messages-timeline-scroll")
@@ -1147,6 +1154,116 @@ impl R3Shell {
                     .into_any_element()
             }
         }
+    }
+
+    fn work_log_group(&self, entries: &[WorkLogEntry]) -> impl IntoElement {
+        let has_overflow = entries.len() > MAX_VISIBLE_WORK_LOG_ENTRIES;
+        let visible_start = if has_overflow {
+            entries.len() - MAX_VISIBLE_WORK_LOG_ENTRIES
+        } else {
+            0
+        };
+        let visible_entries = &entries[visible_start..];
+        let only_tool_entries = entries.iter().all(|entry| entry.tone == ActivityTone::Tool);
+        let show_header = has_overflow || !only_tool_entries;
+        let group_label = if only_tool_entries {
+            "Tool calls"
+        } else {
+            "Work log"
+        };
+
+        let mut rows = div().flex().flex_col().gap(px(2.0));
+        for entry in visible_entries {
+            rows = rows.child(self.work_log_entry_row(entry));
+        }
+
+        div()
+            .id("timeline-work-log")
+            .rounded(px(12.0))
+            .border_1()
+            .border_color(self.theme.border.opacity(0.45))
+            .bg(self.theme.card.opacity(0.25))
+            .px_2()
+            .py_1p5()
+            .when(show_header, |group| {
+                group.child(
+                    div()
+                        .mb_1p5()
+                        .flex()
+                        .items_center()
+                        .justify_between()
+                        .gap_2()
+                        .px_0p5()
+                        .child(
+                            div()
+                                .text_size(px(9.0))
+                                .font_weight(FontWeight(650.0))
+                                .text_color(self.theme.muted_foreground.opacity(0.55))
+                                .child(format!("{group_label} ({})", entries.len()).to_uppercase()),
+                        )
+                        .when(has_overflow, |header| {
+                            header.child(
+                                div()
+                                    .text_size(px(9.0))
+                                    .font_weight(FontWeight(650.0))
+                                    .text_color(self.theme.muted_foreground.opacity(0.55))
+                                    .child(format!(
+                                        "SHOW {} MORE",
+                                        entries.len() - visible_entries.len()
+                                    )),
+                            )
+                        }),
+                )
+            })
+            .child(rows)
+    }
+
+    fn work_log_entry_row(&self, entry: &WorkLogEntry) -> impl IntoElement {
+        let heading = work_log_heading(entry);
+        let preview = work_log_preview(entry).filter(|preview| {
+            normalize_work_log_label(preview).to_ascii_lowercase()
+                != normalize_work_log_label(&heading).to_ascii_lowercase()
+        });
+        let display_text = preview
+            .as_ref()
+            .map(|preview| format!("{heading} - {preview}"))
+            .unwrap_or(heading);
+        let icon_path = work_log_icon_path(entry);
+        div()
+            .id(SharedString::from(format!("work-log-entry-{}", entry.id)))
+            .rounded(px(8.0))
+            .px_1()
+            .py_1()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .w(px(20.0))
+                            .h(px(20.0))
+                            .flex_shrink_0()
+                            .child(
+                                svg()
+                                    .path(icon_path)
+                                    .size_3()
+                                    .text_color(work_log_tone_color(entry.tone, self.theme)),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .overflow_hidden()
+                            .text_size(px(12.0))
+                            .text_color(work_log_tone_color(entry.tone, self.theme))
+                            .child(display_text),
+                    ),
+            )
     }
 
     fn terminal_drawer(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -6731,6 +6848,63 @@ fn short_timestamp_label(timestamp: &str) -> String {
     format!("{hour}:{minute:02} {suffix}")
 }
 
+fn normalize_work_log_label(value: &str) -> String {
+    let trimmed = value.trim();
+    for suffix in [" complete", " completed"] {
+        if trimmed.to_ascii_lowercase().ends_with(suffix) {
+            return trimmed[..trimmed.len() - suffix.len()].trim().to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
+fn work_log_heading(entry: &WorkLogEntry) -> String {
+    normalize_work_log_label(entry.tool_title.as_deref().unwrap_or(&entry.label))
+}
+
+fn work_log_preview(entry: &WorkLogEntry) -> Option<String> {
+    if let Some(command) = entry.command.as_ref().filter(|command| !command.is_empty()) {
+        return Some(command.clone());
+    }
+    if let Some(detail) = entry.detail.as_ref().filter(|detail| !detail.is_empty()) {
+        return Some(detail.clone());
+    }
+    let first_path = entry.changed_files.first()?;
+    if entry.changed_files.len() == 1 {
+        Some(first_path.clone())
+    } else {
+        Some(format!(
+            "{} +{} more",
+            first_path,
+            entry.changed_files.len() - 1
+        ))
+    }
+}
+
+fn work_log_icon_path(entry: &WorkLogEntry) -> &'static str {
+    if entry.command.is_some() || entry.item_type.as_deref() == Some("command_execution") {
+        return "icons/terminal.svg";
+    }
+    if !entry.changed_files.is_empty() || entry.item_type.as_deref() == Some("file_change") {
+        return "icons/pen-line.svg";
+    }
+    match entry.tone {
+        ActivityTone::Error => "icons/triangle-alert.svg",
+        ActivityTone::Thinking => "icons/bot.svg",
+        ActivityTone::Info | ActivityTone::Approval => "icons/check.svg",
+        ActivityTone::Tool => "icons/terminal.svg",
+    }
+}
+
+fn work_log_tone_color(tone: ActivityTone, theme: Theme) -> gpui::Hsla {
+    match tone {
+        ActivityTone::Error => diff_destructive_color().opacity(0.72),
+        ActivityTone::Tool => theme.muted_foreground.opacity(0.70),
+        ActivityTone::Thinking => theme.muted_foreground.opacity(0.50),
+        ActivityTone::Info | ActivityTone::Approval => theme.muted_foreground.opacity(0.55),
+    }
+}
+
 fn provider_instance_rows() -> &'static [ProviderInstanceRow] {
     &[
         ProviderInstanceRow {
@@ -6939,6 +7113,7 @@ pub fn open_main_window(cx: &mut App) {
         Ok("command-palette") => (R3Screen::Empty, true),
         Ok("draft") | Ok("chat-composer") => (R3Screen::Draft, false),
         Ok("active-chat") | Ok("chat") => (R3Screen::ActiveChat, false),
+        Ok("running-turn") | Ok("running") => (R3Screen::RunningTurn, false),
         Ok("pending-approval") | Ok("approval") => (R3Screen::PendingApproval, false),
         Ok("pending-user-input") | Ok("user-input") => (R3Screen::PendingUserInput, false),
         Ok("terminal-drawer") | Ok("terminal") => (R3Screen::TerminalDrawer, false),
@@ -6958,6 +7133,7 @@ pub fn open_main_window(cx: &mut App) {
             let snapshot = match screen {
                 R3Screen::Draft => AppSnapshot::draft_reference_state(),
                 R3Screen::ActiveChat => AppSnapshot::active_chat_reference_state(),
+                R3Screen::RunningTurn => AppSnapshot::running_turn_reference_state(),
                 R3Screen::PendingApproval => AppSnapshot::pending_approval_reference_state(),
                 R3Screen::PendingUserInput => AppSnapshot::pending_user_input_reference_state(),
                 R3Screen::TerminalDrawer => AppSnapshot::terminal_drawer_reference_state(),

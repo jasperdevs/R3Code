@@ -238,6 +238,12 @@ pub struct ActivityPayload {
     pub request_kind: Option<ApprovalRequestKind>,
     pub request_type: Option<String>,
     pub detail: Option<String>,
+    pub command: Option<String>,
+    pub raw_command: Option<String>,
+    pub changed_files: Vec<String>,
+    pub title: Option<String>,
+    pub item_type: Option<String>,
+    pub tool_call_id: Option<String>,
     pub questions: Vec<UserInputQuestion>,
 }
 
@@ -259,6 +265,25 @@ pub struct PendingApproval {
     pub request_kind: ApprovalRequestKind,
     pub created_at: String,
     pub detail: Option<String>,
+}
+
+pub const MAX_VISIBLE_WORK_LOG_ENTRIES: usize = 6;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkLogEntry {
+    pub id: String,
+    pub activity_kind: String,
+    pub created_at: String,
+    pub label: String,
+    pub detail: Option<String>,
+    pub command: Option<String>,
+    pub raw_command: Option<String>,
+    pub changed_files: Vec<String>,
+    pub tone: ActivityTone,
+    pub tool_title: Option<String>,
+    pub item_type: Option<String>,
+    pub request_kind: Option<ApprovalRequestKind>,
+    pub tool_call_id: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1149,6 +1174,159 @@ fn sorted_activities(activities: &[ThreadActivity]) -> Vec<ThreadActivity> {
     ordered
 }
 
+fn normalize_compact_tool_label(value: &str) -> String {
+    let trimmed = value.trim();
+    for suffix in [" complete", " completed"] {
+        if trimmed.to_ascii_lowercase().ends_with(suffix) {
+            return trimmed[..trimmed.len() - suffix.len()].trim().to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
+fn is_plan_boundary_tool_activity(activity: &ThreadActivity) -> bool {
+    matches!(activity.kind.as_str(), "tool.updated" | "tool.completed")
+        && activity
+            .payload
+            .detail
+            .as_deref()
+            .map(|detail| detail.starts_with("ExitPlanMode:"))
+            .unwrap_or(false)
+}
+
+fn is_excluded_work_log_activity(activity: &ThreadActivity) -> bool {
+    matches!(
+        activity.kind.as_str(),
+        "tool.started" | "task.started" | "context-window.updated"
+    ) || activity.summary == "Checkpoint captured"
+        || is_plan_boundary_tool_activity(activity)
+}
+
+fn work_log_tone(activity: &ThreadActivity) -> ActivityTone {
+    if activity.kind == "task.progress" {
+        ActivityTone::Thinking
+    } else if activity.tone == ActivityTone::Approval {
+        ActivityTone::Info
+    } else {
+        activity.tone
+    }
+}
+
+fn work_log_collapse_key(entry: &WorkLogEntry) -> Option<String> {
+    if let Some(tool_call_id) = entry.tool_call_id.as_ref() {
+        return Some(format!("tool:{tool_call_id}"));
+    }
+    let label = normalize_compact_tool_label(entry.tool_title.as_deref().unwrap_or(&entry.label));
+    let detail = entry.detail.as_deref().unwrap_or("").trim();
+    let item_type = entry.item_type.as_deref().unwrap_or("");
+    if label.is_empty() && detail.is_empty() && item_type.is_empty() {
+        None
+    } else {
+        Some(format!("{item_type}\u{1f}{label}\u{1f}{detail}"))
+    }
+}
+
+fn should_collapse_work_log_entries(previous: &WorkLogEntry, next: &WorkLogEntry) -> bool {
+    matches!(previous.activity_kind.as_str(), "tool.updated")
+        && matches!(
+            next.activity_kind.as_str(),
+            "tool.updated" | "tool.completed"
+        )
+        && work_log_collapse_key(previous).is_some()
+        && work_log_collapse_key(previous) == work_log_collapse_key(next)
+}
+
+fn merge_work_log_entries(previous: WorkLogEntry, next: WorkLogEntry) -> WorkLogEntry {
+    let mut changed_files = previous.changed_files;
+    for file in next.changed_files {
+        if !changed_files.iter().any(|existing| existing == &file) {
+            changed_files.push(file);
+        }
+    }
+
+    WorkLogEntry {
+        detail: next.detail.or(previous.detail),
+        command: next.command.or(previous.command),
+        raw_command: next.raw_command.or(previous.raw_command),
+        changed_files,
+        tool_title: next.tool_title.or(previous.tool_title),
+        item_type: next.item_type.or(previous.item_type),
+        request_kind: next.request_kind.or(previous.request_kind),
+        tool_call_id: next.tool_call_id.or(previous.tool_call_id),
+        ..next
+    }
+}
+
+fn thread_activity_to_work_log_entry(activity: ThreadActivity) -> WorkLogEntry {
+    let is_task_activity = activity.kind == "task.progress" || activity.kind == "task.completed";
+    let label = if is_task_activity {
+        activity
+            .payload
+            .title
+            .clone()
+            .or_else(|| activity.payload.detail.clone())
+            .unwrap_or_else(|| activity.summary.clone())
+    } else {
+        activity.summary.clone()
+    };
+    let tone = work_log_tone(&activity);
+    let request_kind = activity.payload.request_kind.or_else(|| {
+        activity
+            .payload
+            .request_type
+            .as_deref()
+            .and_then(ApprovalRequestKind::from_request_type)
+    });
+
+    WorkLogEntry {
+        id: activity.id,
+        activity_kind: activity.kind,
+        created_at: activity.created_at,
+        label,
+        detail: activity.payload.detail,
+        command: activity.payload.command,
+        raw_command: activity.payload.raw_command,
+        changed_files: activity.payload.changed_files,
+        tone,
+        tool_title: activity.payload.title,
+        item_type: activity.payload.item_type,
+        request_kind,
+        tool_call_id: activity.payload.tool_call_id,
+    }
+}
+
+pub fn derive_work_log_entries(
+    activities: &[ThreadActivity],
+    latest_turn_id: Option<&str>,
+) -> Vec<WorkLogEntry> {
+    let mut collapsed = Vec::<WorkLogEntry>::new();
+
+    for activity in sorted_activities(activities) {
+        if latest_turn_id
+            .map(|turn_id| activity.turn_id.as_deref() != Some(turn_id))
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        if is_excluded_work_log_activity(&activity) {
+            continue;
+        }
+        let entry = thread_activity_to_work_log_entry(activity);
+        if let Some(previous) = collapsed.pop() {
+            if should_collapse_work_log_entries(&previous, &entry) {
+                collapsed.push(merge_work_log_entries(previous, entry));
+            } else {
+                collapsed.push(previous);
+                collapsed.push(entry);
+            }
+        } else {
+            collapsed.push(entry);
+        }
+    }
+
+    collapsed
+}
+
 fn is_stale_pending_request_failure_detail(detail: Option<&str>) -> bool {
     let Some(detail) = detail else {
         return false;
@@ -1740,6 +1918,7 @@ pub struct AppSnapshot {
     pub projects: Vec<ProjectSummary>,
     pub threads: Vec<ThreadSummary>,
     pub messages: Vec<ChatMessage>,
+    pub activities: Vec<ThreadActivity>,
     pub draft_sessions: Vec<DraftSessionState>,
     pub pending_approvals: Vec<PendingApproval>,
     pub pending_user_inputs: Vec<PendingUserInput>,
@@ -1760,6 +1939,7 @@ impl AppSnapshot {
             projects: Vec::new(),
             threads: Vec::new(),
             messages: Vec::new(),
+            activities: Vec::new(),
             draft_sessions: Vec::new(),
             pending_approvals: Vec::new(),
             pending_user_inputs: Vec::new(),
@@ -1789,6 +1969,7 @@ impl AppSnapshot {
             }],
             threads: Vec::new(),
             messages: Vec::new(),
+            activities: Vec::new(),
             draft_sessions: vec![DraftSessionState {
                 draft_id,
                 thread_ref,
@@ -1856,6 +2037,7 @@ impl AppSnapshot {
                     "2026-03-04T12:00:12.000Z",
                 ),
             ],
+            activities: Vec::new(),
             draft_sessions: Vec::new(),
             pending_approvals: Vec::new(),
             pending_user_inputs: Vec::new(),
@@ -1873,6 +2055,69 @@ impl AppSnapshot {
     pub fn active_chat_reference_state() -> Self {
         let mut snapshot = Self::mock_reference_state();
         snapshot.turn_diff_summaries = reference_turn_diff_summaries();
+        snapshot
+    }
+
+    pub fn running_turn_reference_state() -> Self {
+        let mut snapshot = Self::mock_reference_state();
+        if let Some(thread) = snapshot.threads.first_mut() {
+            thread.status = ThreadStatus::Running;
+        }
+        snapshot.messages = vec![ChatMessage::user(
+            "msg-user-running-turn",
+            "Run the parity harness and fix any failures.",
+            "2026-03-04T12:10:00.000Z",
+        )];
+        snapshot.activities = vec![
+            ThreadActivity {
+                id: "activity-thinking".to_string(),
+                kind: "task.progress".to_string(),
+                summary: "Inspecting changed surfaces".to_string(),
+                tone: ActivityTone::Thinking,
+                payload: ActivityPayload {
+                    detail: Some("Reading upstream MessagesTimeline work log behavior".to_string()),
+                    ..ActivityPayload::default()
+                },
+                turn_id: Some("turn-running-1".to_string()),
+                sequence: Some(1),
+                created_at: "2026-03-04T12:10:02.000Z".to_string(),
+            },
+            ThreadActivity {
+                id: "activity-command".to_string(),
+                kind: "tool.completed".to_string(),
+                summary: "Ran command".to_string(),
+                tone: ActivityTone::Tool,
+                payload: ActivityPayload {
+                    command: Some("cargo test --workspace".to_string()),
+                    title: Some("terminal".to_string()),
+                    item_type: Some("command_execution".to_string()),
+                    tool_call_id: Some("tool-run-tests".to_string()),
+                    ..ActivityPayload::default()
+                },
+                turn_id: Some("turn-running-1".to_string()),
+                sequence: Some(2),
+                created_at: "2026-03-04T12:10:08.000Z".to_string(),
+            },
+            ThreadActivity {
+                id: "activity-files".to_string(),
+                kind: "tool.completed".to_string(),
+                summary: "Edited files".to_string(),
+                tone: ActivityTone::Tool,
+                payload: ActivityPayload {
+                    changed_files: vec![
+                        "crates/r3_core/src/lib.rs".to_string(),
+                        "crates/r3_ui/src/shell.rs".to_string(),
+                    ],
+                    title: Some("file change".to_string()),
+                    item_type: Some("file_change".to_string()),
+                    tool_call_id: Some("tool-edit-files".to_string()),
+                    ..ActivityPayload::default()
+                },
+                turn_id: Some("turn-running-1".to_string()),
+                sequence: Some(3),
+                created_at: "2026-03-04T12:10:14.000Z".to_string(),
+            },
+        ];
         snapshot
     }
 
@@ -2078,6 +2323,15 @@ impl AppSnapshot {
         self.terminal_state.terminal_open
     }
 
+    pub fn work_log_entries(&self) -> Vec<WorkLogEntry> {
+        let latest_turn_id = self
+            .activities
+            .iter()
+            .rev()
+            .find_map(|activity| activity.turn_id.as_deref());
+        derive_work_log_entries(&self.activities, latest_turn_id)
+    }
+
     pub fn diff_open(&self) -> bool {
         self.diff_route.diff.as_deref() == Some("1")
     }
@@ -2235,6 +2489,99 @@ mod tests {
                 .any(|summary| summary.assistant_message_id.as_deref()
                     == Some(assistant_message.id.as_str()))
         );
+    }
+
+    #[test]
+    fn running_turn_reference_state_exposes_work_log_entries() {
+        let snapshot = AppSnapshot::running_turn_reference_state();
+        let entries = snapshot.work_log_entries();
+
+        assert_eq!(snapshot.threads[0].status, ThreadStatus::Running);
+        assert_eq!(entries.len(), 3);
+        assert_eq!(entries[0].tone, ActivityTone::Thinking);
+        assert_eq!(
+            entries[1].command.as_deref(),
+            Some("cargo test --workspace")
+        );
+        assert_eq!(
+            entries[2].changed_files,
+            vec!["crates/r3_core/src/lib.rs", "crates/r3_ui/src/shell.rs"]
+        );
+    }
+
+    #[test]
+    fn derives_work_log_entries_with_upstream_filters_and_collapse() {
+        let activities = vec![
+            ThreadActivity {
+                id: "started".to_string(),
+                kind: "tool.started".to_string(),
+                summary: "Started command".to_string(),
+                tone: ActivityTone::Tool,
+                payload: ActivityPayload::default(),
+                turn_id: Some("turn-1".to_string()),
+                sequence: Some(1),
+                created_at: "2026-03-04T12:00:01.000Z".to_string(),
+            },
+            ThreadActivity {
+                id: "updated".to_string(),
+                kind: "tool.updated".to_string(),
+                summary: "Ran command".to_string(),
+                tone: ActivityTone::Tool,
+                payload: ActivityPayload {
+                    command: Some("cargo check".to_string()),
+                    title: Some("terminal".to_string()),
+                    item_type: Some("command_execution".to_string()),
+                    tool_call_id: Some("tool-1".to_string()),
+                    ..ActivityPayload::default()
+                },
+                turn_id: Some("turn-1".to_string()),
+                sequence: Some(2),
+                created_at: "2026-03-04T12:00:02.000Z".to_string(),
+            },
+            ThreadActivity {
+                id: "completed".to_string(),
+                kind: "tool.completed".to_string(),
+                summary: "Ran command completed".to_string(),
+                tone: ActivityTone::Tool,
+                payload: ActivityPayload {
+                    detail: Some("Finished in 1s".to_string()),
+                    title: Some("terminal".to_string()),
+                    item_type: Some("command_execution".to_string()),
+                    tool_call_id: Some("tool-1".to_string()),
+                    ..ActivityPayload::default()
+                },
+                turn_id: Some("turn-1".to_string()),
+                sequence: Some(3),
+                created_at: "2026-03-04T12:00:03.000Z".to_string(),
+            },
+            ThreadActivity {
+                id: "checkpoint".to_string(),
+                kind: "tool.completed".to_string(),
+                summary: "Checkpoint captured".to_string(),
+                tone: ActivityTone::Info,
+                payload: ActivityPayload::default(),
+                turn_id: Some("turn-1".to_string()),
+                sequence: Some(4),
+                created_at: "2026-03-04T12:00:04.000Z".to_string(),
+            },
+            ThreadActivity {
+                id: "other-turn".to_string(),
+                kind: "task.progress".to_string(),
+                summary: "Other turn".to_string(),
+                tone: ActivityTone::Thinking,
+                payload: ActivityPayload::default(),
+                turn_id: Some("turn-2".to_string()),
+                sequence: Some(5),
+                created_at: "2026-03-04T12:00:05.000Z".to_string(),
+            },
+        ];
+
+        let entries = derive_work_log_entries(&activities, Some("turn-1"));
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, "completed");
+        assert_eq!(entries[0].command.as_deref(), Some("cargo check"));
+        assert_eq!(entries[0].detail.as_deref(), Some("Finished in 1s"));
     }
 
     #[test]
