@@ -3041,7 +3041,51 @@ pub struct KeybindingRow {
     pub source: KeybindingSource,
     pub default_key: Option<String>,
     pub default_when: String,
+    pub binding: ResolvedKeybindingRule,
     pub conflicts: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BooleanOperator {
+    And,
+    Or,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WhenConditionParts {
+    pub identifier: String,
+    pub negated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeybindingTarget {
+    pub command: String,
+    pub key: String,
+    pub when: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeybindingUpsertInput {
+    pub command: String,
+    pub key: String,
+    pub when: Option<String>,
+    pub replace: Option<KeybindingTarget>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeybindingRowDraftState {
+    pub key_draft: String,
+    pub when_draft: Option<KeybindingWhenNode>,
+    pub is_recording: bool,
+    pub is_when_draft_valid: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct KeybindingRowDraftPatch {
+    pub key_draft: Option<String>,
+    pub when_draft: Option<Option<KeybindingWhenNode>>,
+    pub is_recording: Option<bool>,
+    pub is_when_draft_valid: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3648,6 +3692,121 @@ pub fn default_when_variable() -> String {
         .unwrap_or_else(|| "terminalFocus".to_string())
 }
 
+pub fn default_when_condition() -> KeybindingWhenNode {
+    KeybindingWhenNode::Identifier {
+        name: default_when_variable(),
+    }
+}
+
+pub fn default_when_group(operator: BooleanOperator) -> KeybindingWhenNode {
+    let right = KeybindingWhenNode::Not {
+        node: Box::new(default_when_condition()),
+    };
+    match operator {
+        BooleanOperator::And => KeybindingWhenNode::And {
+            left: Box::new(default_when_condition()),
+            right: Box::new(right),
+        },
+        BooleanOperator::Or => KeybindingWhenNode::Or {
+            left: Box::new(default_when_condition()),
+            right: Box::new(right),
+        },
+    }
+}
+
+pub fn flatten_when_children(
+    node: &KeybindingWhenNode,
+    operator: BooleanOperator,
+) -> Vec<KeybindingWhenNode> {
+    match (node, operator) {
+        (KeybindingWhenNode::And { left, right }, BooleanOperator::And)
+        | (KeybindingWhenNode::Or { left, right }, BooleanOperator::Or) => {
+            let mut children = flatten_when_children(left, operator);
+            children.extend(flatten_when_children(right, operator));
+            children
+        }
+        _ => vec![node.clone()],
+    }
+}
+
+pub fn build_when_expression_group(
+    children: &[KeybindingWhenNode],
+    operator: BooleanOperator,
+) -> Option<KeybindingWhenNode> {
+    let first = children.first()?.clone();
+    Some(
+        children
+            .iter()
+            .skip(1)
+            .cloned()
+            .fold(first, |left, right| match operator {
+                BooleanOperator::And => KeybindingWhenNode::And {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+                BooleanOperator::Or => KeybindingWhenNode::Or {
+                    left: Box::new(left),
+                    right: Box::new(right),
+                },
+            }),
+    )
+}
+
+pub fn condition_parts(node: &KeybindingWhenNode) -> Option<WhenConditionParts> {
+    match node {
+        KeybindingWhenNode::Identifier { name } => Some(WhenConditionParts {
+            identifier: name.clone(),
+            negated: false,
+        }),
+        KeybindingWhenNode::Not { node } => match node.as_ref() {
+            KeybindingWhenNode::Identifier { name } => Some(WhenConditionParts {
+                identifier: name.clone(),
+                negated: true,
+            }),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+pub fn set_condition_identifier(node: &KeybindingWhenNode, identifier: &str) -> KeybindingWhenNode {
+    let Some(parts) = condition_parts(node) else {
+        return node.clone();
+    };
+    let next = KeybindingWhenNode::Identifier {
+        name: identifier.to_string(),
+    };
+    if parts.negated {
+        KeybindingWhenNode::Not {
+            node: Box::new(next),
+        }
+    } else {
+        next
+    }
+}
+
+pub fn set_condition_negated(node: &KeybindingWhenNode, negated: bool) -> KeybindingWhenNode {
+    let Some(parts) = condition_parts(node) else {
+        return if negated {
+            KeybindingWhenNode::Not {
+                node: Box::new(node.clone()),
+            }
+        } else {
+            node.clone()
+        };
+    };
+    let identifier = KeybindingWhenNode::Identifier {
+        name: parts.identifier,
+    };
+    if negated {
+        KeybindingWhenNode::Not {
+            node: Box::new(identifier),
+        }
+    } else {
+        identifier
+    }
+}
+
 pub fn is_known_when_variable(identifier: &str) -> bool {
     build_when_variable_options()
         .iter()
@@ -3765,6 +3924,7 @@ pub fn build_keybinding_rows(
                         .as_ref()
                         .and_then(|binding| binding.when_ast.as_ref()),
                 ),
+                binding: binding.clone(),
                 conflicts: Vec::new(),
             }
         })
@@ -3803,6 +3963,111 @@ pub fn build_keybinding_rows(
                 || source.contains(&normalized_query)
         })
         .collect()
+}
+
+pub fn create_keybinding_row_draft(row: &KeybindingRow) -> KeybindingRowDraftState {
+    KeybindingRowDraftState {
+        key_draft: row.key.clone(),
+        when_draft: row.binding.when_ast.clone(),
+        is_recording: false,
+        is_when_draft_valid: true,
+    }
+}
+
+pub fn new_keybinding_row_draft() -> KeybindingRowDraftState {
+    KeybindingRowDraftState {
+        key_draft: String::new(),
+        when_draft: None,
+        is_recording: false,
+        is_when_draft_valid: true,
+    }
+}
+
+pub fn apply_keybinding_row_draft_patch(
+    state: &KeybindingRowDraftState,
+    patch: KeybindingRowDraftPatch,
+) -> KeybindingRowDraftState {
+    KeybindingRowDraftState {
+        key_draft: patch.key_draft.unwrap_or_else(|| state.key_draft.clone()),
+        when_draft: patch.when_draft.unwrap_or_else(|| state.when_draft.clone()),
+        is_recording: patch.is_recording.unwrap_or(state.is_recording),
+        is_when_draft_valid: patch
+            .is_when_draft_valid
+            .unwrap_or(state.is_when_draft_valid),
+    }
+}
+
+pub fn keybinding_row_when_draft_expression(state: &KeybindingRowDraftState) -> String {
+    when_ast_to_expression(state.when_draft.as_ref())
+}
+
+pub fn keybinding_row_is_dirty(row: &KeybindingRow, state: &KeybindingRowDraftState) -> bool {
+    state.key_draft != row.key || keybinding_row_when_draft_expression(state) != row.when
+}
+
+pub fn keybinding_row_can_reset(row: &KeybindingRow) -> bool {
+    row.source == KeybindingSource::Custom && row.default_key.is_some()
+}
+
+pub fn keybinding_row_can_remove(row: &KeybindingRow) -> bool {
+    row.source != KeybindingSource::Default
+}
+
+pub fn keybinding_row_show_pill(row: &KeybindingRow, state: &KeybindingRowDraftState) -> bool {
+    !state.is_recording
+        && state.key_draft == row.key
+        && !row.key.is_empty()
+        && !keybinding_row_is_dirty(row, state)
+}
+
+pub fn row_keybinding_target(row: &KeybindingRow) -> KeybindingTarget {
+    KeybindingTarget {
+        command: row.command.clone(),
+        key: row.key.clone(),
+        when: (!row.when.trim().is_empty()).then(|| row.when.clone()),
+    }
+}
+
+pub fn keybinding_row_save_input(
+    row: &KeybindingRow,
+    state: &KeybindingRowDraftState,
+) -> Option<KeybindingUpsertInput> {
+    if state.key_draft.trim().is_empty() || !state.is_when_draft_valid {
+        return None;
+    }
+    let when_expression = keybinding_row_when_draft_expression(state);
+    Some(KeybindingUpsertInput {
+        command: row.command.clone(),
+        key: state.key_draft.trim().to_string(),
+        when: (!when_expression.trim().is_empty()).then(|| when_expression.trim().to_string()),
+        replace: Some(row_keybinding_target(row)),
+    })
+}
+
+pub fn new_keybinding_save_input(
+    command: &str,
+    state: &KeybindingRowDraftState,
+) -> Option<KeybindingUpsertInput> {
+    if command.is_empty() || state.key_draft.trim().is_empty() || !state.is_when_draft_valid {
+        return None;
+    }
+    let when_expression = keybinding_row_when_draft_expression(state);
+    Some(KeybindingUpsertInput {
+        command: command.to_string(),
+        key: state.key_draft.trim().to_string(),
+        when: (!when_expression.trim().is_empty()).then(|| when_expression.trim().to_string()),
+        replace: None,
+    })
+}
+
+pub fn keybinding_reset_input(row: &KeybindingRow) -> Option<KeybindingUpsertInput> {
+    let default_key = row.default_key.as_ref()?;
+    Some(KeybindingUpsertInput {
+        command: row.command.clone(),
+        key: default_key.clone(),
+        when: (!row.default_when.trim().is_empty()).then(|| row.default_when.clone()),
+        replace: Some(row_keybinding_target(row)),
+    })
 }
 
 pub fn build_keybinding_command_options(keybindings: &[ResolvedKeybindingRule]) -> Vec<String> {
@@ -11299,6 +11564,135 @@ mod tests {
         assert_eq!(
             keybinding_conflict_labels(&rows, &rows[0].id, "mod+n", ""),
             vec!["Chat: New Local".to_string()]
+        );
+    }
+
+    #[test]
+    fn keybinding_editor_draft_helpers_match_upstream_panel_state() {
+        let default_group = default_when_group(BooleanOperator::And);
+        assert_eq!(
+            when_ast_to_expression(Some(&default_group)),
+            "terminalFocus && !terminalFocus"
+        );
+        assert_eq!(
+            flatten_when_children(&default_group, BooleanOperator::And)
+                .iter()
+                .map(|node| when_ast_to_expression(Some(node)))
+                .collect::<Vec<_>>(),
+            vec!["terminalFocus", "!terminalFocus"]
+        );
+        assert_eq!(
+            when_ast_to_expression(
+                build_when_expression_group(
+                    &flatten_when_children(&default_group, BooleanOperator::And),
+                    BooleanOperator::Or,
+                )
+                .as_ref()
+            ),
+            "terminalFocus || !terminalFocus"
+        );
+
+        let condition = KeybindingWhenNode::Not {
+            node: Box::new(KeybindingWhenNode::Identifier {
+                name: "terminalFocus".to_string(),
+            }),
+        };
+        assert_eq!(
+            condition_parts(&condition),
+            Some(WhenConditionParts {
+                identifier: "terminalFocus".to_string(),
+                negated: true,
+            })
+        );
+        assert_eq!(
+            set_condition_identifier(&condition, "modelPickerOpen"),
+            KeybindingWhenNode::Not {
+                node: Box::new(KeybindingWhenNode::Identifier {
+                    name: "modelPickerOpen".to_string(),
+                }),
+            }
+        );
+        assert_eq!(
+            set_condition_negated(&condition, false),
+            KeybindingWhenNode::Identifier {
+                name: "terminalFocus".to_string(),
+            }
+        );
+
+        let rows = build_keybinding_rows(
+            &[ResolvedKeybindingRule {
+                command: "terminal.toggle".to_string(),
+                shortcut: parse_keybinding_shortcut("mod+j").unwrap(),
+                when_ast: Some(parse_keybinding_when_expression("!terminalFocus").unwrap()),
+            }],
+            "terminal",
+        );
+        let row = &rows[0];
+        let draft = create_keybinding_row_draft(row);
+        assert!(keybinding_row_show_pill(row, &draft));
+        assert!(!keybinding_row_is_dirty(row, &draft));
+        assert!(keybinding_row_can_reset(row));
+        assert!(keybinding_row_can_remove(row));
+        assert_eq!(
+            row_keybinding_target(row),
+            KeybindingTarget {
+                command: "terminal.toggle".to_string(),
+                key: "mod+j".to_string(),
+                when: Some("!terminalFocus".to_string()),
+            }
+        );
+
+        let changed = apply_keybinding_row_draft_patch(
+            &draft,
+            KeybindingRowDraftPatch {
+                key_draft: Some(" mod+shift+j ".to_string()),
+                ..KeybindingRowDraftPatch::default()
+            },
+        );
+        assert!(keybinding_row_is_dirty(row, &changed));
+        assert_eq!(
+            keybinding_row_save_input(row, &changed),
+            Some(KeybindingUpsertInput {
+                command: "terminal.toggle".to_string(),
+                key: "mod+shift+j".to_string(),
+                when: Some("!terminalFocus".to_string()),
+                replace: Some(KeybindingTarget {
+                    command: "terminal.toggle".to_string(),
+                    key: "mod+j".to_string(),
+                    when: Some("!terminalFocus".to_string()),
+                }),
+            })
+        );
+        assert_eq!(
+            keybinding_reset_input(row),
+            Some(KeybindingUpsertInput {
+                command: "terminal.toggle".to_string(),
+                key: "mod+j".to_string(),
+                when: None,
+                replace: Some(KeybindingTarget {
+                    command: "terminal.toggle".to_string(),
+                    key: "mod+j".to_string(),
+                    when: Some("!terminalFocus".to_string()),
+                }),
+            })
+        );
+
+        let new_draft = apply_keybinding_row_draft_patch(
+            &new_keybinding_row_draft(),
+            KeybindingRowDraftPatch {
+                key_draft: Some(" mod+k ".to_string()),
+                when_draft: Some(Some(default_group)),
+                ..KeybindingRowDraftPatch::default()
+            },
+        );
+        assert_eq!(
+            new_keybinding_save_input("commandPalette.toggle", &new_draft),
+            Some(KeybindingUpsertInput {
+                command: "commandPalette.toggle".to_string(),
+                key: "mod+k".to_string(),
+                when: Some("terminalFocus && !terminalFocus".to_string()),
+                replace: None,
+            })
         );
     }
 
