@@ -608,7 +608,7 @@ impl R3Shell {
             .child(self.toolbar())
             .child(self.timeline());
 
-        if self.screen == R3Screen::Draft || !self.snapshot.messages.is_empty() {
+        if self.snapshot.renders_chat_view() {
             panel = panel.child(self.composer(cx));
         }
 
@@ -627,7 +627,11 @@ impl R3Shell {
                 div()
                     .text_size(px(14.0))
                     .text_color(self.theme.muted_foreground)
-                    .child("No active thread"),
+                    .child(if self.snapshot.renders_chat_view() {
+                        "New thread"
+                    } else {
+                        "No active thread"
+                    }),
             )
     }
 
@@ -641,6 +645,17 @@ impl R3Shell {
             .p_4();
 
         if self.snapshot.messages.is_empty() {
+            if self.snapshot.renders_chat_view() {
+                return timeline
+                    .child(
+                        div()
+                            .text_size(px(14.0))
+                            .text_color(self.theme.muted_foreground.opacity(0.30))
+                            .child("Send a message to start the conversation."),
+                    )
+                    .into_any_element();
+            }
+
             return timeline
                 .child(
                     div()
@@ -4559,18 +4574,16 @@ pub fn open_main_window(cx: &mut App) {
             ..Default::default()
         },
         move |window, cx| {
+            let snapshot = match screen {
+                R3Screen::Draft => AppSnapshot::draft_reference_state(),
+                R3Screen::Empty | R3Screen::Settings => AppSnapshot::empty_reference_state(),
+            };
             let shell = cx.new(|cx| {
                 cx.observe_window_appearance(window, |_, window, _| {
                     window.refresh();
                 })
                 .detach();
-                R3Shell::new(
-                    AppSnapshot::empty_reference_state(),
-                    screen,
-                    theme_mode,
-                    command_palette_open,
-                    cx,
-                )
+                R3Shell::new(snapshot, screen, theme_mode, command_palette_open, cx)
             });
             if command_palette_open {
                 let focus_handle = shell.read(cx).command_palette_focus_handle.clone();
