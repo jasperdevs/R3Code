@@ -15916,6 +15916,55 @@ pub fn animated_height_style(state: AnimatedHeightState) -> Option<AnimatedHeigh
     })
 }
 
+pub const APP_SIDEBAR_PROVIDER_CLASS_NAME: &str = "h-dvh! min-h-0!";
+pub const APP_SIDEBAR_CLASS_NAME: &str = "border-r border-border bg-card text-foreground";
+pub const THREAD_SIDEBAR_WIDTH_STORAGE_KEY: &str = "chat_thread_sidebar_width";
+pub const THREAD_SIDEBAR_MIN_WIDTH: f64 = 13.0 * 16.0;
+pub const THREAD_MAIN_CONTENT_MIN_WIDTH: f64 = 40.0 * 16.0;
+pub const DESKTOP_MENU_ACTION_OPEN_SETTINGS: &str = "open-settings";
+pub const SETTINGS_ROUTE_PATH: &str = "/settings";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AppSidebarWindowListener {
+    pub event_name: &'static str,
+    pub capture: bool,
+    pub action: AppSidebarWindowListenerAction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppSidebarWindowListenerAction {
+    SyncShortcutModifierState,
+    ClearShortcutModifierState,
+}
+
+pub fn app_sidebar_layout_window_listeners() -> [AppSidebarWindowListener; 3] {
+    [
+        AppSidebarWindowListener {
+            event_name: "keydown",
+            capture: true,
+            action: AppSidebarWindowListenerAction::SyncShortcutModifierState,
+        },
+        AppSidebarWindowListener {
+            event_name: "keyup",
+            capture: true,
+            action: AppSidebarWindowListenerAction::SyncShortcutModifierState,
+        },
+        AppSidebarWindowListener {
+            event_name: "blur",
+            capture: false,
+            action: AppSidebarWindowListenerAction::ClearShortcutModifierState,
+        },
+    ]
+}
+
+pub fn should_accept_thread_sidebar_width(wrapper_client_width: f64, next_width: f64) -> bool {
+    wrapper_client_width - next_width >= THREAD_MAIN_CONTENT_MIN_WIDTH
+}
+
+pub fn app_sidebar_layout_menu_action_route(action: &str) -> Option<&'static str> {
+    (action == DESKTOP_MENU_ACTION_OPEN_SETTINGS).then_some(SETTINGS_ROUTE_PATH)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandPaletteItemKind {
     Action,
@@ -39712,6 +39761,50 @@ mod tests {
                 is_clipping: false,
             }
         );
+    }
+
+    #[test]
+    fn app_sidebar_layout_contract_matches_upstream_component() {
+        assert_eq!(APP_SIDEBAR_PROVIDER_CLASS_NAME, "h-dvh! min-h-0!");
+        assert_eq!(
+            APP_SIDEBAR_CLASS_NAME,
+            "border-r border-border bg-card text-foreground"
+        );
+        assert_eq!(
+            THREAD_SIDEBAR_WIDTH_STORAGE_KEY,
+            "chat_thread_sidebar_width"
+        );
+        assert_eq!(THREAD_SIDEBAR_MIN_WIDTH, 208.0);
+        assert_eq!(THREAD_MAIN_CONTENT_MIN_WIDTH, 640.0);
+
+        assert_eq!(
+            app_sidebar_layout_window_listeners(),
+            [
+                AppSidebarWindowListener {
+                    event_name: "keydown",
+                    capture: true,
+                    action: AppSidebarWindowListenerAction::SyncShortcutModifierState,
+                },
+                AppSidebarWindowListener {
+                    event_name: "keyup",
+                    capture: true,
+                    action: AppSidebarWindowListenerAction::SyncShortcutModifierState,
+                },
+                AppSidebarWindowListener {
+                    event_name: "blur",
+                    capture: false,
+                    action: AppSidebarWindowListenerAction::ClearShortcutModifierState,
+                },
+            ]
+        );
+
+        assert!(should_accept_thread_sidebar_width(900.0, 260.0));
+        assert!(!should_accept_thread_sidebar_width(899.0, 260.0));
+        assert_eq!(
+            app_sidebar_layout_menu_action_route("open-settings"),
+            Some("/settings")
+        );
+        assert_eq!(app_sidebar_layout_menu_action_route("new-thread"), None);
     }
 
     #[test]
