@@ -9579,6 +9579,92 @@ pub struct WorkLogEntry {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AssistantMessageCopyState {
+    pub text: Option<String>,
+    pub visible: bool,
+}
+
+pub fn compute_message_duration_start(messages: &[ChatMessage]) -> BTreeMap<String, String> {
+    let mut result = BTreeMap::new();
+    let mut last_boundary: Option<String> = None;
+    for message in messages {
+        if message.role == MessageRole::User {
+            last_boundary = Some(message.created_at.clone());
+        }
+        result.insert(
+            message.id.clone(),
+            last_boundary
+                .clone()
+                .unwrap_or_else(|| message.created_at.clone()),
+        );
+        if message.role == MessageRole::Assistant {
+            if let Some(completed_at) = message.completed_at.as_ref() {
+                last_boundary = Some(completed_at.clone());
+            }
+        }
+    }
+    result
+}
+
+pub fn normalize_compact_tool_label(value: &str) -> String {
+    let trimmed = value.trim_end();
+    for suffix in ["complete", "completed"] {
+        if trimmed.len() <= suffix.len() {
+            continue;
+        }
+        let split_at = trimmed.len() - suffix.len();
+        let (prefix, candidate) = trimmed.split_at(split_at);
+        if candidate.eq_ignore_ascii_case(suffix)
+            && prefix
+                .chars()
+                .last()
+                .is_some_and(|character| character.is_whitespace())
+        {
+            return prefix.trim().to_string();
+        }
+    }
+    trimmed.trim().to_string()
+}
+
+pub fn resolve_assistant_message_copy_state(
+    text: Option<&str>,
+    show_copy_button: bool,
+    streaming: bool,
+) -> AssistantMessageCopyState {
+    let text = text
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    AssistantMessageCopyState {
+        visible: show_copy_button && text.is_some() && !streaming,
+        text,
+    }
+}
+
+pub fn derive_terminal_assistant_message_ids(messages: &[ChatMessage]) -> BTreeSet<String> {
+    let mut last_assistant_message_id_by_response_key = BTreeMap::new();
+    let mut null_turn_response_index = 0usize;
+    for message in messages {
+        if message.role == MessageRole::User {
+            null_turn_response_index += 1;
+            continue;
+        }
+        if message.role != MessageRole::Assistant {
+            continue;
+        }
+        let response_key = message
+            .turn_id
+            .as_ref()
+            .map(|turn_id| format!("turn:{turn_id}"))
+            .unwrap_or_else(|| format!("unkeyed:{null_turn_response_index}"));
+        last_assistant_message_id_by_response_key.insert(response_key, message.id.clone());
+    }
+    last_assistant_message_id_by_response_key
+        .into_values()
+        .collect()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UserInputQuestionOption {
     pub label: String,
     pub description: String,
@@ -10464,16 +10550,6 @@ fn sorted_activities(activities: &[ThreadActivity]) -> Vec<ThreadActivity> {
             .then_with(|| left.id.cmp(&right.id)),
     });
     ordered
-}
-
-fn normalize_compact_tool_label(value: &str) -> String {
-    let trimmed = value.trim();
-    for suffix in [" complete", " completed"] {
-        if trimmed.to_ascii_lowercase().ends_with(suffix) {
-            return trimmed[..trimmed.len() - suffix.len()].trim().to_string();
-        }
-    }
-    trimmed.to_string()
 }
 
 fn is_plan_boundary_tool_activity(activity: &ThreadActivity) -> bool {
@@ -16057,6 +16133,136 @@ mod tests {
         assert_eq!(entries[0].id, "completed");
         assert_eq!(entries[0].command.as_deref(), Some("cargo check"));
         assert_eq!(entries[0].detail.as_deref(), Some("Finished in 1s"));
+    }
+
+    #[test]
+    fn messages_timeline_logic_helpers_match_upstream() {
+        let message = |id: &str,
+                       role: MessageRole,
+                       turn_id: Option<&str>,
+                       created_at: &str,
+                       completed_at: Option<&str>,
+                       streaming: bool| {
+            ChatMessage {
+                id: id.to_string(),
+                role,
+                text: id.to_string(),
+                attachments: Vec::new(),
+                turn_id: turn_id.map(str::to_string),
+                created_at: created_at.to_string(),
+                completed_at: completed_at.map(str::to_string),
+                streaming,
+            }
+        };
+        let messages = vec![
+            message(
+                "u1",
+                MessageRole::User,
+                None,
+                "2026-01-01T00:00:00Z",
+                None,
+                false,
+            ),
+            message(
+                "a1",
+                MessageRole::Assistant,
+                Some("turn-1"),
+                "2026-01-01T00:00:30Z",
+                Some("2026-01-01T00:00:30Z"),
+                false,
+            ),
+            message(
+                "a2",
+                MessageRole::Assistant,
+                Some("turn-1"),
+                "2026-01-01T00:00:55Z",
+                Some("2026-01-01T00:00:55Z"),
+                false,
+            ),
+            message(
+                "u2",
+                MessageRole::User,
+                None,
+                "2026-01-01T00:01:00Z",
+                None,
+                false,
+            ),
+            message(
+                "a3",
+                MessageRole::Assistant,
+                None,
+                "2026-01-01T00:01:20Z",
+                None,
+                true,
+            ),
+            message(
+                "a4",
+                MessageRole::Assistant,
+                None,
+                "2026-01-01T00:01:30Z",
+                Some("2026-01-01T00:01:40Z"),
+                false,
+            ),
+        ];
+
+        let duration_start = compute_message_duration_start(&messages);
+        assert_eq!(
+            duration_start.get("a1").map(String::as_str),
+            Some("2026-01-01T00:00:00Z")
+        );
+        assert_eq!(
+            duration_start.get("a2").map(String::as_str),
+            Some("2026-01-01T00:00:30Z")
+        );
+        assert_eq!(
+            duration_start.get("a3").map(String::as_str),
+            Some("2026-01-01T00:01:00Z")
+        );
+        assert_eq!(
+            duration_start.get("a4").map(String::as_str),
+            Some("2026-01-01T00:01:00Z")
+        );
+
+        assert_eq!(
+            normalize_compact_tool_label("  Ran command completed "),
+            "Ran command"
+        );
+        assert_eq!(
+            normalize_compact_tool_label("Read file complete"),
+            "Read file"
+        );
+        assert_eq!(
+            normalize_compact_tool_label("Complete analysis"),
+            "Complete analysis"
+        );
+
+        assert_eq!(
+            resolve_assistant_message_copy_state(Some(" Ship it "), true, false),
+            AssistantMessageCopyState {
+                text: Some("Ship it".to_string()),
+                visible: true,
+            }
+        );
+        assert_eq!(
+            resolve_assistant_message_copy_state(Some("Still streaming"), true, true),
+            AssistantMessageCopyState {
+                text: Some("Still streaming".to_string()),
+                visible: false,
+            }
+        );
+        assert_eq!(
+            resolve_assistant_message_copy_state(Some("   "), true, false),
+            AssistantMessageCopyState {
+                text: None,
+                visible: false,
+            }
+        );
+
+        let terminal_ids = derive_terminal_assistant_message_ids(&messages);
+        assert!(!terminal_ids.contains("a1"));
+        assert!(terminal_ids.contains("a2"));
+        assert!(!terminal_ids.contains("a3"));
+        assert!(terminal_ids.contains("a4"));
     }
 
     #[test]

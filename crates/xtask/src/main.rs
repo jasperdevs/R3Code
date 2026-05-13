@@ -1680,6 +1680,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core markdown`; `cargo check --workspace`",
             "Port full ReactMarkdown/remark-gfm coverage, Shiki/diff highlighter cache, clipboard copy timers, preferred-editor open actions, context menu, tooltips, skill inline rendering, browser interaction tests, and exact CSS pixel styling.",
         )
+    } else if path == "apps/web/src/components/chat/MessagesTimeline.logic.ts"
+        || path == "apps/web/src/components/chat/MessagesTimeline.logic.test.ts"
+    {
+        (
+            "message timeline duration boundaries, compact work labels, assistant copy visibility, and terminal assistant-message selection helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core messages_timeline_logic`",
+            "Port full timeline row derivation, stable row identity reuse, proposed-plan/work grouping integration, browser rendering, and exact UI wiring.",
+        )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
             "logical project path normalization, physical/grouping/order keys, repository-scoped keys, settings override resolution, ref fallback, and group-label helpers in crates/r3_core/src/lib.rs",
