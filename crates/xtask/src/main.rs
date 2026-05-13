@@ -1711,6 +1711,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core copy_to_clipboard_helpers_match_upstream_contract`",
             "Wire helper into live GPUI clipboard actions and real async clipboard/write timer behavior.",
         )
+    } else if path == "apps/web/src/hooks/useLocalStorage.ts" {
+        (
+            "R3-branded same-tab local-storage change event, isomorphic in-memory storage behavior, JSON encode/decode helpers, initial read fallback/error logging, null-as-remove setter plan, queued custom change event, key-change resync, storage/custom subscription names, and matching event filters in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core local_storage_helpers_match_upstream_contract_with_r3_event_name`",
+            "Wire helpers into live GPUI/local persistence hooks with schema-backed decode/encode and actual same-tab/cross-tab subscriptions.",
+        )
     } else if path == "apps/web/src/hooks/useTheme.ts" {
         (
             "R3-branded theme storage key, stored theme parsing, default/server snapshot, system-dark resolution, browser chrome surface/color/meta decisions, DOM apply plan, desktop bridge de-dupe/rejection handling, set-theme emission, subscription keys, storage-event filter, and system preference change behavior in crates/r3_core/src/lib.rs",

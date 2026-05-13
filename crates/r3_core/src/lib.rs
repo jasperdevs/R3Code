@@ -4374,6 +4374,42 @@ pub struct WebThemeSubscribePlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IsomorphicLocalStorage {
+    entries: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalStorageChangeEventPlan {
+    pub event_name: &'static str,
+    pub key: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum LocalStorageWritePlan {
+    Set { key: String, encoded_value: String },
+    Remove { key: String },
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LocalStorageSetPlan {
+    pub returned_value: serde_json::Value,
+    pub write: LocalStorageWritePlan,
+    pub queued_change_event: Option<LocalStorageChangeEventPlan>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LocalStorageReadResult {
+    pub value: serde_json::Value,
+    pub logged_error_scope: Option<&'static str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalStorageSubscriptionPlan {
+    pub storage_event_name: &'static str,
+    pub custom_event_name: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelPickerState {
     pub active_entry: Option<ProviderInstanceEntry>,
     pub trigger_title: String,
@@ -8386,6 +8422,180 @@ pub fn should_apply_web_theme_storage_event(key: Option<&str>) -> bool {
 
 pub fn should_apply_system_theme_change(stored_theme: WebThemePreference) -> bool {
     stored_theme == WebThemePreference::System
+}
+
+pub const LOCAL_STORAGE_CHANGE_EVENT: &str = "r3code:local_storage_change";
+pub const LOCAL_STORAGE_ERROR_SCOPE: &str = "[LOCALSTORAGE] Error:";
+
+impl IsomorphicLocalStorage {
+    pub fn new() -> Self {
+        Self {
+            entries: Vec::new(),
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+
+    pub fn get_item(&self, key: &str) -> Option<&str> {
+        self.entries
+            .iter()
+            .find(|(entry_key, _)| entry_key == key)
+            .map(|(_, value)| value.as_str())
+    }
+
+    pub fn key(&self, index: usize) -> Option<&str> {
+        self.entries.get(index).map(|(key, _)| key.as_str())
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    pub fn remove_item(&mut self, key: &str) -> bool {
+        let Some(index) = self
+            .entries
+            .iter()
+            .position(|(entry_key, _)| entry_key == key)
+        else {
+            return false;
+        };
+        self.entries.remove(index);
+        true
+    }
+
+    pub fn set_item(&mut self, key: &str, value: &str) {
+        if let Some((_, entry_value)) = self
+            .entries
+            .iter_mut()
+            .find(|(entry_key, _)| entry_key == key)
+        {
+            *entry_value = value.to_string();
+        } else {
+            self.entries.push((key.to_string(), value.to_string()));
+        }
+    }
+}
+
+impl Default for IsomorphicLocalStorage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub fn decode_local_storage_json(value: &str) -> Result<serde_json::Value, serde_json::Error> {
+    serde_json::from_str(value)
+}
+
+pub fn encode_local_storage_json(value: &serde_json::Value) -> String {
+    value.to_string()
+}
+
+pub fn get_local_storage_item(
+    storage: &IsomorphicLocalStorage,
+    key: &str,
+) -> Result<Option<serde_json::Value>, serde_json::Error> {
+    storage
+        .get_item(key)
+        .map(decode_local_storage_json)
+        .transpose()
+}
+
+pub fn set_local_storage_item(
+    storage: &mut IsomorphicLocalStorage,
+    key: &str,
+    value: &serde_json::Value,
+) {
+    let encoded_value = encode_local_storage_json(value);
+    storage.set_item(key, &encoded_value);
+}
+
+pub fn remove_local_storage_item(storage: &mut IsomorphicLocalStorage, key: &str) -> bool {
+    storage.remove_item(key)
+}
+
+pub fn dispatch_local_storage_change_plan(
+    has_window: bool,
+    key: &str,
+) -> Option<LocalStorageChangeEventPlan> {
+    has_window.then(|| LocalStorageChangeEventPlan {
+        event_name: LOCAL_STORAGE_CHANGE_EVENT,
+        key: key.to_string(),
+    })
+}
+
+pub fn initialize_local_storage_value(
+    storage: &IsomorphicLocalStorage,
+    key: &str,
+    initial_value: serde_json::Value,
+) -> LocalStorageReadResult {
+    match get_local_storage_item(storage, key) {
+        Ok(Some(value)) => LocalStorageReadResult {
+            value,
+            logged_error_scope: None,
+        },
+        Ok(None) => LocalStorageReadResult {
+            value: initial_value,
+            logged_error_scope: None,
+        },
+        Err(_) => LocalStorageReadResult {
+            value: initial_value,
+            logged_error_scope: Some(LOCAL_STORAGE_ERROR_SCOPE),
+        },
+    }
+}
+
+pub fn set_local_storage_value_plan(
+    key: &str,
+    next_value: serde_json::Value,
+    has_window: bool,
+) -> LocalStorageSetPlan {
+    let write = if next_value.is_null() {
+        LocalStorageWritePlan::Remove {
+            key: key.to_string(),
+        }
+    } else {
+        LocalStorageWritePlan::Set {
+            key: key.to_string(),
+            encoded_value: encode_local_storage_json(&next_value),
+        }
+    };
+
+    LocalStorageSetPlan {
+        returned_value: next_value,
+        write,
+        queued_change_event: dispatch_local_storage_change_plan(has_window, key),
+    }
+}
+
+pub fn resync_local_storage_on_key_change(
+    previous_key: &str,
+    next_key: &str,
+    storage: &IsomorphicLocalStorage,
+    initial_value: serde_json::Value,
+) -> Option<LocalStorageReadResult> {
+    (previous_key != next_key)
+        .then(|| initialize_local_storage_value(storage, next_key, initial_value))
+}
+
+pub fn local_storage_subscription_plan() -> LocalStorageSubscriptionPlan {
+    LocalStorageSubscriptionPlan {
+        storage_event_name: "storage",
+        custom_event_name: LOCAL_STORAGE_CHANGE_EVENT,
+    }
+}
+
+pub fn should_sync_from_storage_event(event_key: Option<&str>, key: &str) -> bool {
+    event_key == Some(key)
+}
+
+pub fn should_sync_from_local_storage_change_event(detail_key: &str, key: &str) -> bool {
+    detail_key == key
 }
 
 fn matches_locked_provider(
@@ -32740,6 +32950,101 @@ mod tests {
         assert!(!should_apply_web_theme_storage_event(Some("t3code:theme")));
         assert!(should_apply_system_theme_change(WebThemePreference::System));
         assert!(!should_apply_system_theme_change(WebThemePreference::Dark));
+    }
+
+    #[test]
+    fn local_storage_helpers_match_upstream_contract_with_r3_event_name() {
+        assert_eq!(LOCAL_STORAGE_CHANGE_EVENT, "r3code:local_storage_change");
+        let mut storage = IsomorphicLocalStorage::new();
+        assert_eq!(storage.len(), 0);
+        assert!(storage.is_empty());
+        storage.set_item("theme", "\"dark\"");
+        storage.set_item("count", "2");
+        storage.set_item("theme", "\"light\"");
+        assert_eq!(storage.len(), 2);
+        assert_eq!(storage.key(0), Some("theme"));
+        assert_eq!(storage.get_item("theme"), Some("\"light\""));
+        assert_eq!(
+            get_local_storage_item(&storage, "theme").unwrap(),
+            Some(serde_json::json!("light"))
+        );
+        assert_eq!(get_local_storage_item(&storage, "missing").unwrap(), None);
+        assert_eq!(storage.remove_item("count"), true);
+        assert_eq!(storage.remove_item("count"), false);
+
+        let initial = serde_json::json!({ "sidebarCollapsed": false });
+        assert_eq!(
+            initialize_local_storage_value(&storage, "missing", initial.clone()),
+            LocalStorageReadResult {
+                value: initial.clone(),
+                logged_error_scope: None,
+            }
+        );
+        storage.set_item("bad", "{");
+        assert_eq!(
+            initialize_local_storage_value(&storage, "bad", initial.clone()),
+            LocalStorageReadResult {
+                value: initial.clone(),
+                logged_error_scope: Some(LOCAL_STORAGE_ERROR_SCOPE),
+            }
+        );
+
+        let next = serde_json::json!({ "sidebarCollapsed": true });
+        assert_eq!(
+            set_local_storage_value_plan("client", next.clone(), true),
+            LocalStorageSetPlan {
+                returned_value: next.clone(),
+                write: LocalStorageWritePlan::Set {
+                    key: "client".to_string(),
+                    encoded_value: next.to_string(),
+                },
+                queued_change_event: Some(LocalStorageChangeEventPlan {
+                    event_name: LOCAL_STORAGE_CHANGE_EVENT,
+                    key: "client".to_string(),
+                }),
+            }
+        );
+        assert_eq!(
+            set_local_storage_value_plan("client", serde_json::Value::Null, false),
+            LocalStorageSetPlan {
+                returned_value: serde_json::Value::Null,
+                write: LocalStorageWritePlan::Remove {
+                    key: "client".to_string(),
+                },
+                queued_change_event: None,
+            }
+        );
+
+        storage.set_item("next", "3");
+        assert_eq!(
+            resync_local_storage_on_key_change("prev", "next", &storage, serde_json::json!(0)),
+            Some(LocalStorageReadResult {
+                value: serde_json::json!(3),
+                logged_error_scope: None,
+            })
+        );
+        assert_eq!(
+            resync_local_storage_on_key_change("next", "next", &storage, serde_json::json!(0)),
+            None
+        );
+        assert_eq!(
+            local_storage_subscription_plan(),
+            LocalStorageSubscriptionPlan {
+                storage_event_name: "storage",
+                custom_event_name: LOCAL_STORAGE_CHANGE_EVENT,
+            }
+        );
+        assert!(should_sync_from_storage_event(Some("client"), "client"));
+        assert!(!should_sync_from_storage_event(None, "client"));
+        assert!(should_sync_from_local_storage_change_event(
+            "client", "client"
+        ));
+        assert!(!should_sync_from_local_storage_change_event(
+            "other", "client"
+        ));
+
+        storage.clear();
+        assert_eq!(storage.len(), 0);
     }
 
     #[test]
