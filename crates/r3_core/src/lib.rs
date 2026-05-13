@@ -19419,6 +19419,15 @@ pub struct SourceControlDiscoveryAutoRefreshPlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlDiscoveryAtomContract {
+    pub family_label_prefix: &'static str,
+    pub empty_atom_label: &'static str,
+    pub atom_keep_alive: bool,
+    pub empty_atom_keep_alive: bool,
+    pub known_keys_recorded_on_family_creation: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SourceControlDiscoveryClientPlan {
     PrimaryConnection { environment_id: String },
     LocalApi,
@@ -19492,6 +19501,16 @@ pub const LOCAL_API_NOT_FOUND_ERROR: &str = "Local API not found";
 pub const LOCAL_API_OPEN_EXTERNAL_ERROR: &str = "Unable to open link.";
 pub const LOCAL_API_BROWSER_OPEN_TARGET: &str = "_blank";
 pub const LOCAL_API_BROWSER_OPEN_FEATURES: &str = "noopener,noreferrer";
+
+pub fn source_control_discovery_atom_contract() -> SourceControlDiscoveryAtomContract {
+    SourceControlDiscoveryAtomContract {
+        family_label_prefix: "source-control-discovery:",
+        empty_atom_label: "source-control-discovery:null",
+        atom_keep_alive: true,
+        empty_atom_keep_alive: true,
+        known_keys_recorded_on_family_creation: true,
+    }
+}
 
 pub fn read_local_api_plan(
     has_window: bool,
@@ -26360,6 +26379,16 @@ mod tests {
 
     #[test]
     fn ports_client_runtime_source_control_discovery_state_helpers() {
+        assert_eq!(
+            source_control_discovery_atom_contract(),
+            SourceControlDiscoveryAtomContract {
+                family_label_prefix: "source-control-discovery:",
+                empty_atom_label: "source-control-discovery:null",
+                atom_keep_alive: true,
+                empty_atom_keep_alive: true,
+                known_keys_recorded_on_family_creation: true,
+            }
+        );
         assert_eq!(
             get_source_control_discovery_target_key(Some(" primary ")).as_deref(),
             Some("primary")
