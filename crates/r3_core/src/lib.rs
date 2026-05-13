@@ -16089,6 +16089,32 @@ pub struct BrowserSavedEnvironmentRegistryDocument {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavedEnvironmentRuntimeStateSnapshot {
+    pub connection_state: String,
+    pub auth_state: String,
+    pub last_error: Option<String>,
+    pub last_error_at: Option<String>,
+    pub role: Option<String>,
+    pub descriptor_environment_id: Option<String>,
+    pub server_config_environment_id: Option<String>,
+    pub connected_at: Option<String>,
+    pub disconnected_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct SavedEnvironmentRuntimeStatePatch {
+    pub connection_state: Option<String>,
+    pub auth_state: Option<String>,
+    pub last_error: Option<Option<String>>,
+    pub last_error_at: Option<Option<String>>,
+    pub role: Option<Option<String>>,
+    pub descriptor_environment_id: Option<Option<String>>,
+    pub server_config_environment_id: Option<Option<String>>,
+    pub connected_at: Option<Option<String>>,
+    pub disconnected_at: Option<Option<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopDiscoveredSshHost {
     pub alias: String,
     pub hostname: String,
@@ -16811,6 +16837,85 @@ pub fn resolve_browser_environment_http_url(
         );
     }
     Ok(url)
+}
+
+pub fn default_saved_environment_runtime_state() -> SavedEnvironmentRuntimeStateSnapshot {
+    SavedEnvironmentRuntimeStateSnapshot {
+        connection_state: "disconnected".to_string(),
+        auth_state: "unknown".to_string(),
+        last_error: None,
+        last_error_at: None,
+        role: None,
+        descriptor_environment_id: None,
+        server_config_environment_id: None,
+        connected_at: None,
+        disconnected_at: None,
+    }
+}
+
+pub fn ensure_saved_environment_runtime_state(
+    state: &BTreeMap<String, SavedEnvironmentRuntimeStateSnapshot>,
+    environment_id: &str,
+) -> BTreeMap<String, SavedEnvironmentRuntimeStateSnapshot> {
+    if state.contains_key(environment_id) {
+        return state.clone();
+    }
+    let mut next = state.clone();
+    next.insert(
+        environment_id.to_string(),
+        default_saved_environment_runtime_state(),
+    );
+    next
+}
+
+pub fn patch_saved_environment_runtime_state(
+    state: &BTreeMap<String, SavedEnvironmentRuntimeStateSnapshot>,
+    environment_id: &str,
+    patch: SavedEnvironmentRuntimeStatePatch,
+) -> BTreeMap<String, SavedEnvironmentRuntimeStateSnapshot> {
+    let mut next = state.clone();
+    let mut current = next
+        .get(environment_id)
+        .cloned()
+        .unwrap_or_else(default_saved_environment_runtime_state);
+    if let Some(value) = patch.connection_state {
+        current.connection_state = value;
+    }
+    if let Some(value) = patch.auth_state {
+        current.auth_state = value;
+    }
+    if let Some(value) = patch.last_error {
+        current.last_error = value;
+    }
+    if let Some(value) = patch.last_error_at {
+        current.last_error_at = value;
+    }
+    if let Some(value) = patch.role {
+        current.role = value;
+    }
+    if let Some(value) = patch.descriptor_environment_id {
+        current.descriptor_environment_id = value;
+    }
+    if let Some(value) = patch.server_config_environment_id {
+        current.server_config_environment_id = value;
+    }
+    if let Some(value) = patch.connected_at {
+        current.connected_at = value;
+    }
+    if let Some(value) = patch.disconnected_at {
+        current.disconnected_at = value;
+    }
+    next.insert(environment_id.to_string(), current);
+    next
+}
+
+pub fn clear_saved_environment_runtime_state(
+    state: &BTreeMap<String, SavedEnvironmentRuntimeStateSnapshot>,
+    environment_id: &str,
+) -> BTreeMap<String, SavedEnvironmentRuntimeStateSnapshot> {
+    let mut next = state.clone();
+    next.remove(environment_id);
+    next
 }
 
 pub fn parse_ssh_resolve_output(alias: &str, stdout: &str) -> DesktopSshEnvironmentTarget {
@@ -26289,6 +26394,74 @@ mod tests {
             resolve_browser_environment_http_url("missing", Some(&primary), &[], "/x", &[])
                 .unwrap_err(),
             "Unable to resolve HTTP base URL for environment missing."
+        );
+    }
+
+    #[test]
+    fn saved_environment_runtime_store_helpers_match_upstream_contract() {
+        assert_eq!(
+            default_saved_environment_runtime_state(),
+            SavedEnvironmentRuntimeStateSnapshot {
+                connection_state: "disconnected".to_string(),
+                auth_state: "unknown".to_string(),
+                last_error: None,
+                last_error_at: None,
+                role: None,
+                descriptor_environment_id: None,
+                server_config_environment_id: None,
+                connected_at: None,
+                disconnected_at: None,
+            }
+        );
+
+        let state = BTreeMap::new();
+        let state = ensure_saved_environment_runtime_state(&state, "environment-a");
+        assert_eq!(
+            state["environment-a"],
+            default_saved_environment_runtime_state()
+        );
+        assert_eq!(
+            ensure_saved_environment_runtime_state(&state, "environment-a"),
+            state
+        );
+
+        let patched = patch_saved_environment_runtime_state(
+            &state,
+            "environment-a",
+            SavedEnvironmentRuntimeStatePatch {
+                connection_state: Some("connected".to_string()),
+                auth_state: Some("authenticated".to_string()),
+                role: Some(Some("owner".to_string())),
+                descriptor_environment_id: Some(Some("environment-a".to_string())),
+                server_config_environment_id: Some(Some("environment-a".to_string())),
+                connected_at: Some(Some("2026-03-04T12:03:00.000Z".to_string())),
+                ..SavedEnvironmentRuntimeStatePatch::default()
+            },
+        );
+        assert_eq!(patched["environment-a"].connection_state, "connected");
+        assert_eq!(patched["environment-a"].auth_state, "authenticated");
+        assert_eq!(patched["environment-a"].role.as_deref(), Some("owner"));
+        assert_eq!(
+            patched["environment-a"].connected_at.as_deref(),
+            Some("2026-03-04T12:03:00.000Z")
+        );
+
+        let errored = patch_saved_environment_runtime_state(
+            &patched,
+            "environment-a",
+            SavedEnvironmentRuntimeStatePatch {
+                connection_state: Some("error".to_string()),
+                last_error: Some(Some("boom".to_string())),
+                last_error_at: Some(Some("2026-03-04T12:04:00.000Z".to_string())),
+                disconnected_at: Some(Some("2026-03-04T12:04:00.000Z".to_string())),
+                ..SavedEnvironmentRuntimeStatePatch::default()
+            },
+        );
+        assert_eq!(errored["environment-a"].connection_state, "error");
+        assert_eq!(errored["environment-a"].last_error.as_deref(), Some("boom"));
+        assert_eq!(
+            clear_saved_environment_runtime_state(&errored, "environment-a"),
+            BTreeMap::new()
         );
     }
 

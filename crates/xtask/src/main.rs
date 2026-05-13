@@ -2435,7 +2435,7 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
         )
     } else if path == "apps/web/src/environments/runtime/catalog.ts" {
         (
-            "saved-environment registry persistence, store update, sorted listing, HTTP base/URL resolution, bearer-token secret preservation, and reset contracts in crates/r3_core/src/lib.rs",
+            "saved-environment registry persistence, store update, sorted listing, HTTP base/URL resolution, bearer-token secret preservation, runtime state ensure/patch/clear defaults, and reset contracts in crates/r3_core/src/lib.rs",
             "partial",
             "`cargo test --workspace saved_environment_registry`",
             "Wire saved-environment registry/runtime state to live GPUI stores, local persistence IO, auth token lifecycle, and runtime connection side effects.",
