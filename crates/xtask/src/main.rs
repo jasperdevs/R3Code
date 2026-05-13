@@ -2450,6 +2450,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace composer_primary_action_labels_match_upstream_contract`",
             "Wire the remaining primary action UI states, pointer-focus preservation, stop/refine/implement controls, and exact GPUI button/icon rendering.",
         )
+    } else if path == "apps/web/src/components/chat/ChatHeader.test.ts"
+        || path == "apps/web/src/components/chat/ChatHeader.tsx"
+    {
+        (
+            "ChatHeader open-in picker visibility for primary-environment projects plus editor option filtering in crates/r3_core/src/lib.rs and GPUI header usage in crates/r3_ui/src/shell.rs",
+            "partial",
+            "`cargo test --workspace open_in_picker_visibility_and_options_match_upstream_logic`",
+            "Wire remaining header action layout, project script controls, git actions, terminal/diff tooltips, and exact GPUI responsive behavior.",
+        )
     } else if path == "apps/web/src/components/settings/SettingsPanels.logic.test.ts"
         || path == "apps/web/src/components/settings/SettingsPanels.logic.ts"
     {
