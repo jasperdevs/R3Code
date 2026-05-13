@@ -2440,6 +2440,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace saved_environment_registry`",
             "Wire saved-environment registry/runtime state to live GPUI stores, local persistence IO, auth token lifecycle, and runtime connection side effects.",
         )
+    } else if path == "apps/web/src/environments/runtime/service.ts" {
+        (
+            "environment runtime service constants, projection snapshot/event version gating, thread-detail subscription key/ref-count/idle-capacity rules, SSH HTTP status parsing, saved runtime state transition patches, and selected pairing URL helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace environment_runtime_service_helpers_match_upstream_contract`",
+            "Wire the runtime service to live GPUI/WebSocket clients, query invalidation throttling, saved-environment connection sync, browser resume reconnects, and actual thread-detail subscription handles.",
+        )
     } else if path.starts_with("apps/web/src/environments/")
         || path.starts_with("apps/web/src/environment")
         || path.starts_with("apps/web/src/auth")

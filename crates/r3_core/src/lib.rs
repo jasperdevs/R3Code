@@ -16918,6 +16918,260 @@ pub fn clear_saved_environment_runtime_state(
     next
 }
 
+pub const THREAD_DETAIL_SUBSCRIPTION_IDLE_EVICTION_MS: u64 = 15 * 60 * 1_000;
+pub const MAX_CACHED_THREAD_DETAIL_SUBSCRIPTIONS: usize = 32;
+pub const BROWSER_RESUME_RECONNECT_COOLDOWN_MS: u64 = 2_000;
+pub const INITIAL_SERVER_CONFIG_SNAPSHOT_WAIT_MS: u64 = 150;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppliedProjectionVersion {
+    pub sequence: u64,
+    pub updated_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IncomingProjectionSnapshotVersion {
+    pub snapshot_sequence: u64,
+    pub updated_at: String,
+}
+
+pub fn compare_applied_projection_version(
+    left: &AppliedProjectionVersion,
+    right: &AppliedProjectionVersion,
+) -> Ordering {
+    left.sequence.cmp(&right.sequence).then_with(|| {
+        left.updated_at
+            .as_deref()
+            .unwrap_or("")
+            .cmp(right.updated_at.as_deref().unwrap_or(""))
+    })
+}
+
+pub fn should_apply_projection_snapshot(
+    current: Option<&AppliedProjectionVersion>,
+    next: &IncomingProjectionSnapshotVersion,
+) -> bool {
+    let next_version = AppliedProjectionVersion {
+        sequence: next.snapshot_sequence,
+        updated_at: Some(next.updated_at.clone()),
+    };
+    current
+        .map(|current| compare_applied_projection_version(current, &next_version).is_lt())
+        .unwrap_or(true)
+}
+
+pub fn should_apply_projection_event(
+    current: Option<&AppliedProjectionVersion>,
+    sequence: u64,
+) -> bool {
+    current
+        .map(|current| sequence > current.sequence)
+        .unwrap_or(true)
+}
+
+pub fn mark_applied_projection_snapshot(
+    current: Option<&AppliedProjectionVersion>,
+    next: &IncomingProjectionSnapshotVersion,
+) -> AppliedProjectionVersion {
+    let next_version = AppliedProjectionVersion {
+        sequence: next.snapshot_sequence,
+        updated_at: Some(next.updated_at.clone()),
+    };
+    if let Some(current) = current {
+        if compare_applied_projection_version(current, &next_version).is_ge() {
+            return current.clone();
+        }
+    }
+    next_version
+}
+
+pub fn mark_applied_projection_event(
+    current: Option<&AppliedProjectionVersion>,
+    sequence: u64,
+) -> AppliedProjectionVersion {
+    if let Some(current) = current {
+        if sequence <= current.sequence {
+            return current.clone();
+        }
+        return AppliedProjectionVersion {
+            sequence,
+            updated_at: current.updated_at.clone(),
+        };
+    }
+    AppliedProjectionVersion {
+        sequence,
+        updated_at: None,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadDetailSubscriptionCacheEntry {
+    pub environment_id: String,
+    pub thread_id: String,
+    pub ref_count: u32,
+    pub last_accessed_at_ms: u64,
+    pub has_pending_approvals: bool,
+    pub has_pending_user_input: bool,
+    pub has_actionable_proposed_plan: bool,
+    pub orchestration_status: Option<String>,
+    pub latest_turn_state: Option<String>,
+    pub pending_source_proposed_plan: bool,
+}
+
+pub fn thread_detail_subscription_key(environment_id: &str, thread_id: &str) -> String {
+    scoped_thread_key(&scope_thread_ref(environment_id, thread_id))
+}
+
+pub fn is_non_idle_thread_detail_subscription(entry: &ThreadDetailSubscriptionCacheEntry) -> bool {
+    entry.has_pending_approvals
+        || entry.has_pending_user_input
+        || entry.has_actionable_proposed_plan
+        || entry
+            .orchestration_status
+            .as_deref()
+            .map(|status| status != "idle" && status != "stopped")
+            .unwrap_or(false)
+        || entry.latest_turn_state.as_deref() == Some("running")
+        || entry.pending_source_proposed_plan
+}
+
+pub fn should_evict_thread_detail_subscription(entry: &ThreadDetailSubscriptionCacheEntry) -> bool {
+    entry.ref_count == 0 && !is_non_idle_thread_detail_subscription(entry)
+}
+
+pub fn release_thread_detail_subscription(
+    entry: &ThreadDetailSubscriptionCacheEntry,
+    now_ms: u64,
+) -> ThreadDetailSubscriptionCacheEntry {
+    let mut next = entry.clone();
+    next.ref_count = next.ref_count.saturating_sub(1);
+    next.last_accessed_at_ms = now_ms;
+    next
+}
+
+pub fn retain_thread_detail_subscription(
+    entry: Option<&ThreadDetailSubscriptionCacheEntry>,
+    environment_id: &str,
+    thread_id: &str,
+    now_ms: u64,
+) -> ThreadDetailSubscriptionCacheEntry {
+    if let Some(entry) = entry {
+        let mut next = entry.clone();
+        next.ref_count = next.ref_count.saturating_add(1);
+        next.last_accessed_at_ms = now_ms;
+        return next;
+    }
+
+    ThreadDetailSubscriptionCacheEntry {
+        environment_id: environment_id.to_string(),
+        thread_id: thread_id.to_string(),
+        ref_count: 1,
+        last_accessed_at_ms: now_ms,
+        has_pending_approvals: false,
+        has_pending_user_input: false,
+        has_actionable_proposed_plan: false,
+        orchestration_status: None,
+        latest_turn_state: None,
+        pending_source_proposed_plan: false,
+    }
+}
+
+pub fn idle_thread_detail_subscription_keys_to_evict_to_capacity(
+    entries: &BTreeMap<String, ThreadDetailSubscriptionCacheEntry>,
+    max_cached: usize,
+) -> Vec<String> {
+    if entries.len() <= max_cached {
+        return Vec::new();
+    }
+
+    let mut idle_entries = entries
+        .iter()
+        .filter(|(_, entry)| should_evict_thread_detail_subscription(entry))
+        .map(|(key, entry)| (key.clone(), entry.last_accessed_at_ms))
+        .collect::<Vec<_>>();
+    idle_entries.sort_by(|(left_key, left_accessed), (right_key, right_accessed)| {
+        left_accessed
+            .cmp(right_accessed)
+            .then_with(|| left_key.cmp(right_key))
+    });
+
+    let mut remaining_len = entries.len();
+    let mut keys = Vec::new();
+    for (key, _) in idle_entries {
+        if remaining_len <= max_cached {
+            break;
+        }
+        keys.push(key);
+        remaining_len -= 1;
+    }
+    keys
+}
+
+pub fn read_ssh_http_error_status(message: &str) -> Option<u32> {
+    let rest = message.strip_prefix("[ssh_http:")?;
+    let (status, suffix) = rest.split_once(']')?;
+    if !suffix.starts_with(char::is_whitespace) {
+        return None;
+    }
+    status.parse::<u32>().ok()
+}
+
+pub fn is_ssh_http_auth_error(message: &str, status: u32) -> bool {
+    read_ssh_http_error_status(message) == Some(status)
+}
+
+pub fn saved_environment_runtime_connecting_patch() -> SavedEnvironmentRuntimeStatePatch {
+    SavedEnvironmentRuntimeStatePatch {
+        connection_state: Some("connecting".to_string()),
+        last_error: Some(None),
+        last_error_at: Some(None),
+        ..SavedEnvironmentRuntimeStatePatch::default()
+    }
+}
+
+pub fn saved_environment_runtime_connected_patch(
+    connected_at: &str,
+) -> SavedEnvironmentRuntimeStatePatch {
+    SavedEnvironmentRuntimeStatePatch {
+        connection_state: Some("connected".to_string()),
+        auth_state: Some("authenticated".to_string()),
+        connected_at: Some(Some(connected_at.to_string())),
+        disconnected_at: Some(None),
+        last_error: Some(None),
+        last_error_at: Some(None),
+        ..SavedEnvironmentRuntimeStatePatch::default()
+    }
+}
+
+pub fn saved_environment_runtime_disconnected_patch(
+    disconnected_at: &str,
+    reason: Option<&str>,
+) -> SavedEnvironmentRuntimeStatePatch {
+    let reason = reason.and_then(|reason| {
+        let trimmed = reason.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_string())
+    });
+    SavedEnvironmentRuntimeStatePatch {
+        connection_state: Some("disconnected".to_string()),
+        disconnected_at: Some(Some(disconnected_at.to_string())),
+        last_error: reason.clone().map(Some),
+        last_error_at: reason.map(|_| Some(disconnected_at.to_string())),
+        ..SavedEnvironmentRuntimeStatePatch::default()
+    }
+}
+
+pub fn saved_environment_runtime_error_patch(
+    error_message: &str,
+    error_at: &str,
+) -> SavedEnvironmentRuntimeStatePatch {
+    SavedEnvironmentRuntimeStatePatch {
+        connection_state: Some("error".to_string()),
+        last_error: Some(Some(error_message.to_string())),
+        last_error_at: Some(Some(error_at.to_string())),
+        ..SavedEnvironmentRuntimeStatePatch::default()
+    }
+}
+
 pub fn parse_ssh_resolve_output(alias: &str, stdout: &str) -> DesktopSshEnvironmentTarget {
     let mut values = BTreeMap::new();
     for line in stdout.lines() {
@@ -26463,6 +26717,162 @@ mod tests {
             clear_saved_environment_runtime_state(&errored, "environment-a"),
             BTreeMap::new()
         );
+    }
+
+    #[test]
+    fn environment_runtime_service_helpers_match_upstream_contract() {
+        assert_eq!(THREAD_DETAIL_SUBSCRIPTION_IDLE_EVICTION_MS, 900_000);
+        assert_eq!(MAX_CACHED_THREAD_DETAIL_SUBSCRIPTIONS, 32);
+        assert_eq!(BROWSER_RESUME_RECONNECT_COOLDOWN_MS, 2_000);
+        assert_eq!(INITIAL_SERVER_CONFIG_SNAPSHOT_WAIT_MS, 150);
+
+        let current = AppliedProjectionVersion {
+            sequence: 4,
+            updated_at: Some("2026-03-04T12:00:00.000Z".to_string()),
+        };
+        assert!(should_apply_projection_snapshot(
+            Some(&current),
+            &IncomingProjectionSnapshotVersion {
+                snapshot_sequence: 5,
+                updated_at: "2026-03-04T11:59:00.000Z".to_string(),
+            },
+        ));
+        assert!(should_apply_projection_snapshot(
+            Some(&current),
+            &IncomingProjectionSnapshotVersion {
+                snapshot_sequence: 4,
+                updated_at: "2026-03-04T12:01:00.000Z".to_string(),
+            },
+        ));
+        assert!(!should_apply_projection_snapshot(
+            Some(&current),
+            &IncomingProjectionSnapshotVersion {
+                snapshot_sequence: 4,
+                updated_at: "2026-03-04T11:59:00.000Z".to_string(),
+            },
+        ));
+        assert!(should_apply_projection_event(Some(&current), 5));
+        assert!(!should_apply_projection_event(Some(&current), 4));
+        assert_eq!(
+            mark_applied_projection_event(Some(&current), 6),
+            AppliedProjectionVersion {
+                sequence: 6,
+                updated_at: Some("2026-03-04T12:00:00.000Z".to_string()),
+            }
+        );
+        assert_eq!(
+            mark_applied_projection_event(Some(&current), 3),
+            current.clone()
+        );
+
+        let key = thread_detail_subscription_key("environment-a", "thread-a");
+        assert_eq!(key, "environment-a:thread-a");
+        let entry = retain_thread_detail_subscription(None, "environment-a", "thread-a", 100);
+        assert_eq!(entry.ref_count, 1);
+        let retained = retain_thread_detail_subscription(Some(&entry), "ignored", "ignored", 125);
+        assert_eq!(retained.ref_count, 2);
+        assert_eq!(retained.last_accessed_at_ms, 125);
+        let released = release_thread_detail_subscription(&retained, 150);
+        assert_eq!(released.ref_count, 1);
+        assert!(!should_evict_thread_detail_subscription(&released));
+        let idle = release_thread_detail_subscription(&released, 175);
+        assert!(should_evict_thread_detail_subscription(&idle));
+
+        let mut running = idle.clone();
+        running.orchestration_status = Some("running".to_string());
+        assert!(is_non_idle_thread_detail_subscription(&running));
+        assert!(!should_evict_thread_detail_subscription(&running));
+        running.orchestration_status = Some("idle".to_string());
+        running.latest_turn_state = Some("running".to_string());
+        assert!(is_non_idle_thread_detail_subscription(&running));
+
+        let mut entries = BTreeMap::new();
+        for index in 0..35 {
+            let mut item = retain_thread_detail_subscription(
+                None,
+                "environment-a",
+                &format!("thread-{index}"),
+                index,
+            );
+            item = release_thread_detail_subscription(&item, index + 100);
+            if index == 0 {
+                item.has_pending_user_input = true;
+            }
+            entries.insert(
+                thread_detail_subscription_key("environment-a", &format!("thread-{index}")),
+                item,
+            );
+        }
+        assert_eq!(
+            idle_thread_detail_subscription_keys_to_evict_to_capacity(
+                &entries,
+                MAX_CACHED_THREAD_DETAIL_SUBSCRIPTIONS
+            ),
+            vec![
+                "environment-a:thread-1".to_string(),
+                "environment-a:thread-2".to_string(),
+                "environment-a:thread-3".to_string(),
+            ]
+        );
+
+        assert_eq!(
+            read_ssh_http_error_status("[ssh_http:401] unauthorized"),
+            Some(401)
+        );
+        assert_eq!(
+            read_ssh_http_error_status("[ssh_http:70000] still parsed"),
+            Some(70_000)
+        );
+        assert_eq!(read_ssh_http_error_status("[ssh_http:401]"), None);
+        assert_eq!(read_ssh_http_error_status("x [ssh_http:401] nope"), None);
+        assert!(is_ssh_http_auth_error("[ssh_http:401] unauthorized", 401));
+
+        let mut state = BTreeMap::new();
+        state = patch_saved_environment_runtime_state(
+            &state,
+            "environment-a",
+            saved_environment_runtime_connecting_patch(),
+        );
+        assert_eq!(state["environment-a"].connection_state, "connecting");
+        assert_eq!(state["environment-a"].last_error, None);
+
+        state = patch_saved_environment_runtime_state(
+            &state,
+            "environment-a",
+            saved_environment_runtime_connected_patch("2026-03-04T12:10:00.000Z"),
+        );
+        assert_eq!(state["environment-a"].connection_state, "connected");
+        assert_eq!(state["environment-a"].auth_state, "authenticated");
+        assert_eq!(
+            state["environment-a"].connected_at.as_deref(),
+            Some("2026-03-04T12:10:00.000Z")
+        );
+
+        state = patch_saved_environment_runtime_state(
+            &state,
+            "environment-a",
+            saved_environment_runtime_disconnected_patch(
+                "2026-03-04T12:11:00.000Z",
+                Some("  network lost  "),
+            ),
+        );
+        assert_eq!(state["environment-a"].connection_state, "disconnected");
+        assert_eq!(
+            state["environment-a"].last_error.as_deref(),
+            Some("network lost")
+        );
+        assert_eq!(
+            state["environment-a"].last_error_at.as_deref(),
+            Some("2026-03-04T12:11:00.000Z")
+        );
+
+        state = patch_saved_environment_runtime_state(
+            &state,
+            "environment-a",
+            saved_environment_runtime_error_patch("boom", "2026-03-04T12:12:00.000Z"),
+        );
+        assert_eq!(state["environment-a"].connection_state, "error");
+        assert_eq!(state["environment-a"].last_error.as_deref(), Some("boom"));
     }
 
     #[test]
