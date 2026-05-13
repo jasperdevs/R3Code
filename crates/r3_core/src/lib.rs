@@ -203,25 +203,58 @@ pub enum ThreadRouteTarget {
     Draft { draft_id: String },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadRouteParams {
+    pub environment_id: String,
+    pub thread_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DraftThreadRouteParams {
+    pub draft_id: String,
+}
+
+pub fn build_thread_route_params(thread_ref: &ScopedThreadRef) -> ThreadRouteParams {
+    ThreadRouteParams {
+        environment_id: thread_ref.environment_id.clone(),
+        thread_id: thread_ref.thread_id.clone(),
+    }
+}
+
+pub fn build_draft_thread_route_params(draft_id: &str) -> DraftThreadRouteParams {
+    DraftThreadRouteParams {
+        draft_id: draft_id.to_string(),
+    }
+}
+
+pub fn resolve_thread_route_ref(
+    environment_id: Option<&str>,
+    thread_id: Option<&str>,
+) -> Option<ScopedThreadRef> {
+    match (environment_id, thread_id) {
+        (Some(environment_id), Some(thread_id))
+            if !environment_id.is_empty() && !thread_id.is_empty() =>
+        {
+            Some(ScopedThreadRef::new(environment_id, thread_id))
+        }
+        _ => None,
+    }
+}
+
 pub fn resolve_thread_route_target(
     environment_id: Option<&str>,
     thread_id: Option<&str>,
     draft_id: Option<&str>,
 ) -> Option<ThreadRouteTarget> {
-    match (environment_id, thread_id) {
-        (Some(environment_id), Some(thread_id))
-            if !environment_id.is_empty() && !thread_id.is_empty() =>
-        {
-            Some(ThreadRouteTarget::Server {
-                thread_ref: ScopedThreadRef::new(environment_id, thread_id),
-            })
-        }
-        _ => draft_id
-            .filter(|draft_id| !draft_id.is_empty())
-            .map(|draft_id| ThreadRouteTarget::Draft {
-                draft_id: draft_id.to_string(),
-            }),
-    }
+    resolve_thread_route_ref(environment_id, thread_id)
+        .map(|thread_ref| ThreadRouteTarget::Server { thread_ref })
+        .or_else(|| {
+            draft_id
+                .filter(|draft_id| !draft_id.is_empty())
+                .map(|draft_id| ThreadRouteTarget::Draft {
+                    draft_id: draft_id.to_string(),
+                })
+        })
 }
 
 pub fn normalize_hosted_app_channel(channel: Option<&str>) -> Option<HostedAppChannel> {
@@ -25091,6 +25124,44 @@ mod tests {
                 thread_ref: ScopedThreadRef::new("env-1", "thread-1")
             })
         );
+    }
+
+    #[test]
+    fn thread_routes_helpers_match_upstream_contract() {
+        let thread_ref = ScopedThreadRef::new("env-1", "thread-1");
+        assert_eq!(
+            build_thread_route_params(&thread_ref),
+            ThreadRouteParams {
+                environment_id: "env-1".to_string(),
+                thread_id: "thread-1".to_string(),
+            }
+        );
+        assert_eq!(
+            resolve_thread_route_ref(Some("env-1"), Some("thread-1")),
+            Some(thread_ref.clone())
+        );
+        assert_eq!(resolve_thread_route_ref(Some("env-1"), None), None);
+        assert_eq!(resolve_thread_route_ref(None, Some("thread-1")), None);
+
+        assert_eq!(
+            build_draft_thread_route_params("draft-1"),
+            DraftThreadRouteParams {
+                draft_id: "draft-1".to_string()
+            }
+        );
+        assert_eq!(
+            resolve_thread_route_target(Some("env-1"), Some("thread-1"), None),
+            Some(ThreadRouteTarget::Server {
+                thread_ref: thread_ref.clone()
+            })
+        );
+        assert_eq!(
+            resolve_thread_route_target(None, None, Some("draft-1")),
+            Some(ThreadRouteTarget::Draft {
+                draft_id: "draft-1".to_string()
+            })
+        );
+        assert_eq!(resolve_thread_route_target(None, None, None), None);
     }
 
     #[test]

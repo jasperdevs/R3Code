@@ -1839,6 +1839,14 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core timestamp_format_helpers_match_upstream_contract`",
             "Wire helpers into all live GPUI timestamp labels, expiry countdowns, and user-configured time-format rendering.",
         )
+    } else if path == "apps/web/src/threadRoutes.ts" || path == "apps/web/src/threadRoutes.test.ts"
+    {
+        (
+            "thread route parameter builders, scoped route-ref resolution, server-before-draft target precedence, draft target fallback, and empty-param null handling in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core thread_routes_helpers_match_upstream_contract`",
+            "Wire helpers into live GPUI route parsing, navigation, history, and draft/server thread selection.",
+        )
     } else if path == "apps/web/src/versionSkew.ts" || path == "apps/web/src/versionSkew.test.ts" {
         (
             "version mismatch normalization, R3Code-branded mismatch hint, environment/client/server dismissal keys, duplicate-safe dismissal insertion, dismissed checks, and error-message hint append behavior in crates/r3_core/src/lib.rs",
