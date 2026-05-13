@@ -1149,10 +1149,19 @@ pub enum ProjectFaviconRouteDecision {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OtlpTracesProxyDecision {
+    NoExportConfigured { status: u16 },
+    Export { url: String },
+    ExportSucceeded { status: u16 },
+    ExportFailed { body: &'static str, status: u16 },
+}
+
 pub const BROWSER_API_CORS_ALLOWED_METHODS: &[&str] = &["GET", "POST", "OPTIONS"];
 pub const BROWSER_API_CORS_ALLOWED_HEADERS: &[&str] =
     &["authorization", "b3", "traceparent", "content-type"];
 pub const BROWSER_API_CORS_MAX_AGE_SECONDS: u32 = 600;
+pub const OTLP_TRACES_PROXY_PATH: &str = "/api/observability/v1/traces";
 pub const PROJECT_FAVICON_CACHE_CONTROL: &str = "public, max-age=3600";
 pub const FALLBACK_PROJECT_FAVICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#6b728080" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-fallback="project-favicon"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z"/></svg>"##;
 
@@ -1535,6 +1544,26 @@ pub fn project_favicon_route_decision(
         path: path.to_string(),
         status: 200,
         cache_control: PROJECT_FAVICON_CACHE_CONTROL,
+    }
+}
+
+pub fn otlp_traces_proxy_export_decision(otlp_traces_url: Option<&str>) -> OtlpTracesProxyDecision {
+    match otlp_traces_url.filter(|url| !url.is_empty()) {
+        Some(url) => OtlpTracesProxyDecision::Export {
+            url: url.to_string(),
+        },
+        None => OtlpTracesProxyDecision::NoExportConfigured { status: 204 },
+    }
+}
+
+pub fn otlp_traces_proxy_response_after_export(export_status_ok: bool) -> OtlpTracesProxyDecision {
+    if export_status_ok {
+        OtlpTracesProxyDecision::ExportSucceeded { status: 204 }
+    } else {
+        OtlpTracesProxyDecision::ExportFailed {
+            body: "Trace export failed.",
+            status: 502,
+        }
     }
 }
 
@@ -3173,6 +3202,28 @@ mod tests {
             ProjectFaviconRouteDecision::InternalServerError {
                 body: "Internal Server Error",
                 status: 500,
+            }
+        );
+        assert_eq!(OTLP_TRACES_PROXY_PATH, "/api/observability/v1/traces");
+        assert_eq!(
+            otlp_traces_proxy_export_decision(None),
+            OtlpTracesProxyDecision::NoExportConfigured { status: 204 }
+        );
+        assert_eq!(
+            otlp_traces_proxy_export_decision(Some("http://localhost:4318/v1/traces")),
+            OtlpTracesProxyDecision::Export {
+                url: "http://localhost:4318/v1/traces".to_string(),
+            }
+        );
+        assert_eq!(
+            otlp_traces_proxy_response_after_export(true),
+            OtlpTracesProxyDecision::ExportSucceeded { status: 204 }
+        );
+        assert_eq!(
+            otlp_traces_proxy_response_after_export(false),
+            OtlpTracesProxyDecision::ExportFailed {
+                body: "Trace export failed.",
+                status: 502,
             }
         );
 
