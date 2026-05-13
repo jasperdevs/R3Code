@@ -7795,6 +7795,26 @@ pub fn bitbucket_branching_model_request_plan(
     plan
 }
 
+pub fn bitbucket_default_change_request_target_branch(
+    repository_main_branch: Option<&str>,
+    development_branch_name: Option<&str>,
+    development_name: Option<&str>,
+    development_use_mainbranch: Option<bool>,
+    development_is_valid: Option<bool>,
+) -> Option<String> {
+    let repository_main_branch = trimmed_optional_string(repository_main_branch);
+    if development_use_mainbranch == Some(true) || development_is_valid == Some(false) {
+        return repository_main_branch;
+    }
+
+    let development_branch = trimmed_optional_string(development_branch_name)
+        .or_else(|| trimmed_optional_string(development_name));
+    match development_branch.as_deref() {
+        Some("null") | None => repository_main_branch,
+        Some(_) => development_branch,
+    }
+}
+
 pub fn bitbucket_create_repository_request_plan(
     base_url: &str,
     repository: &BitbucketRepositoryLocator,
@@ -20657,6 +20677,66 @@ mod tests {
             )
             .url,
             "https://api.test.local/2.0/repositories/pingdotgg/t3code/pullrequests/42"
+        );
+        assert_eq!(
+            bitbucket_branching_model_request_plan("https://api.test.local/2.0", &bitbucket_repo)
+                .url,
+            "https://api.test.local/2.0/repositories/pingdotgg/t3code/branching-model"
+        );
+        assert_eq!(
+            bitbucket_default_change_request_target_branch(
+                Some("main"),
+                Some("develop"),
+                Some("ignored"),
+                Some(false),
+                Some(true),
+            )
+            .as_deref(),
+            Some("develop")
+        );
+        assert_eq!(
+            bitbucket_default_change_request_target_branch(
+                Some("main"),
+                None,
+                Some("develop"),
+                Some(false),
+                Some(true),
+            )
+            .as_deref(),
+            Some("develop")
+        );
+        assert_eq!(
+            bitbucket_default_change_request_target_branch(
+                Some("main"),
+                Some("develop"),
+                None,
+                None,
+                Some(false),
+            )
+            .as_deref(),
+            Some("main")
+        );
+        assert_eq!(
+            bitbucket_default_change_request_target_branch(
+                Some("main"),
+                None,
+                Some("null"),
+                Some(false),
+                Some(true),
+            )
+            .as_deref(),
+            Some("main")
+        );
+        assert_eq!(
+            bitbucket_default_change_request_target_branch(
+                Some("main"),
+                Some("develop"),
+                None,
+                Some(true),
+                Some(true),
+            )
+            .as_deref(),
+            Some("main")
         );
         let create_repo = bitbucket_create_repository_request_plan(
             "https://api.test.local/2.0",
