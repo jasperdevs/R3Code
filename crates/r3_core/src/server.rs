@@ -1514,15 +1514,15 @@ pub fn server_application_layer_plan(
 }
 
 pub fn encode_persisted_server_runtime_state(state: &PersistedServerRuntimeState) -> String {
-    let mut value = serde_json::json!({
-        "version": state.version,
-        "pid": state.pid,
-        "port": state.port,
-        "origin": state.origin,
-        "startedAt": state.started_at,
-    });
+    let mut value = BTreeMap::from([
+        ("origin", serde_json::json!(state.origin)),
+        ("pid", serde_json::json!(state.pid)),
+        ("port", serde_json::json!(state.port)),
+        ("startedAt", serde_json::json!(state.started_at)),
+        ("version", serde_json::json!(state.version)),
+    ]);
     if let Some(host) = &state.host {
-        value["host"] = serde_json::json!(host);
+        value.insert("host", serde_json::json!(host));
     }
     format!("{}\n", serde_json::to_string(&value).unwrap())
 }

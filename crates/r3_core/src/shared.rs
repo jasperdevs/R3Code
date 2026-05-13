@@ -982,11 +982,29 @@ pub fn decode_lenient_json_result(input: &str) -> Result<Value, String> {
 }
 
 pub fn encode_json_pretty(value: &Value) -> Result<String, String> {
-    serde_json::to_string_pretty(value).map_err(|error| error.to_string())
+    serde_json::to_string_pretty(&sort_json_object_keys(value)).map_err(|error| error.to_string())
 }
 
 pub fn pretty_json_string(input: &str) -> Result<String, String> {
     decode_json_result(input).and_then(|value| encode_json_pretty(&value))
+}
+
+fn sort_json_object_keys(value: &Value) -> Value {
+    match value {
+        Value::Object(object) => {
+            let mut sorted = serde_json::Map::new();
+            let mut keys = object.keys().collect::<Vec<_>>();
+            keys.sort();
+            for key in keys {
+                if let Some(value) = object.get(key) {
+                    sorted.insert(key.clone(), sort_json_object_keys(value));
+                }
+            }
+            Value::Object(sorted)
+        }
+        Value::Array(values) => Value::Array(values.iter().map(sort_json_object_keys).collect()),
+        _ => value.clone(),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
