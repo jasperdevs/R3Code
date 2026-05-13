@@ -16030,6 +16030,12 @@ pub struct GitStatusSnapshot {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitThreadMetadata {
+    pub branch: Option<String>,
+    pub worktree_path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitStatusTarget {
     pub environment_id: Option<String>,
     pub cwd: Option<String>,
@@ -16066,6 +16072,43 @@ pub enum GitStatusRefreshPlan {
     Start { target_key: String, cwd: String },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitStatusWindowRefreshEvent {
+    Focus,
+    VisibilityChange { visible: bool },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GitStatusWindowRefreshPlan {
+    Noop,
+    Schedule {
+        delay_ms: u64,
+        target: GitStatusTarget,
+        clear_existing_timeout: bool,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitActionProgressToastStart {
+    pub title: String,
+    pub description: &'static str,
+    pub timeout_ms: u64,
+    pub data: Option<ThreadScopedToastData>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GitThreadBranchSyncPlan {
+    Noop,
+    UpdateServerThread {
+        branch: Option<String>,
+        worktree_path: Option<String>,
+    },
+    UpdateDraftThread {
+        branch: Option<String>,
+        worktree_path: Option<String>,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitStatusStateMachine {
     states: BTreeMap<String, WebGitStatusState>,
@@ -16076,6 +16119,11 @@ pub struct GitStatusStateMachine {
 }
 
 pub const GIT_STATUS_REFRESH_DEBOUNCE_MS: u64 = 1_000;
+pub const GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS: u64 = 250;
+pub const GIT_ACTION_PROGRESS_TOAST_TICK_MS: u64 = 1_000;
+pub const GIT_ACTION_PROGRESS_WAITING_DESCRIPTION: &str = "Waiting for Git...";
+pub const GIT_ACTION_PROGRESS_FALLBACK_TITLE: &str = "Running git action...";
+pub const WORKTREE_BRANCH_PREFIX: &str = "t3code";
 
 pub fn empty_git_status_state() -> WebGitStatusState {
     WebGitStatusState {
@@ -16103,6 +16151,120 @@ pub fn get_git_status_target_key(target: &GitStatusTarget) -> Option<String> {
 
 pub fn provided_git_status_client_identity(target_key: &str) -> String {
     format!("provided:{target_key}")
+}
+
+pub fn resolve_git_status_window_refresh_plan(
+    event: GitStatusWindowRefreshEvent,
+    active_environment_id: Option<&str>,
+    git_cwd: Option<&str>,
+    has_existing_timeout: bool,
+) -> GitStatusWindowRefreshPlan {
+    if matches!(
+        event,
+        GitStatusWindowRefreshEvent::VisibilityChange { visible: false }
+    ) {
+        return GitStatusWindowRefreshPlan::Noop;
+    }
+    let Some(git_cwd) = git_cwd else {
+        return GitStatusWindowRefreshPlan::Noop;
+    };
+    GitStatusWindowRefreshPlan::Schedule {
+        delay_ms: GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS,
+        target: GitStatusTarget {
+            environment_id: active_environment_id.map(str::to_string),
+            cwd: Some(git_cwd.to_string()),
+        },
+        clear_existing_timeout: has_existing_timeout,
+    }
+}
+
+pub fn git_action_thread_toast_data(
+    active_thread_ref: Option<&ScopedThreadRef>,
+) -> Option<ThreadScopedToastData> {
+    active_thread_ref.map(|thread_ref| ThreadScopedToastData {
+        thread_ref: Some(thread_ref.clone()),
+        thread_id: None,
+    })
+}
+
+pub fn git_action_progress_toast_start(
+    active_thread_ref: Option<&ScopedThreadRef>,
+    first_stage: Option<&str>,
+) -> GitActionProgressToastStart {
+    GitActionProgressToastStart {
+        title: first_stage
+            .filter(|stage| !stage.is_empty())
+            .unwrap_or(GIT_ACTION_PROGRESS_FALLBACK_TITLE)
+            .to_string(),
+        description: GIT_ACTION_PROGRESS_WAITING_DESCRIPTION,
+        timeout_ms: 0,
+        data: git_action_thread_toast_data(active_thread_ref),
+    }
+}
+
+pub fn is_temporary_worktree_branch(ref_name: &str) -> bool {
+    let normalized = ref_name.trim().to_ascii_lowercase();
+    let Some(token) = normalized.strip_prefix(&format!("{WORKTREE_BRANCH_PREFIX}/")) else {
+        return false;
+    };
+    token.len() == 8 && token.chars().all(|ch| ch.is_ascii_hexdigit())
+}
+
+pub fn resolve_live_thread_branch_update(
+    thread_branch: Option<&str>,
+    git_status: Option<&GitStatusSnapshot>,
+) -> Option<Option<String>> {
+    let git_status = git_status?;
+    if git_status.ref_name.is_none() && thread_branch.is_some() {
+        return None;
+    }
+    if thread_branch == git_status.ref_name.as_deref() {
+        return None;
+    }
+    if thread_branch.is_some_and(|branch| !is_temporary_worktree_branch(branch))
+        && git_status
+            .ref_name
+            .as_deref()
+            .is_some_and(is_temporary_worktree_branch)
+    {
+        return None;
+    }
+    Some(git_status.ref_name.clone())
+}
+
+pub fn resolve_git_thread_branch_sync_plan(
+    active_server_thread: Option<&GitThreadMetadata>,
+    active_draft_thread: Option<&ThreadActionDraftThreadContext>,
+    git_status: Option<&GitStatusSnapshot>,
+    is_git_action_running: bool,
+) -> GitThreadBranchSyncPlan {
+    let is_selecting_worktree_base = active_server_thread.is_none()
+        && active_draft_thread.is_some_and(|draft| {
+            draft.env_mode == DraftThreadEnvMode::Worktree && draft.worktree_path.is_none()
+        });
+    if is_git_action_running || is_selecting_worktree_base {
+        return GitThreadBranchSyncPlan::Noop;
+    }
+    let current_branch = active_server_thread
+        .and_then(|thread| thread.branch.as_deref())
+        .or_else(|| active_draft_thread.and_then(|draft| draft.branch.as_deref()));
+    let Some(branch) = resolve_live_thread_branch_update(current_branch, git_status) else {
+        return GitThreadBranchSyncPlan::Noop;
+    };
+
+    if let Some(server_thread) = active_server_thread {
+        return GitThreadBranchSyncPlan::UpdateServerThread {
+            branch,
+            worktree_path: server_thread.worktree_path.clone(),
+        };
+    }
+    if let Some(draft_thread) = active_draft_thread {
+        return GitThreadBranchSyncPlan::UpdateDraftThread {
+            branch,
+            worktree_path: draft_thread.worktree_path.clone(),
+        };
+    }
+    GitThreadBranchSyncPlan::Noop
 }
 
 impl GitStatusStateMachine {
@@ -41606,6 +41768,122 @@ mod tests {
             vec![("Commit", false), ("Push", true), ("Create PR", true)]
         );
         assert!(build_git_action_menu_items(None, false, true).is_empty());
+    }
+
+    #[test]
+    fn git_actions_browser_contracts_match_upstream_component() {
+        let focus_plan = resolve_git_status_window_refresh_plan(
+            GitStatusWindowRefreshEvent::Focus,
+            Some("environment-local"),
+            Some("/repo/project"),
+            true,
+        );
+        assert_eq!(
+            focus_plan,
+            GitStatusWindowRefreshPlan::Schedule {
+                delay_ms: GIT_STATUS_WINDOW_REFRESH_DEBOUNCE_MS,
+                target: GitStatusTarget {
+                    environment_id: Some("environment-local".to_string()),
+                    cwd: Some("/repo/project".to_string()),
+                },
+                clear_existing_timeout: true,
+            }
+        );
+        assert_eq!(
+            resolve_git_status_window_refresh_plan(
+                GitStatusWindowRefreshEvent::VisibilityChange { visible: false },
+                Some("environment-local"),
+                Some("/repo/project"),
+                false,
+            ),
+            GitStatusWindowRefreshPlan::Noop
+        );
+        assert_eq!(
+            resolve_git_status_window_refresh_plan(
+                GitStatusWindowRefreshEvent::VisibilityChange { visible: true },
+                Some("environment-local"),
+                None,
+                false,
+            ),
+            GitStatusWindowRefreshPlan::Noop
+        );
+
+        let thread_ref = ScopedThreadRef::new("environment-local", "thread-shared");
+        let toast = git_action_progress_toast_start(Some(&thread_ref), Some("Pushing..."));
+        assert_eq!(toast.title, "Pushing...");
+        assert_eq!(toast.description, GIT_ACTION_PROGRESS_WAITING_DESCRIPTION);
+        assert_eq!(toast.timeout_ms, 0);
+        assert_eq!(
+            toast.data,
+            Some(ThreadScopedToastData {
+                thread_ref: Some(thread_ref.clone()),
+                thread_id: None,
+            })
+        );
+        assert_eq!(GIT_ACTION_PROGRESS_TOAST_TICK_MS, 1_000);
+        assert_eq!(
+            git_action_progress_toast_start(None, None).title,
+            GIT_ACTION_PROGRESS_FALLBACK_TITLE
+        );
+
+        let live_status = GitStatusSnapshot {
+            ref_name: Some("feature/toast-scope".to_string()),
+            has_working_tree_changes: false,
+            has_upstream: true,
+            ahead_count: 1,
+            behind_count: 0,
+            ahead_of_default_count: Some(1),
+            has_open_pr: false,
+        };
+        let draft = ThreadActionDraftThreadContext {
+            environment_id: "environment-local".to_string(),
+            project_id: "project-1".to_string(),
+            branch: None,
+            worktree_path: None,
+            env_mode: DraftThreadEnvMode::Local,
+        };
+        assert_eq!(
+            resolve_git_thread_branch_sync_plan(None, Some(&draft), Some(&live_status), false),
+            GitThreadBranchSyncPlan::UpdateDraftThread {
+                branch: Some("feature/toast-scope".to_string()),
+                worktree_path: None,
+            }
+        );
+
+        let worktree_base_draft = ThreadActionDraftThreadContext {
+            branch: Some("feature/base-branch".to_string()),
+            env_mode: DraftThreadEnvMode::Worktree,
+            ..draft.clone()
+        };
+        assert_eq!(
+            resolve_git_thread_branch_sync_plan(
+                None,
+                Some(&worktree_base_draft),
+                Some(&live_status),
+                false,
+            ),
+            GitThreadBranchSyncPlan::Noop
+        );
+
+        let semantic_server_thread = GitThreadMetadata {
+            branch: Some("t3code/github-query-rate-limit".to_string()),
+            worktree_path: Some("/repo/.worktrees/thread".to_string()),
+        };
+        let temp_status = GitStatusSnapshot {
+            ref_name: Some("t3code/bda76797".to_string()),
+            ..live_status
+        };
+        assert_eq!(
+            resolve_git_thread_branch_sync_plan(
+                Some(&semantic_server_thread),
+                None,
+                Some(&temp_status),
+                false,
+            ),
+            GitThreadBranchSyncPlan::Noop
+        );
+        assert!(is_temporary_worktree_branch(" t3code/DEADBEEF "));
+        assert!(!is_temporary_worktree_branch("t3code/deadbeef-extra"));
     }
 
     #[test]

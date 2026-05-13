@@ -2555,6 +2555,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace diff_panel_render_contract_matches_upstream_components`; `cargo test --workspace diff_route_search_matches_upstream_parser_contract`",
             "Wire exact GPUI diff rendering, turn strip scrolling, file collapse state, checkpoint diff query lifecycle, raw patch fallback, editor-open actions, and browser visual parity.",
         )
+    } else if path == "apps/web/src/components/GitActionsControl.browser.tsx"
+        || path == "apps/web/src/components/GitActionsControl.tsx"
+    {
+        (
+            "GitActionsControl render/action shell plus browser contracts for thread-scoped progress toast data, 250ms focus/visibility refresh debounce, live server/draft branch sync, worktree-base guard, and menu/action classes in crates/r3_core/src/lib.rs and crates/r3_ui/src/shell.rs",
+            "partial",
+            "`cargo test --workspace git_actions_browser_contracts_match_upstream_component`; `cargo test --workspace git_action_menu_items_match_upstream_clean_main_status`; current screenshot gates where captured",
+            "Wire full commit/push/PR dialogs, publish repository wizard, disabled-reason tooltips, progress event subscription, source-control refresh, editor-open actions, and live git mutations.",
+        )
     } else if path == "apps/web/src/components/GitActionsControl.logic.test.ts"
         || path == "apps/web/src/components/GitActionsControl.logic.ts"
     {
