@@ -3794,9 +3794,11 @@ pub enum RuntimeMode {
     FullAccess,
 }
 
+pub const DEFAULT_RUNTIME_MODE: RuntimeMode = RuntimeMode::FullAccess;
+
 impl Default for RuntimeMode {
     fn default() -> Self {
-        Self::FullAccess
+        DEFAULT_RUNTIME_MODE
     }
 }
 
@@ -3806,9 +3808,11 @@ pub enum ProviderInteractionMode {
     Plan,
 }
 
+pub const DEFAULT_INTERACTION_MODE: ProviderInteractionMode = ProviderInteractionMode::Default;
+
 impl Default for ProviderInteractionMode {
     fn default() -> Self {
-        Self::Default
+        DEFAULT_INTERACTION_MODE
     }
 }
 
@@ -38071,6 +38075,15 @@ mod tests {
 
     #[test]
     fn default_terminal_state_matches_upstream_contract() {
+        assert_eq!(DEFAULT_RUNTIME_MODE, RuntimeMode::FullAccess);
+        assert_eq!(RuntimeMode::default(), RuntimeMode::FullAccess);
+        assert_eq!(DEFAULT_INTERACTION_MODE, ProviderInteractionMode::Default);
+        assert_eq!(
+            ProviderInteractionMode::default(),
+            ProviderInteractionMode::Default
+        );
+        assert_eq!(DEFAULT_THREAD_TERMINAL_ID, "default");
+        assert_eq!(MAX_TERMINALS_PER_GROUP, 4);
         assert_eq!(
             create_default_thread_terminal_state(),
             ThreadTerminalState {

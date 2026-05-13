@@ -1781,6 +1781,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core derives_thread_from_environment_state_in_id_order`; `cargo test -p r3_core missing_thread_shell_returns_none`",
             "Port referential caching semantics for unchanged shell/session/collection identities and wire into live GPUI selectors.",
         )
+    } else if path == "apps/web/src/types.ts" {
+        (
+            "web thread/message/session/proposed-plan/diff/terminal shape structs, session phase variants, runtime/interaction defaults, default terminal height/id, and max terminal group size in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core default_terminal_state_matches_upstream_contract`; `cargo test -p r3_core derives_thread_from_environment_state_in_id_order`",
+            "Add remaining live modelSelection/project shape wiring and keep generated Rust DTOs aligned as upstream contract fields evolve.",
+        )
     } else if path == "apps/web/src/markdown-links.ts"
         || path == "apps/web/src/markdown-links.test.ts"
     {
