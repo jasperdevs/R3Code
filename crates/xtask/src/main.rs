@@ -2478,6 +2478,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace environment_api_facade_matches_upstream_contract`",
             "Wire the facade into live WsRpcClient instances, runtime connection lookup, and test override storage in GPUI runtime.",
         )
+    } else if path == "apps/web/src/authBootstrap.test.ts" {
+        (
+            "primary auth bootstrap request URL/method/body/credentials plans, pairing token submission validation, pairing link/client list/revoke endpoint shapes, revoke-others POST behavior, transient retry/gate helpers, and authenticated-session wait timeout constants in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace primary_auth_endpoint_request_helpers_match_upstream_contract`; `cargo test --workspace primary_environment_target_and_auth_helpers_match_upstream_contract`",
+            "Wire these request contracts into live fetch, browser history mutation, promise memoization, retry timers, and authenticated gate caching.",
+        )
     } else if path.starts_with("apps/web/src/environments/")
         || path.starts_with("apps/web/src/environment")
         || path.starts_with("apps/web/src/auth")

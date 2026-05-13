@@ -19350,6 +19350,201 @@ pub fn format_environment_api_not_found_error(environment_id: &str) -> String {
     format!("Environment API not found for environment {environment_id}")
 }
 
+pub const PRIMARY_AUTH_SESSION_PATH: &str = "/api/auth/session";
+pub const PRIMARY_AUTH_BOOTSTRAP_PATH: &str = "/api/auth/bootstrap";
+pub const PRIMARY_AUTH_PAIRING_TOKEN_PATH: &str = "/api/auth/pairing-token";
+pub const PRIMARY_AUTH_PAIRING_LINKS_PATH: &str = "/api/auth/pairing-links";
+pub const PRIMARY_AUTH_PAIRING_LINK_REVOKE_PATH: &str = "/api/auth/pairing-links/revoke";
+pub const PRIMARY_AUTH_CLIENTS_PATH: &str = "/api/auth/clients";
+pub const PRIMARY_AUTH_CLIENT_REVOKE_PATH: &str = "/api/auth/clients/revoke";
+pub const PRIMARY_AUTH_CLIENT_REVOKE_OTHERS_PATH: &str = "/api/auth/clients/revoke-others";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrimaryAuthRequestPlan {
+    pub url: String,
+    pub method: String,
+    pub credentials_include: bool,
+    pub content_type_json: bool,
+    pub body_json: Option<String>,
+}
+
+pub fn primary_auth_request_plan(
+    primary_http_base_url: &str,
+    pathname: &str,
+    method: Option<&str>,
+    body_json: Option<String>,
+    configured_dev_server_url: Option<&str>,
+    current_href: &str,
+) -> Option<PrimaryAuthRequestPlan> {
+    Some(PrimaryAuthRequestPlan {
+        url: resolve_primary_environment_http_url(
+            primary_http_base_url,
+            pathname,
+            &[],
+            configured_dev_server_url,
+            current_href,
+        )?,
+        method: method.unwrap_or("GET").to_string(),
+        credentials_include: true,
+        content_type_json: body_json.is_some(),
+        body_json,
+    })
+}
+
+pub fn fetch_primary_session_state_request(
+    primary_http_base_url: &str,
+    configured_dev_server_url: Option<&str>,
+    current_href: &str,
+) -> Option<PrimaryAuthRequestPlan> {
+    primary_auth_request_plan(
+        primary_http_base_url,
+        PRIMARY_AUTH_SESSION_PATH,
+        None,
+        None,
+        configured_dev_server_url,
+        current_href,
+    )
+}
+
+pub fn exchange_primary_bootstrap_credential_request(
+    primary_http_base_url: &str,
+    credential: &str,
+    configured_dev_server_url: Option<&str>,
+    current_href: &str,
+) -> Option<PrimaryAuthRequestPlan> {
+    primary_auth_request_plan(
+        primary_http_base_url,
+        PRIMARY_AUTH_BOOTSTRAP_PATH,
+        Some("POST"),
+        Some(format!(
+            "{{\"credential\":\"{}\"}}",
+            json_escape_string(credential)
+        )),
+        configured_dev_server_url,
+        current_href,
+    )
+}
+
+pub fn submit_server_auth_credential_plan(credential: &str) -> Result<String, String> {
+    let trimmed = credential.trim();
+    if trimmed.is_empty() {
+        return Err("Enter a pairing token to continue.".to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+pub fn create_server_pairing_credential_request(
+    primary_http_base_url: &str,
+    label: Option<&str>,
+    configured_dev_server_url: Option<&str>,
+    current_href: &str,
+) -> Option<PrimaryAuthRequestPlan> {
+    let trimmed_label = label.map(str::trim).filter(|label| !label.is_empty());
+    let body_json = trimmed_label
+        .map(|label| format!("{{\"label\":\"{}\"}}", json_escape_string(label)))
+        .unwrap_or_else(|| "{}".to_string());
+    primary_auth_request_plan(
+        primary_http_base_url,
+        PRIMARY_AUTH_PAIRING_TOKEN_PATH,
+        Some("POST"),
+        Some(body_json),
+        configured_dev_server_url,
+        current_href,
+    )
+}
+
+pub fn list_server_pairing_links_request(
+    primary_http_base_url: &str,
+    configured_dev_server_url: Option<&str>,
+    current_href: &str,
+) -> Option<PrimaryAuthRequestPlan> {
+    primary_auth_request_plan(
+        primary_http_base_url,
+        PRIMARY_AUTH_PAIRING_LINKS_PATH,
+        None,
+        None,
+        configured_dev_server_url,
+        current_href,
+    )
+}
+
+pub fn revoke_server_pairing_link_request(
+    primary_http_base_url: &str,
+    id: &str,
+    configured_dev_server_url: Option<&str>,
+    current_href: &str,
+) -> Option<PrimaryAuthRequestPlan> {
+    primary_auth_request_plan(
+        primary_http_base_url,
+        PRIMARY_AUTH_PAIRING_LINK_REVOKE_PATH,
+        Some("POST"),
+        Some(format!("{{\"id\":\"{}\"}}", json_escape_string(id))),
+        configured_dev_server_url,
+        current_href,
+    )
+}
+
+pub fn list_server_client_sessions_request(
+    primary_http_base_url: &str,
+    configured_dev_server_url: Option<&str>,
+    current_href: &str,
+) -> Option<PrimaryAuthRequestPlan> {
+    primary_auth_request_plan(
+        primary_http_base_url,
+        PRIMARY_AUTH_CLIENTS_PATH,
+        None,
+        None,
+        configured_dev_server_url,
+        current_href,
+    )
+}
+
+pub fn revoke_server_client_session_request(
+    primary_http_base_url: &str,
+    session_id: &str,
+    configured_dev_server_url: Option<&str>,
+    current_href: &str,
+) -> Option<PrimaryAuthRequestPlan> {
+    primary_auth_request_plan(
+        primary_http_base_url,
+        PRIMARY_AUTH_CLIENT_REVOKE_PATH,
+        Some("POST"),
+        Some(format!(
+            "{{\"sessionId\":\"{}\"}}",
+            json_escape_string(session_id)
+        )),
+        configured_dev_server_url,
+        current_href,
+    )
+}
+
+pub fn revoke_other_server_client_sessions_request(
+    primary_http_base_url: &str,
+    configured_dev_server_url: Option<&str>,
+    current_href: &str,
+) -> Option<PrimaryAuthRequestPlan> {
+    primary_auth_request_plan(
+        primary_http_base_url,
+        PRIMARY_AUTH_CLIENT_REVOKE_OTHERS_PATH,
+        Some("POST"),
+        None,
+        configured_dev_server_url,
+        current_href,
+    )
+}
+
+pub fn primary_auth_fallback_error(operation: &str, status: u16) -> String {
+    format!("Failed to {operation} ({status}).")
+}
+
+pub fn should_continue_waiting_for_authenticated_session(elapsed_ms: u64) -> bool {
+    elapsed_ms < AUTH_SESSION_ESTABLISH_TIMEOUT_MS
+}
+
+pub fn authenticated_session_timeout_error() -> &'static str {
+    "Timed out waiting for authenticated session after bootstrap."
+}
+
 fn json_escape_string(value: &str) -> String {
     let encoded = serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string());
     encoded
@@ -29083,6 +29278,114 @@ mod tests {
         assert_eq!(
             format_environment_api_not_found_error("environment-a"),
             "Environment API not found for environment environment-a"
+        );
+    }
+
+    #[test]
+    fn primary_auth_endpoint_request_helpers_match_upstream_contract() {
+        let base = "http://localhost:3773/";
+        let href = "http://localhost:5173/";
+        assert_eq!(
+            fetch_primary_session_state_request(base, None, href).unwrap(),
+            PrimaryAuthRequestPlan {
+                url: "http://localhost:3773/api/auth/session".to_string(),
+                method: "GET".to_string(),
+                credentials_include: true,
+                content_type_json: false,
+                body_json: None,
+            }
+        );
+        assert_eq!(
+            fetch_primary_session_state_request(
+                "http://127.0.0.1:3773/",
+                Some("http://127.0.0.1:5733"),
+                "http://127.0.0.1:5733/",
+            )
+            .unwrap()
+            .url,
+            "http://127.0.0.1:5733/api/auth/session"
+        );
+        assert_eq!(
+            exchange_primary_bootstrap_credential_request(base, "bad\"token", None, href).unwrap(),
+            PrimaryAuthRequestPlan {
+                url: "http://localhost:3773/api/auth/bootstrap".to_string(),
+                method: "POST".to_string(),
+                credentials_include: true,
+                content_type_json: true,
+                body_json: Some("{\"credential\":\"bad\\\"token\"}".to_string()),
+            }
+        );
+        assert_eq!(
+            submit_server_auth_credential_plan("  retry-token  ").unwrap(),
+            "retry-token"
+        );
+        assert_eq!(
+            submit_server_auth_credential_plan("   ").unwrap_err(),
+            "Enter a pairing token to continue."
+        );
+        assert_eq!(
+            create_server_pairing_credential_request(base, Some(" Julius iPhone "), None, href)
+                .unwrap(),
+            PrimaryAuthRequestPlan {
+                url: "http://localhost:3773/api/auth/pairing-token".to_string(),
+                method: "POST".to_string(),
+                credentials_include: true,
+                content_type_json: true,
+                body_json: Some("{\"label\":\"Julius iPhone\"}".to_string()),
+            }
+        );
+        assert_eq!(
+            create_server_pairing_credential_request(base, Some("   "), None, href)
+                .unwrap()
+                .body_json
+                .as_deref(),
+            Some("{}")
+        );
+        assert_eq!(
+            list_server_pairing_links_request(base, None, href)
+                .unwrap()
+                .url,
+            "http://localhost:3773/api/auth/pairing-links"
+        );
+        assert_eq!(
+            revoke_server_pairing_link_request(base, "link-1", None, href)
+                .unwrap()
+                .body_json
+                .as_deref(),
+            Some("{\"id\":\"link-1\"}")
+        );
+        assert_eq!(
+            list_server_client_sessions_request(base, None, href)
+                .unwrap()
+                .url,
+            "http://localhost:3773/api/auth/clients"
+        );
+        assert_eq!(
+            revoke_server_client_session_request(base, "session-1", None, href)
+                .unwrap()
+                .body_json
+                .as_deref(),
+            Some("{\"sessionId\":\"session-1\"}")
+        );
+        assert_eq!(
+            revoke_other_server_client_sessions_request(base, None, href).unwrap(),
+            PrimaryAuthRequestPlan {
+                url: "http://localhost:3773/api/auth/clients/revoke-others".to_string(),
+                method: "POST".to_string(),
+                credentials_include: true,
+                content_type_json: false,
+                body_json: None,
+            }
+        );
+        assert_eq!(
+            primary_auth_fallback_error("load server auth session state", 503),
+            "Failed to load server auth session state (503)."
+        );
+        assert!(should_continue_waiting_for_authenticated_session(1_999));
+        assert!(!should_continue_waiting_for_authenticated_session(2_000));
+        assert_eq!(
+            authenticated_session_timeout_error(),
+            "Timed out waiting for authenticated session after bootstrap."
         );
     }
 
