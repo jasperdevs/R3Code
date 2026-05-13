@@ -2025,6 +2025,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core project_script_keybindings_match_upstream_contract`",
             "Wire helpers into live GPUI project script settings keybinding editor and persistence flow.",
         )
+    } else if path == "apps/web/src/lib/storage.ts" {
+        (
+            "memory state storage get/set/remove, storage shape fallback resolution, debounced set/flush/remove semantics, and default debounce wait in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core state_storage_helpers_match_upstream_contract`",
+            "Wire debounced storage adapter into live GPUI persistence surfaces that replace browser storage.",
+        )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
             "logical project path normalization, physical/grouping/order keys, repository-scoped keys, settings override resolution, ref fallback, and group-label helpers in crates/r3_core/src/lib.rs",

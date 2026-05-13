@@ -500,6 +500,32 @@ pub struct ProjectSearchEntriesQueryOptionsPlan {
     pub placeholder_truncated: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StateStorageShape {
+    pub present: bool,
+    pub has_get_item: bool,
+    pub has_set_item: bool,
+    pub has_remove_item: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StateStorageResolution {
+    Provided,
+    MemoryFallback,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemoryStateStorage {
+    store: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DebouncedMemoryStorage {
+    base: MemoryStateStorage,
+    pending_set: Option<(String, String)>,
+    debounce_ms: u64,
+}
+
 pub const INLINE_TERMINAL_CONTEXT_PLACEHOLDER: char = '\u{FFFC}';
 pub const RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY: &str = "(max-width: 980px)";
 pub const WINDOW_CONTROLS_OVERLAY_CLASS_NAME: &str = "wco";
@@ -15011,6 +15037,79 @@ pub fn project_search_entries_query_options_plan(
     }
 }
 
+pub const DEFAULT_DEBOUNCED_STORAGE_WAIT_MS: u64 = 300;
+
+impl MemoryStateStorage {
+    pub fn new() -> Self {
+        Self {
+            store: BTreeMap::new(),
+        }
+    }
+
+    pub fn get_item(&self, name: &str) -> Option<&str> {
+        self.store.get(name).map(String::as_str)
+    }
+
+    pub fn set_item(&mut self, name: &str, value: &str) {
+        self.store.insert(name.to_string(), value.to_string());
+    }
+
+    pub fn remove_item(&mut self, name: &str) {
+        self.store.remove(name);
+    }
+}
+
+impl Default for MemoryStateStorage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub fn is_state_storage(shape: StateStorageShape) -> bool {
+    shape.present && shape.has_get_item && shape.has_set_item && shape.has_remove_item
+}
+
+pub fn resolve_storage(shape: StateStorageShape) -> StateStorageResolution {
+    if is_state_storage(shape) {
+        StateStorageResolution::Provided
+    } else {
+        StateStorageResolution::MemoryFallback
+    }
+}
+
+impl DebouncedMemoryStorage {
+    pub fn new(base: MemoryStateStorage, debounce_ms: Option<u64>) -> Self {
+        Self {
+            base,
+            pending_set: None,
+            debounce_ms: debounce_ms.unwrap_or(DEFAULT_DEBOUNCED_STORAGE_WAIT_MS),
+        }
+    }
+
+    pub fn debounce_ms(&self) -> u64 {
+        self.debounce_ms
+    }
+
+    pub fn get_item(&self, name: &str) -> Option<&str> {
+        self.base.get_item(name)
+    }
+
+    pub fn set_item(&mut self, name: &str, value: &str) {
+        self.pending_set = Some((name.to_string(), value.to_string()));
+    }
+
+    pub fn remove_item(&mut self, name: &str) {
+        self.pending_set = None;
+        self.base.remove_item(name);
+    }
+
+    pub fn flush(&mut self) {
+        if let Some((name, value)) = self.pending_set.take() {
+            self.base.set_item(&name, &value);
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ProjectAbsolutePathParts {
     root: String,
@@ -22442,6 +22541,53 @@ mod tests {
             project_query_key_all(),
             vec![ProjectReactQueryKeyPart::String("projects".to_string())]
         );
+    }
+
+    #[test]
+    fn state_storage_helpers_match_upstream_contract() {
+        let mut memory = MemoryStateStorage::new();
+        assert_eq!(memory.get_item("theme"), None);
+        memory.set_item("theme", "dark");
+        assert_eq!(memory.get_item("theme"), Some("dark"));
+        memory.remove_item("theme");
+        assert_eq!(memory.get_item("theme"), None);
+
+        assert!(is_state_storage(StateStorageShape {
+            present: true,
+            has_get_item: true,
+            has_set_item: true,
+            has_remove_item: true,
+        }));
+        assert!(!is_state_storage(StateStorageShape {
+            present: true,
+            has_get_item: true,
+            has_set_item: false,
+            has_remove_item: true,
+        }));
+        assert_eq!(
+            resolve_storage(StateStorageShape {
+                present: false,
+                has_get_item: true,
+                has_set_item: true,
+                has_remove_item: true,
+            }),
+            StateStorageResolution::MemoryFallback
+        );
+
+        let mut debounced = DebouncedMemoryStorage::new(MemoryStateStorage::new(), None);
+        assert_eq!(debounced.debounce_ms(), 300);
+        debounced.set_item("draft", "first");
+        assert_eq!(debounced.get_item("draft"), None);
+        debounced.set_item("draft", "second");
+        debounced.flush();
+        assert_eq!(debounced.get_item("draft"), Some("second"));
+        debounced.set_item("draft", "third");
+        debounced.remove_item("draft");
+        debounced.flush();
+        assert_eq!(debounced.get_item("draft"), None);
+
+        let custom = DebouncedMemoryStorage::new(MemoryStateStorage::new(), Some(25));
+        assert_eq!(custom.debounce_ms(), 25);
     }
 
     #[test]
