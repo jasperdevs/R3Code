@@ -290,6 +290,9 @@ pub const WS_RECONNECT_MAX_RETRIES: usize = 7;
 pub const WS_RECONNECT_MAX_ATTEMPTS: usize = WS_RECONNECT_MAX_RETRIES + 1;
 pub const SLOW_RPC_ACK_THRESHOLD_MS: i64 = 15_000;
 pub const MAX_TRACKED_RPC_ACK_REQUESTS: usize = 256;
+pub const ARCHIVED_THREADS_STALE_TIME_MS: u64 = 5_000;
+pub const ARCHIVED_THREADS_IDLE_TTL_MS: u64 = 5 * 60_000;
+pub const ARCHIVED_THREADS_ENVIRONMENT_KEY_SEPARATOR: &str = "\u{001f}";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlineTerminalContextInsertion {
@@ -2249,6 +2252,36 @@ fn append_slow_rpc_ack_request(
         next.slow_requests.drain(0..excess);
     }
     next
+}
+
+pub fn make_archived_threads_environment_key(environment_ids: &[String]) -> String {
+    let mut sorted_environment_ids = environment_ids.to_vec();
+    sorted_environment_ids.sort();
+    sorted_environment_ids.join(ARCHIVED_THREADS_ENVIRONMENT_KEY_SEPARATOR)
+}
+
+pub fn parse_archived_threads_environment_key(key: &str) -> Vec<String> {
+    if key.is_empty() {
+        return Vec::new();
+    }
+    key.split(ARCHIVED_THREADS_ENVIRONMENT_KEY_SEPARATOR)
+        .map(ToString::to_string)
+        .collect()
+}
+
+pub fn archived_threads_keys_to_refresh_for_environment(
+    known_environment_keys: &BTreeSet<String>,
+    environment_id: &str,
+) -> Vec<String> {
+    known_environment_keys
+        .iter()
+        .filter(|key| {
+            parse_archived_threads_environment_key(key)
+                .iter()
+                .any(|key_environment_id| key_environment_id == environment_id)
+        })
+        .cloned()
+        .collect()
 }
 
 pub fn get_ws_connection_ui_state(status: &WsConnectionStatus) -> WsConnectionUiState {
@@ -26242,6 +26275,49 @@ mod tests {
             clear_all_tracked_rpc_requests(&capacity_state)
                 .pending_requests
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn archived_threads_environment_keys_match_upstream_logic() {
+        assert_eq!(ARCHIVED_THREADS_STALE_TIME_MS, 5_000);
+        assert_eq!(ARCHIVED_THREADS_IDLE_TTL_MS, 300_000);
+        assert_eq!(
+            make_archived_threads_environment_key(&[
+                "environment-b".to_string(),
+                "environment-a".to_string()
+            ]),
+            format!(
+                "environment-a{}environment-b",
+                ARCHIVED_THREADS_ENVIRONMENT_KEY_SEPARATOR
+            )
+        );
+        assert_eq!(
+            parse_archived_threads_environment_key(""),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            parse_archived_threads_environment_key(&make_archived_threads_environment_key(&[
+                "environment-b".to_string(),
+                "environment-a".to_string()
+            ])),
+            vec!["environment-a".to_string(), "environment-b".to_string()]
+        );
+
+        let known_keys = BTreeSet::from([
+            make_archived_threads_environment_key(&["environment-a".to_string()]),
+            make_archived_threads_environment_key(&[
+                "environment-b".to_string(),
+                "environment-c".to_string(),
+            ]),
+            make_archived_threads_environment_key(&["environment-d".to_string()]),
+        ]);
+        assert_eq!(
+            archived_threads_keys_to_refresh_for_environment(&known_keys, "environment-b"),
+            vec![make_archived_threads_environment_key(&[
+                "environment-b".to_string(),
+                "environment-c".to_string(),
+            ])]
         );
     }
 

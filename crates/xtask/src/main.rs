@@ -1743,6 +1743,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core terminal_state_cleanup`",
             "Wire helper into the live GPUI terminal state store cleanup path.",
         )
+    } else if path == "apps/web/src/lib/archivedThreadsState.ts" {
+        (
+            "archived-thread environment key sort/parse and refresh matching helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core archived_threads_environment_keys`",
+            "Wire helpers into live GPUI archived-thread snapshot loading and refresh.",
+        )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
             "logical project path normalization, physical/grouping/order keys, repository-scoped keys, settings override resolution, ref fallback, and group-label helpers in crates/r3_core/src/lib.rs",

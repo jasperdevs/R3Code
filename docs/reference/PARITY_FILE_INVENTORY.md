@@ -738,7 +738,7 @@ Do not edit individual rows by hand; update `crates/xtask/src/main.rs` classific
 | `apps/web/src/index.css` | crates/r3_ui/src/shell.rs | `partial` | Current visual gates only cover selected states | Classify exact web app behavior and add missing GPUI/screenshots. |
 | `apps/web/src/keybindings.test.ts` | crates/r3_ui/src/shell.rs | `partial` | Current visual gates only cover selected states | Classify exact web app behavior and add missing GPUI/screenshots. |
 | `apps/web/src/keybindings.ts` | crates/r3_ui/src/shell.rs | `partial` | Current visual gates only cover selected states | Classify exact web app behavior and add missing GPUI/screenshots. |
-| `apps/web/src/lib/archivedThreadsState.ts` | crates/r3_ui/src/shell.rs | `partial` | Current visual gates only cover selected states | Classify exact web app behavior and add missing GPUI/screenshots. |
+| `apps/web/src/lib/archivedThreadsState.ts` | archived-thread environment key sort/parse and refresh matching helpers in crates/r3_core/src/lib.rs | `partial` | `cargo test -p r3_core archived_threads_environment_keys` | Wire helpers into live GPUI archived-thread snapshot loading and refresh. |
 | `apps/web/src/lib/chatThreadActions.test.ts` | crates/r3_ui/src/shell.rs | `partial` | Current visual gates only cover selected states | Classify exact web app behavior and add missing GPUI/screenshots. |
 | `apps/web/src/lib/chatThreadActions.ts` | crates/r3_ui/src/shell.rs | `partial` | Current visual gates only cover selected states | Classify exact web app behavior and add missing GPUI/screenshots. |
 | `apps/web/src/lib/contextWindow.test.ts` | crates/r3_ui/src/shell.rs | `partial` | Current visual gates only cover selected states | Classify exact web app behavior and add missing GPUI/screenshots. |
