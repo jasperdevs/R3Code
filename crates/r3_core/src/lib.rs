@@ -6348,6 +6348,92 @@ pub fn project_script_runtime_env(
     env
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectSetupScriptRunnerInput {
+    pub thread_id: String,
+    pub project_id: Option<String>,
+    pub project_cwd: Option<String>,
+    pub worktree_path: String,
+    pub preferred_terminal_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectSetupTerminalOpenPlan {
+    pub thread_id: String,
+    pub terminal_id: String,
+    pub cwd: String,
+    pub worktree_path: String,
+    pub env: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectSetupTerminalWritePlan {
+    pub thread_id: String,
+    pub terminal_id: String,
+    pub data: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectSetupScriptStarted {
+    pub script_id: String,
+    pub script_name: String,
+    pub terminal_id: String,
+    pub cwd: String,
+    pub open: ProjectSetupTerminalOpenPlan,
+    pub write: ProjectSetupTerminalWritePlan,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProjectSetupScriptRunnerDecision {
+    NoScript,
+    Started(ProjectSetupScriptStarted),
+    Error { message: String },
+}
+
+pub fn resolve_project_setup_script_run(
+    input: &ProjectSetupScriptRunnerInput,
+    project_by_id: Option<&ProjectSummary>,
+    active_project_by_cwd: Option<&ProjectSummary>,
+) -> ProjectSetupScriptRunnerDecision {
+    let project = project_by_id.or(active_project_by_cwd);
+    let Some(project) = project else {
+        return ProjectSetupScriptRunnerDecision::Error {
+            message: "Project was not found for setup script execution.".to_string(),
+        };
+    };
+    let Some(script) = setup_project_script(&project.scripts) else {
+        return ProjectSetupScriptRunnerDecision::NoScript;
+    };
+
+    let terminal_id = input
+        .preferred_terminal_id
+        .clone()
+        .unwrap_or_else(|| format!("setup-{}", script.id));
+    let cwd = input.worktree_path.clone();
+    let env = project_script_runtime_env(&project.path, Some(&input.worktree_path), &[]);
+    let open = ProjectSetupTerminalOpenPlan {
+        thread_id: input.thread_id.clone(),
+        terminal_id: terminal_id.clone(),
+        cwd: cwd.clone(),
+        worktree_path: input.worktree_path.clone(),
+        env,
+    };
+    let write = ProjectSetupTerminalWritePlan {
+        thread_id: input.thread_id.clone(),
+        terminal_id: terminal_id.clone(),
+        data: format!("{}\r", script.command),
+    };
+
+    ProjectSetupScriptRunnerDecision::Started(ProjectSetupScriptStarted {
+        script_id: script.id.clone(),
+        script_name: script.name.clone(),
+        terminal_id,
+        cwd,
+        open,
+        write,
+    })
+}
+
 pub fn should_show_open_in_picker(
     active_project_name: Option<&str>,
     active_thread_environment_id: &str,
@@ -16095,6 +16181,111 @@ mod tests {
         );
         assert_eq!(env.get("CUSTOM_FLAG").map(String::as_str), Some("1"));
         assert!(!env.contains_key("T3CODE_WORKTREE_PATH"));
+    }
+
+    #[test]
+    fn project_setup_script_runner_decisions_match_upstream_logic() {
+        let input = ProjectSetupScriptRunnerInput {
+            thread_id: "thread-1".to_string(),
+            project_id: Some("project-1".to_string()),
+            project_cwd: Some("/repo/project".to_string()),
+            worktree_path: "/repo/worktrees/a".to_string(),
+            preferred_terminal_id: None,
+        };
+
+        assert_eq!(
+            resolve_project_setup_script_run(&input, None, None),
+            ProjectSetupScriptRunnerDecision::Error {
+                message: "Project was not found for setup script execution.".to_string(),
+            }
+        );
+
+        let no_script_project = ProjectSummary {
+            id: "project-1".to_string(),
+            environment_id: "local".to_string(),
+            name: "Project".to_string(),
+            path: "/repo/project".to_string(),
+            scripts: Vec::new(),
+        };
+        assert_eq!(
+            resolve_project_setup_script_run(&input, Some(&no_script_project), None),
+            ProjectSetupScriptRunnerDecision::NoScript
+        );
+
+        let setup_project = ProjectSummary {
+            scripts: vec![ProjectScript {
+                id: "setup".to_string(),
+                name: "Setup".to_string(),
+                command: "bun install".to_string(),
+                icon: ProjectScriptIcon::Configure,
+                run_on_worktree_create: true,
+            }],
+            ..no_script_project.clone()
+        };
+        assert_eq!(
+            resolve_project_setup_script_run(&input, None, Some(&setup_project)),
+            ProjectSetupScriptRunnerDecision::Started(ProjectSetupScriptStarted {
+                script_id: "setup".to_string(),
+                script_name: "Setup".to_string(),
+                terminal_id: "setup-setup".to_string(),
+                cwd: "/repo/worktrees/a".to_string(),
+                open: ProjectSetupTerminalOpenPlan {
+                    thread_id: "thread-1".to_string(),
+                    terminal_id: "setup-setup".to_string(),
+                    cwd: "/repo/worktrees/a".to_string(),
+                    worktree_path: "/repo/worktrees/a".to_string(),
+                    env: BTreeMap::from([
+                        (
+                            "T3CODE_PROJECT_ROOT".to_string(),
+                            "/repo/project".to_string()
+                        ),
+                        (
+                            "T3CODE_WORKTREE_PATH".to_string(),
+                            "/repo/worktrees/a".to_string()
+                        ),
+                    ]),
+                },
+                write: ProjectSetupTerminalWritePlan {
+                    thread_id: "thread-1".to_string(),
+                    terminal_id: "setup-setup".to_string(),
+                    data: "bun install\r".to_string(),
+                },
+            })
+        );
+
+        let preferred = ProjectSetupScriptRunnerInput {
+            preferred_terminal_id: Some("setup-custom".to_string()),
+            ..input.clone()
+        };
+        let ProjectSetupScriptRunnerDecision::Started(started) =
+            resolve_project_setup_script_run(&preferred, Some(&setup_project), None)
+        else {
+            panic!("expected setup script to start");
+        };
+        assert_eq!(started.terminal_id, "setup-custom");
+        assert_eq!(started.open.terminal_id, "setup-custom");
+        assert_eq!(started.write.terminal_id, "setup-custom");
+
+        let fallback_project = ProjectSummary {
+            id: "project-2".to_string(),
+            name: "Fallback".to_string(),
+            path: "/repo/fallback".to_string(),
+            scripts: Vec::new(),
+            ..setup_project.clone()
+        };
+        let ProjectSetupScriptRunnerDecision::Started(started) =
+            resolve_project_setup_script_run(&input, Some(&setup_project), Some(&fallback_project))
+        else {
+            panic!("expected project id match to win");
+        };
+        assert_eq!(
+            started
+                .open
+                .env
+                .get("T3CODE_PROJECT_ROOT")
+                .map(String::as_str),
+            Some("/repo/project")
+        );
     }
 
     #[test]
