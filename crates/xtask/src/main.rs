@@ -1711,6 +1711,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core copy_to_clipboard_helpers_match_upstream_contract`",
             "Wire helper into live GPUI clipboard actions and real async clipboard/write timer behavior.",
         )
+    } else if path == "apps/web/src/hooks/useHandleNewThread.ts" {
+        (
+            "new-thread hook planning for preferred project ordering/default project ref, logical project key fallback, stored draft reuse and same-route no-op, option-scoped draft context patches, active unpromoted draft reuse, new draft/thread creation metadata, sticky-state application, and draft navigation decisions in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core handle_new_thread_helpers_match_upstream_draft_reuse_and_creation`",
+            "Wire helpers into live GPUI command palette/sidebar new-thread actions, composer draft store mutations, generated IDs/timestamps, and router navigation.",
+        )
     } else if path == "apps/web/src/hooks/useLocalStorage.ts" {
         (
             "R3-branded same-tab local-storage change event, isomorphic in-memory storage behavior, JSON encode/decode helpers, initial read fallback/error logging, null-as-remove setter plan, queued custom change event, key-change resync, storage/custom subscription names, and matching event filters in crates/r3_core/src/lib.rs",

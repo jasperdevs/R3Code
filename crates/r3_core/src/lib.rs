@@ -602,6 +602,37 @@ pub struct ThreadActionStartPlan {
     pub options: ThreadActionNewThreadOptions,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NewThreadPlanAction {
+    ReuseStoredDraft,
+    AlreadyOnStoredDraft,
+    ReuseActiveDraft,
+    CreateDraft,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewThreadDraftAssignment {
+    pub logical_project_key: String,
+    pub project_ref: ScopedProjectRef,
+    pub draft_id: String,
+    pub thread_id: String,
+    pub created_at: Option<String>,
+    pub runtime_mode: Option<RuntimeMode>,
+    pub interaction_mode: Option<ProviderInteractionMode>,
+    pub branch: Option<Option<String>>,
+    pub worktree_path: Option<Option<String>>,
+    pub env_mode: Option<DraftThreadEnvMode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewThreadPlan {
+    pub action: NewThreadPlanAction,
+    pub context_patch: Option<ThreadActionNewThreadOptions>,
+    pub assignment: NewThreadDraftAssignment,
+    pub apply_sticky_state_draft_id: Option<String>,
+    pub navigate_to_draft_id: Option<String>,
+}
+
 pub type ReactQueryKey = Vec<Option<String>>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17228,6 +17259,166 @@ pub fn start_new_local_thread_from_context_plan(
     })
 }
 
+pub fn ordered_project_refs_by_preferred_ids(
+    projects: &[LogicalProject],
+    preferred_ids: &[String],
+) -> Vec<ScopedProjectRef> {
+    if preferred_ids.is_empty() {
+        return projects
+            .iter()
+            .map(|project| scope_project_ref(&project.environment_id, &project.id))
+            .collect();
+    }
+
+    let mut items_by_id = BTreeMap::<String, &LogicalProject>::new();
+    for project in projects {
+        items_by_id.insert(get_project_order_key(project), project);
+    }
+    let preferred_id_set = preferred_ids.iter().collect::<BTreeSet<_>>();
+    let mut emitted_preferred_ids = BTreeSet::<&String>::new();
+    let mut ordered = Vec::new();
+    for id in preferred_ids {
+        if !emitted_preferred_ids.insert(id) {
+            continue;
+        }
+        if let Some(project) = items_by_id.get(id) {
+            ordered.push(scope_project_ref(&project.environment_id, &project.id));
+        }
+    }
+    for project in projects {
+        if !preferred_id_set.contains(&get_project_order_key(project)) {
+            ordered.push(scope_project_ref(&project.environment_id, &project.id));
+        }
+    }
+    ordered
+}
+
+pub fn default_project_ref_for_new_thread(
+    projects: &[LogicalProject],
+    preferred_ids: &[String],
+) -> Option<ScopedProjectRef> {
+    ordered_project_refs_by_preferred_ids(projects, preferred_ids)
+        .into_iter()
+        .next()
+}
+
+fn new_thread_options_has_context(options: &ThreadActionNewThreadOptions) -> bool {
+    options.branch.is_some() || options.worktree_path.is_some() || options.env_mode.is_some()
+}
+
+fn new_thread_context_patch(
+    options: &ThreadActionNewThreadOptions,
+) -> Option<ThreadActionNewThreadOptions> {
+    new_thread_options_has_context(options).then(|| options.clone())
+}
+
+pub fn resolve_new_thread_logical_project_key(
+    project_ref: &ScopedProjectRef,
+    projects: &[LogicalProject],
+    settings: &ProjectGroupingSettings,
+) -> String {
+    let project = projects.iter().find(|candidate| {
+        candidate.id == project_ref.project_id
+            && candidate.environment_id == project_ref.environment_id
+    });
+    project
+        .map(|project| derive_logical_project_key_from_settings(project, settings))
+        .unwrap_or_else(|| scoped_project_key(project_ref))
+}
+
+pub fn plan_new_thread_for_project(
+    project_ref: ScopedProjectRef,
+    options: ThreadActionNewThreadOptions,
+    projects: &[LogicalProject],
+    project_grouping_settings: &ProjectGroupingSettings,
+    current_route_target: Option<&ThreadRouteTarget>,
+    stored_draft_thread: Option<&DraftSessionState>,
+    latest_active_draft_thread: Option<&DraftSessionState>,
+    generated_draft_id: &str,
+    generated_thread_id: &str,
+    created_at: &str,
+) -> NewThreadPlan {
+    let logical_project_key =
+        resolve_new_thread_logical_project_key(&project_ref, projects, project_grouping_settings);
+
+    if let Some(stored) = stored_draft_thread {
+        let already_on_stored_draft = matches!(
+            current_route_target,
+            Some(ThreadRouteTarget::Draft { draft_id }) if draft_id == &stored.draft_id
+        );
+        return NewThreadPlan {
+            action: if already_on_stored_draft {
+                NewThreadPlanAction::AlreadyOnStoredDraft
+            } else {
+                NewThreadPlanAction::ReuseStoredDraft
+            },
+            context_patch: new_thread_context_patch(&options),
+            assignment: NewThreadDraftAssignment {
+                logical_project_key,
+                project_ref,
+                draft_id: stored.draft_id.clone(),
+                thread_id: stored.thread_ref.thread_id.clone(),
+                created_at: None,
+                runtime_mode: None,
+                interaction_mode: None,
+                branch: None,
+                worktree_path: None,
+                env_mode: None,
+            },
+            apply_sticky_state_draft_id: None,
+            navigate_to_draft_id: (!already_on_stored_draft).then(|| stored.draft_id.clone()),
+        };
+    }
+
+    if let (
+        Some(ThreadRouteTarget::Draft {
+            draft_id: active_draft_id,
+        }),
+        Some(active),
+    ) = (current_route_target, latest_active_draft_thread)
+    {
+        if active.logical_project_key == logical_project_key && active.promoted_to.is_none() {
+            return NewThreadPlan {
+                action: NewThreadPlanAction::ReuseActiveDraft,
+                context_patch: new_thread_context_patch(&options),
+                assignment: NewThreadDraftAssignment {
+                    logical_project_key,
+                    project_ref,
+                    draft_id: active_draft_id.clone(),
+                    thread_id: active.thread_ref.thread_id.clone(),
+                    created_at: Some(active.created_at.clone()),
+                    runtime_mode: Some(active.runtime_mode),
+                    interaction_mode: Some(active.interaction_mode),
+                    branch: options.branch.clone(),
+                    worktree_path: options.worktree_path.clone(),
+                    env_mode: options.env_mode,
+                },
+                apply_sticky_state_draft_id: None,
+                navigate_to_draft_id: None,
+            };
+        }
+    }
+
+    NewThreadPlan {
+        action: NewThreadPlanAction::CreateDraft,
+        context_patch: None,
+        assignment: NewThreadDraftAssignment {
+            logical_project_key,
+            project_ref,
+            draft_id: generated_draft_id.to_string(),
+            thread_id: generated_thread_id.to_string(),
+            created_at: Some(created_at.to_string()),
+            runtime_mode: Some(RuntimeMode::default()),
+            interaction_mode: None,
+            branch: Some(options.branch.unwrap_or(None)),
+            worktree_path: Some(options.worktree_path.unwrap_or(None)),
+            env_mode: Some(options.env_mode.unwrap_or(DraftThreadEnvMode::Local)),
+        },
+        apply_sticky_state_draft_id: Some(generated_draft_id.to_string()),
+        navigate_to_draft_id: Some(generated_draft_id.to_string()),
+    }
+}
+
 pub const GIT_BRANCHES_STALE_TIME_MS: u64 = 15_000;
 pub const GIT_BRANCHES_REFETCH_INTERVAL_MS: u64 = 60_000;
 pub const GIT_BRANCHES_PAGE_SIZE: u32 = 100;
@@ -25713,6 +25904,212 @@ mod tests {
         assert_eq!(
             start_new_local_thread_from_context_plan(&missing_context),
             None
+        );
+    }
+
+    #[test]
+    fn handle_new_thread_helpers_match_upstream_draft_reuse_and_creation() {
+        let settings = ProjectGroupingSettings {
+            sidebar_project_grouping_mode: SidebarProjectGroupingMode::Separate,
+            sidebar_project_grouping_overrides: BTreeMap::new(),
+        };
+        let project_a = LogicalProject {
+            id: "project-a".to_string(),
+            environment_id: "local".to_string(),
+            cwd: "/repo/a".to_string(),
+            name: "A".to_string(),
+            repository_identity: None,
+        };
+        let project_b = LogicalProject {
+            id: "project-b".to_string(),
+            environment_id: "local".to_string(),
+            cwd: "/repo/b".to_string(),
+            name: "B".to_string(),
+            repository_identity: None,
+        };
+        let project_a_ref = scope_project_ref("local", "project-a");
+        let project_b_ref = scope_project_ref("local", "project-b");
+        let project_a_key = derive_logical_project_key_from_settings(&project_a, &settings);
+        let project_b_key = derive_logical_project_key_from_settings(&project_b, &settings);
+        let projects = vec![project_a.clone(), project_b.clone()];
+
+        assert_eq!(
+            default_project_ref_for_new_thread(
+                &projects,
+                &vec![
+                    "missing".to_string(),
+                    get_project_order_key(&project_b),
+                    get_project_order_key(&project_b),
+                ],
+            ),
+            Some(project_b_ref.clone())
+        );
+        assert_eq!(
+            resolve_new_thread_logical_project_key(
+                &scope_project_ref("remote", "missing-project"),
+                &projects,
+                &settings,
+            ),
+            "remote:missing-project"
+        );
+
+        let stored = DraftSessionState {
+            draft_id: "draft-stored".to_string(),
+            thread_ref: ScopedThreadRef::new("local", "thread-stored"),
+            project_ref: project_a_ref.clone(),
+            logical_project_key: project_a_key.clone(),
+            created_at: "2026-05-13T01:00:00Z".to_string(),
+            runtime_mode: RuntimeMode::FullAccess,
+            interaction_mode: ProviderInteractionMode::Default,
+            branch: None,
+            worktree_path: None,
+            env_mode: DraftThreadEnvMode::Local,
+            promoted_to: None,
+        };
+        let options = ThreadActionNewThreadOptions {
+            branch: Some(Some("feature/reuse".to_string())),
+            worktree_path: Some(None),
+            env_mode: Some(DraftThreadEnvMode::Worktree),
+        };
+        assert_eq!(
+            plan_new_thread_for_project(
+                project_a_ref.clone(),
+                options.clone(),
+                &projects,
+                &settings,
+                None,
+                Some(&stored),
+                None,
+                "draft-new",
+                "thread-new",
+                "2026-05-13T02:00:00Z",
+            ),
+            NewThreadPlan {
+                action: NewThreadPlanAction::ReuseStoredDraft,
+                context_patch: Some(options.clone()),
+                assignment: NewThreadDraftAssignment {
+                    logical_project_key: project_a_key.clone(),
+                    project_ref: project_a_ref.clone(),
+                    draft_id: "draft-stored".to_string(),
+                    thread_id: "thread-stored".to_string(),
+                    created_at: None,
+                    runtime_mode: None,
+                    interaction_mode: None,
+                    branch: None,
+                    worktree_path: None,
+                    env_mode: None,
+                },
+                apply_sticky_state_draft_id: None,
+                navigate_to_draft_id: Some("draft-stored".to_string()),
+            }
+        );
+        assert_eq!(
+            plan_new_thread_for_project(
+                project_a_ref.clone(),
+                options.clone(),
+                &projects,
+                &settings,
+                Some(&ThreadRouteTarget::Draft {
+                    draft_id: "draft-stored".to_string(),
+                }),
+                Some(&stored),
+                None,
+                "draft-new",
+                "thread-new",
+                "2026-05-13T02:00:00Z",
+            )
+            .action,
+            NewThreadPlanAction::AlreadyOnStoredDraft
+        );
+
+        let active = DraftSessionState {
+            draft_id: "draft-active".to_string(),
+            thread_ref: ScopedThreadRef::new("local", "thread-active"),
+            project_ref: project_b_ref.clone(),
+            logical_project_key: project_b_key.clone(),
+            created_at: "2026-05-13T03:00:00Z".to_string(),
+            runtime_mode: RuntimeMode::AutoAcceptEdits,
+            interaction_mode: ProviderInteractionMode::Plan,
+            branch: Some("main".to_string()),
+            worktree_path: None,
+            env_mode: DraftThreadEnvMode::Worktree,
+            promoted_to: None,
+        };
+        let active_options = ThreadActionNewThreadOptions {
+            branch: Some(None),
+            worktree_path: None,
+            env_mode: Some(DraftThreadEnvMode::Local),
+        };
+        let active_plan = plan_new_thread_for_project(
+            project_b_ref.clone(),
+            active_options.clone(),
+            &projects,
+            &settings,
+            Some(&ThreadRouteTarget::Draft {
+                draft_id: "draft-active".to_string(),
+            }),
+            None,
+            Some(&active),
+            "draft-new",
+            "thread-new",
+            "2026-05-13T04:00:00Z",
+        );
+        assert_eq!(active_plan.action, NewThreadPlanAction::ReuseActiveDraft);
+        assert_eq!(active_plan.context_patch, Some(active_options));
+        assert_eq!(
+            active_plan.assignment,
+            NewThreadDraftAssignment {
+                logical_project_key: project_b_key.clone(),
+                project_ref: project_b_ref.clone(),
+                draft_id: "draft-active".to_string(),
+                thread_id: "thread-active".to_string(),
+                created_at: Some("2026-05-13T03:00:00Z".to_string()),
+                runtime_mode: Some(RuntimeMode::AutoAcceptEdits),
+                interaction_mode: Some(ProviderInteractionMode::Plan),
+                branch: Some(None),
+                worktree_path: None,
+                env_mode: Some(DraftThreadEnvMode::Local),
+            }
+        );
+
+        let create_plan = plan_new_thread_for_project(
+            project_b_ref.clone(),
+            ThreadActionNewThreadOptions::default(),
+            &projects,
+            &settings,
+            None,
+            None,
+            Some(&DraftSessionState {
+                promoted_to: Some(ScopedThreadRef::new("local", "promoted")),
+                ..active
+            }),
+            "draft-new",
+            "thread-new",
+            "2026-05-13T04:00:00Z",
+        );
+        assert_eq!(create_plan.action, NewThreadPlanAction::CreateDraft);
+        assert_eq!(
+            create_plan.assignment,
+            NewThreadDraftAssignment {
+                logical_project_key: project_b_key,
+                project_ref: project_b_ref,
+                draft_id: "draft-new".to_string(),
+                thread_id: "thread-new".to_string(),
+                created_at: Some("2026-05-13T04:00:00Z".to_string()),
+                runtime_mode: Some(RuntimeMode::FullAccess),
+                interaction_mode: None,
+                branch: Some(None),
+                worktree_path: Some(None),
+                env_mode: Some(DraftThreadEnvMode::Local),
+            }
+        );
+        assert_eq!(
+            create_plan.apply_sticky_state_draft_id.as_deref(),
+            Some("draft-new")
+        );
+        assert_eq!(
+            create_plan.navigate_to_draft_id.as_deref(),
+            Some("draft-new")
         );
     }
 
