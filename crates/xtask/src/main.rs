@@ -3154,6 +3154,19 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core effect_acp`",
             "Port generated schemas/types, Effect RPC clients, stdio transport, agent/client lifecycle, mock peers, probe examples, and live package wiring.",
         )
+    } else if matches!(
+        path,
+        "packages/ssh/package.json"
+            | "packages/ssh/tsconfig.json"
+            | "packages/tailscale/package.json"
+            | "packages/tailscale/tsconfig.json"
+    ) {
+        (
+            "SSH and Tailscale package metadata, scripts, export maps, dependency/version maps, and tsconfig include/extends contracts in crates/r3_core/src/package_surfaces.rs",
+            "partial",
+            "`cargo test -p r3_core package_surfaces`",
+            "Wire package build/typecheck/test surfaces and native module boundaries to the Rust crate layout while preserving SSH/Tailscale runtime behavior contracts.",
+        )
     } else if path.starts_with("packages/tailscale/") || path.starts_with("packages/ssh/") {
         (
             "selected helpers, including SSH config/command/auth/tunnel contracts and pairing endpoint helpers, in crates/r3_core/src/lib.rs",

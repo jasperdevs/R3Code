@@ -98,6 +98,17 @@ pub struct SharedPackageSurface {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UtilityPackageSurface {
+    pub metadata: PackageSurfaceMetadata,
+    pub exports: BTreeMap<&'static str, BTreeMap<&'static str, &'static str>>,
+    pub scripts: BTreeMap<&'static str, &'static str>,
+    pub dependencies: BTreeMap<&'static str, &'static str>,
+    pub dev_dependencies: BTreeMap<&'static str, &'static str>,
+    pub tsconfig_extends: &'static str,
+    pub tsconfig_include: Vec<&'static str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebPackageSurface {
     pub metadata: PackageSurfaceMetadata,
     pub scripts: BTreeMap<&'static str, &'static str>,
@@ -1109,6 +1120,74 @@ fn shared_export(
     (key, BTreeMap::from([("types", source), ("import", source)]))
 }
 
+pub fn ssh_package_surface() -> UtilityPackageSurface {
+    UtilityPackageSurface {
+        metadata: PackageSurfaceMetadata {
+            name: "@r3tools/ssh",
+            upstream_name: "@t3tools/ssh",
+            version: "0.0.0-alpha.1",
+            private: true,
+            module_type: "module",
+            main: None,
+            product_name: None,
+            files: Vec::new(),
+        },
+        exports: BTreeMap::from([
+            shared_export("./auth", "./src/auth.ts"),
+            shared_export("./command", "./src/command.ts"),
+            shared_export("./config", "./src/config.ts"),
+            shared_export("./errors", "./src/errors.ts"),
+            shared_export("./tunnel", "./src/tunnel.ts"),
+        ]),
+        scripts: BTreeMap::from([("typecheck", "tsc --noEmit"), ("test", "vitest run")]),
+        dependencies: BTreeMap::from([
+            ("@t3tools/contracts", "workspace:*"),
+            ("@t3tools/shared", "workspace:*"),
+            ("effect", "catalog:"),
+        ]),
+        dev_dependencies: BTreeMap::from([
+            ("@effect/language-service", "catalog:"),
+            ("@effect/platform-node", "catalog:"),
+            ("@effect/vitest", "catalog:"),
+            ("@types/node", "catalog:"),
+            ("typescript", "catalog:"),
+            ("vitest", "catalog:"),
+        ]),
+        tsconfig_extends: "../../tsconfig.base.json",
+        tsconfig_include: vec!["src"],
+    }
+}
+
+pub fn tailscale_package_surface() -> UtilityPackageSurface {
+    UtilityPackageSurface {
+        metadata: PackageSurfaceMetadata {
+            name: "@r3tools/tailscale",
+            upstream_name: "@t3tools/tailscale",
+            version: "0.0.0-alpha.1",
+            private: true,
+            module_type: "module",
+            main: None,
+            product_name: None,
+            files: Vec::new(),
+        },
+        exports: BTreeMap::from([shared_export(".", "./src/index.ts")]),
+        scripts: BTreeMap::from([("typecheck", "tsc --noEmit"), ("test", "vitest run")]),
+        dependencies: BTreeMap::from([
+            ("@effect/platform-node", "catalog:"),
+            ("effect", "catalog:"),
+        ]),
+        dev_dependencies: BTreeMap::from([
+            ("@effect/language-service", "catalog:"),
+            ("@effect/vitest", "catalog:"),
+            ("@types/node", "catalog:"),
+            ("typescript", "catalog:"),
+            ("vitest", "catalog:"),
+        ]),
+        tsconfig_extends: "../../tsconfig.base.json",
+        tsconfig_include: vec!["src"],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1499,5 +1578,41 @@ mod tests {
         assert!(shared.dev_dependencies.contains(&"@types/node"));
         assert_eq!(shared.tsconfig_extends, "../../tsconfig.base.json");
         assert_eq!(shared.tsconfig_include, vec!["src"]);
+    }
+
+    #[test]
+    fn ports_ssh_and_tailscale_package_surfaces() {
+        let ssh = ssh_package_surface();
+        assert_eq!(ssh.metadata.name, "@r3tools/ssh");
+        assert_eq!(ssh.metadata.upstream_name, "@t3tools/ssh");
+        assert_eq!(ssh.metadata.version, "0.0.0-alpha.1");
+        assert!(ssh.metadata.private);
+        assert_eq!(ssh.metadata.module_type, "module");
+        assert_eq!(ssh.exports["./auth"]["types"], "./src/auth.ts");
+        assert_eq!(ssh.exports["./command"]["import"], "./src/command.ts");
+        assert_eq!(ssh.exports["./config"]["types"], "./src/config.ts");
+        assert_eq!(ssh.exports["./errors"]["import"], "./src/errors.ts");
+        assert_eq!(ssh.exports["./tunnel"]["types"], "./src/tunnel.ts");
+        assert_eq!(ssh.scripts["typecheck"], "tsc --noEmit");
+        assert_eq!(ssh.scripts["test"], "vitest run");
+        assert_eq!(ssh.dependencies["@t3tools/contracts"], "workspace:*");
+        assert_eq!(ssh.dependencies["@t3tools/shared"], "workspace:*");
+        assert_eq!(ssh.dependencies["effect"], "catalog:");
+        assert_eq!(ssh.dev_dependencies["@effect/platform-node"], "catalog:");
+        assert_eq!(ssh.dev_dependencies["@types/node"], "catalog:");
+        assert_eq!(ssh.tsconfig_extends, "../../tsconfig.base.json");
+        assert_eq!(ssh.tsconfig_include, vec!["src"]);
+
+        let tailscale = tailscale_package_surface();
+        assert_eq!(tailscale.metadata.name, "@r3tools/tailscale");
+        assert_eq!(tailscale.metadata.upstream_name, "@t3tools/tailscale");
+        assert_eq!(tailscale.metadata.version, "0.0.0-alpha.1");
+        assert_eq!(tailscale.exports["."]["types"], "./src/index.ts");
+        assert_eq!(tailscale.scripts["typecheck"], "tsc --noEmit");
+        assert_eq!(tailscale.dependencies["@effect/platform-node"], "catalog:");
+        assert_eq!(tailscale.dependencies["effect"], "catalog:");
+        assert_eq!(tailscale.dev_dependencies["@effect/vitest"], "catalog:");
+        assert_eq!(tailscale.tsconfig_extends, "../../tsconfig.base.json");
+        assert_eq!(tailscale.tsconfig_include, vec!["src"]);
     }
 }
