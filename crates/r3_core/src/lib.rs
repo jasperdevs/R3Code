@@ -6196,6 +6196,14 @@ pub struct BitbucketApiRequestPlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BitbucketApiErrorContract {
+    pub operation: String,
+    pub detail: String,
+    pub status: Option<u16>,
+    pub cause: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceControlRepositoryErrorContract {
     pub provider: SourceControlProviderKind,
     pub operation: String,
@@ -6370,6 +6378,15 @@ impl SourceControlRepositoryErrorContract {
             self.operation,
             source_control_provider_kind_contract_value(self.provider),
             self.detail
+        )
+    }
+}
+
+impl BitbucketApiErrorContract {
+    pub fn message(&self) -> String {
+        format!(
+            "Bitbucket API failed in {}: {}",
+            self.operation, self.detail
         )
     }
 }
@@ -7793,6 +7810,57 @@ pub fn bitbucket_branching_model_request_plan(
     let mut plan = bitbucket_repository_request_plan(base_url, repository);
     plan.url.push_str("/branching-model");
     plan
+}
+
+fn bitbucket_api_error(
+    operation: &str,
+    detail: &str,
+    status: Option<u16>,
+    cause: Option<&str>,
+) -> BitbucketApiErrorContract {
+    BitbucketApiErrorContract {
+        operation: operation.to_string(),
+        detail: detail.to_string(),
+        status,
+        cause: trimmed_optional_string(cause),
+    }
+}
+
+pub fn bitbucket_api_request_error(operation: &str, cause: &str) -> BitbucketApiErrorContract {
+    bitbucket_api_error(operation, cause, None, Some(cause))
+}
+
+pub fn bitbucket_api_response_error(
+    operation: &str,
+    status: u16,
+    body: Option<&str>,
+) -> BitbucketApiErrorContract {
+    let detail = trimmed_optional_string(body)
+        .map(|body| format!("Bitbucket returned HTTP {status}: {body}"))
+        .unwrap_or_else(|| format!("Bitbucket returned HTTP {status}."));
+    bitbucket_api_error(operation, &detail, Some(status), None)
+}
+
+pub fn bitbucket_api_invalid_json_error(operation: &str, cause: &str) -> BitbucketApiErrorContract {
+    bitbucket_api_error(
+        operation,
+        "Bitbucket returned invalid JSON for the requested resource.",
+        None,
+        Some(cause),
+    )
+}
+
+pub fn bitbucket_resolve_repository_error(
+    operation: &str,
+    cwd: &str,
+    cause: Option<&str>,
+) -> BitbucketApiErrorContract {
+    let detail = match operation {
+        "resolveRepository.vcs" => format!("Failed to resolve VCS repository for {cwd}."),
+        "resolveRepository.remotes" => format!("Failed to list remotes for {cwd}."),
+        _ => format!("No Bitbucket repository remote was detected for {cwd}."),
+    };
+    bitbucket_api_error("resolveRepository", &detail, None, cause)
 }
 
 pub fn bitbucket_default_change_request_target_branch(
@@ -20682,6 +20750,49 @@ mod tests {
             bitbucket_branching_model_request_plan("https://api.test.local/2.0", &bitbucket_repo)
                 .url,
             "https://api.test.local/2.0/repositories/pingdotgg/t3code/branching-model"
+        );
+        assert_eq!(
+            bitbucket_api_request_error("getRepository", "network down").message(),
+            "Bitbucket API failed in getRepository: network down"
+        );
+        assert_eq!(
+            bitbucket_api_response_error("getRepository", 404, Some("  Not found  ")),
+            BitbucketApiErrorContract {
+                operation: "getRepository".to_string(),
+                detail: "Bitbucket returned HTTP 404: Not found".to_string(),
+                status: Some(404),
+                cause: None,
+            }
+        );
+        assert_eq!(
+            bitbucket_api_response_error("getRepository", 500, Some("  ")).detail,
+            "Bitbucket returned HTTP 500."
+        );
+        assert_eq!(
+            bitbucket_api_invalid_json_error("getRepository", "schema mismatch"),
+            BitbucketApiErrorContract {
+                operation: "getRepository".to_string(),
+                detail: "Bitbucket returned invalid JSON for the requested resource.".to_string(),
+                status: None,
+                cause: Some("schema mismatch".to_string()),
+            }
+        );
+        assert_eq!(
+            bitbucket_resolve_repository_error("resolveRepository.vcs", "/repo", Some("bad vcs")),
+            BitbucketApiErrorContract {
+                operation: "resolveRepository".to_string(),
+                detail: "Failed to resolve VCS repository for /repo.".to_string(),
+                status: None,
+                cause: Some("bad vcs".to_string()),
+            }
+        );
+        assert_eq!(
+            bitbucket_resolve_repository_error("resolveRepository.remotes", "/repo", None).detail,
+            "Failed to list remotes for /repo."
+        );
+        assert_eq!(
+            bitbucket_resolve_repository_error("resolveRepository.none", "/repo", None).detail,
+            "No Bitbucket repository remote was detected for /repo."
         );
         assert_eq!(
             bitbucket_default_change_request_target_branch(
