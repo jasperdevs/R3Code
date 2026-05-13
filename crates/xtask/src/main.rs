@@ -2000,6 +2000,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core git_react_query_keys_match_upstream_scoping`",
             "Wire live environment API query/mutation execution, progress callbacks, and query-client invalidation into GPUI git flows.",
         )
+    } else if path == "apps/web/src/lib/gitStatusState.ts"
+        || path == "apps/web/src/lib/gitStatusState.test.ts"
+    {
+        (
+            "git-status target keys, empty/initial snapshots, shared watch refcounts, per-environment state isolation, pending transitions, refresh in-flight/debounce decisions, and reset behavior in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core git_status_state_machine_matches_upstream_contract`",
+            "Wire state machine into live GPUI atom/runtime subscriptions, websocket VCS status stream, environment connection listeners, and async refresh RPCs.",
+        )
     } else if path == "apps/web/src/lib/providerReactQuery.ts"
         || path == "apps/web/src/lib/providerReactQuery.test.ts"
     {

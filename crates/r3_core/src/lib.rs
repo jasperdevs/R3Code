@@ -11787,6 +11787,235 @@ pub struct GitStatusSnapshot {
     pub has_open_pr: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitStatusTarget {
+    pub environment_id: Option<String>,
+    pub cwd: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebGitStatusState {
+    pub data: Option<GitStatusSnapshot>,
+    pub error: Option<String>,
+    pub cause: Option<String>,
+    pub is_pending: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GitStatusWatchPlan {
+    Noop,
+    Subscribe { target_key: String, ref_count: u32 },
+    Reuse { target_key: String, ref_count: u32 },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GitStatusUnwatchPlan {
+    Missing,
+    Keep { target_key: String, ref_count: u32 },
+    Unsubscribe { target_key: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GitStatusRefreshPlan {
+    NullTarget,
+    MissingClient { cached: Option<GitStatusSnapshot> },
+    ReturnInFlight,
+    Debounced { cached: Option<GitStatusSnapshot> },
+    Start { target_key: String, cwd: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitStatusStateMachine {
+    states: BTreeMap<String, WebGitStatusState>,
+    watched_ref_counts: BTreeMap<String, u32>,
+    known_keys: BTreeSet<String>,
+    refresh_in_flight: BTreeSet<String>,
+    last_refresh_at_ms: BTreeMap<String, u64>,
+}
+
+pub const GIT_STATUS_REFRESH_DEBOUNCE_MS: u64 = 1_000;
+
+pub fn empty_git_status_state() -> WebGitStatusState {
+    WebGitStatusState {
+        data: None,
+        error: None,
+        cause: None,
+        is_pending: false,
+    }
+}
+
+pub fn initial_git_status_state() -> WebGitStatusState {
+    WebGitStatusState {
+        is_pending: true,
+        ..empty_git_status_state()
+    }
+}
+
+pub fn get_git_status_target_key(target: &GitStatusTarget) -> Option<String> {
+    Some(format!(
+        "{}:{}",
+        target.environment_id.as_ref()?,
+        target.cwd.as_ref()?
+    ))
+}
+
+pub fn provided_git_status_client_identity(target_key: &str) -> String {
+    format!("provided:{target_key}")
+}
+
+impl GitStatusStateMachine {
+    pub fn new() -> Self {
+        Self {
+            states: BTreeMap::new(),
+            watched_ref_counts: BTreeMap::new(),
+            known_keys: BTreeSet::new(),
+            refresh_in_flight: BTreeSet::new(),
+            last_refresh_at_ms: BTreeMap::new(),
+        }
+    }
+
+    pub fn get_snapshot(&mut self, target: &GitStatusTarget) -> WebGitStatusState {
+        let Some(target_key) = get_git_status_target_key(target) else {
+            return empty_git_status_state();
+        };
+        self.known_keys.insert(target_key.clone());
+        self.states
+            .entry(target_key)
+            .or_insert_with(initial_git_status_state)
+            .clone()
+    }
+
+    pub fn watch(&mut self, target: &GitStatusTarget) -> GitStatusWatchPlan {
+        let Some(target_key) = get_git_status_target_key(target) else {
+            return GitStatusWatchPlan::Noop;
+        };
+        let count = self
+            .watched_ref_counts
+            .entry(target_key.clone())
+            .or_insert(0);
+        *count += 1;
+        let ref_count = *count;
+        self.known_keys.insert(target_key.clone());
+        if ref_count == 1 {
+            self.mark_pending(&target_key);
+            GitStatusWatchPlan::Subscribe {
+                target_key,
+                ref_count,
+            }
+        } else {
+            GitStatusWatchPlan::Reuse {
+                target_key,
+                ref_count,
+            }
+        }
+    }
+
+    pub fn unwatch(&mut self, target_key: &str) -> GitStatusUnwatchPlan {
+        let Some(count) = self.watched_ref_counts.get_mut(target_key) else {
+            return GitStatusUnwatchPlan::Missing;
+        };
+        *count = count.saturating_sub(1);
+        if *count > 0 {
+            return GitStatusUnwatchPlan::Keep {
+                target_key: target_key.to_string(),
+                ref_count: *count,
+            };
+        }
+        self.watched_ref_counts.remove(target_key);
+        GitStatusUnwatchPlan::Unsubscribe {
+            target_key: target_key.to_string(),
+        }
+    }
+
+    pub fn mark_pending(&mut self, target_key: &str) {
+        let current = self
+            .states
+            .get(target_key)
+            .cloned()
+            .unwrap_or_else(empty_git_status_state);
+        let next = if current.data.is_none() {
+            initial_git_status_state()
+        } else {
+            WebGitStatusState {
+                error: None,
+                cause: None,
+                is_pending: true,
+                ..current
+            }
+        };
+        self.states.insert(target_key.to_string(), next);
+        self.known_keys.insert(target_key.to_string());
+    }
+
+    pub fn apply_status(&mut self, target_key: &str, status: GitStatusSnapshot) {
+        self.states.insert(
+            target_key.to_string(),
+            WebGitStatusState {
+                data: Some(status),
+                error: None,
+                cause: None,
+                is_pending: false,
+            },
+        );
+        self.known_keys.insert(target_key.to_string());
+    }
+
+    pub fn refresh_plan(
+        &mut self,
+        target: &GitStatusTarget,
+        has_client: bool,
+        now_ms: u64,
+    ) -> GitStatusRefreshPlan {
+        let Some(target_key) = get_git_status_target_key(target) else {
+            return GitStatusRefreshPlan::NullTarget;
+        };
+        let Some(cwd) = target.cwd.clone() else {
+            return GitStatusRefreshPlan::NullTarget;
+        };
+        if !has_client {
+            return GitStatusRefreshPlan::MissingClient {
+                cached: self.get_snapshot(target).data,
+            };
+        }
+        if self.refresh_in_flight.contains(&target_key) {
+            return GitStatusRefreshPlan::ReturnInFlight;
+        }
+        let last_requested_at = self
+            .last_refresh_at_ms
+            .get(&target_key)
+            .copied()
+            .unwrap_or(0);
+        if now_ms.saturating_sub(last_requested_at) < GIT_STATUS_REFRESH_DEBOUNCE_MS {
+            return GitStatusRefreshPlan::Debounced {
+                cached: self.get_snapshot(target).data,
+            };
+        }
+        self.last_refresh_at_ms.insert(target_key.clone(), now_ms);
+        self.refresh_in_flight.insert(target_key.clone());
+        GitStatusRefreshPlan::Start { target_key, cwd }
+    }
+
+    pub fn complete_refresh(&mut self, target_key: &str) {
+        self.refresh_in_flight.remove(target_key);
+    }
+
+    pub fn reset(&mut self) {
+        self.watched_ref_counts.clear();
+        self.refresh_in_flight.clear();
+        self.last_refresh_at_ms.clear();
+        for key in &self.known_keys {
+            self.states.insert(key.clone(), initial_git_status_state());
+        }
+        self.known_keys.clear();
+    }
+}
+
+impl Default for GitStatusStateMachine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub fn build_git_action_menu_items(
     git_status: Option<&GitStatusSnapshot>,
     is_busy: bool,
@@ -22147,6 +22376,158 @@ mod tests {
                 false,
             ),
             SourceControlDiscoveryClientPlan::Missing
+        );
+    }
+
+    fn git_status_target(environment_id: &str, cwd: &str) -> GitStatusTarget {
+        GitStatusTarget {
+            environment_id: Some(environment_id.to_string()),
+            cwd: Some(cwd.to_string()),
+        }
+    }
+
+    fn git_status(ref_name: &str) -> GitStatusSnapshot {
+        GitStatusSnapshot {
+            ref_name: Some(ref_name.to_string()),
+            has_working_tree_changes: false,
+            has_upstream: true,
+            ahead_count: 0,
+            behind_count: 0,
+            ahead_of_default_count: None,
+            has_open_pr: false,
+        }
+    }
+
+    #[test]
+    fn git_status_state_machine_matches_upstream_contract() {
+        let target = git_status_target("environment-local", "/repo");
+        let remote_target = git_status_target("environment-remote", "/repo");
+        assert_eq!(
+            get_git_status_target_key(&target).as_deref(),
+            Some("environment-local:/repo")
+        );
+        assert_eq!(
+            get_git_status_target_key(&GitStatusTarget {
+                environment_id: None,
+                cwd: Some("/repo".to_string()),
+            }),
+            None
+        );
+        assert_eq!(
+            provided_git_status_client_identity("environment-local:/repo"),
+            "provided:environment-local:/repo"
+        );
+
+        let mut machine = GitStatusStateMachine::new();
+        assert_eq!(machine.get_snapshot(&target), initial_git_status_state());
+        assert_eq!(
+            machine.get_snapshot(&GitStatusTarget {
+                environment_id: None,
+                cwd: Some("/repo".to_string()),
+            }),
+            empty_git_status_state()
+        );
+
+        assert_eq!(
+            machine.watch(&target),
+            GitStatusWatchPlan::Subscribe {
+                target_key: "environment-local:/repo".to_string(),
+                ref_count: 1,
+            }
+        );
+        assert_eq!(
+            machine.watch(&target),
+            GitStatusWatchPlan::Reuse {
+                target_key: "environment-local:/repo".to_string(),
+                ref_count: 2,
+            }
+        );
+        assert_eq!(machine.get_snapshot(&target), initial_git_status_state());
+        machine.apply_status("environment-local:/repo", git_status("feature/push-status"));
+        machine.apply_status("environment-remote:/repo", git_status("remote-refName"));
+        assert_eq!(
+            machine
+                .get_snapshot(&target)
+                .data
+                .unwrap()
+                .ref_name
+                .as_deref(),
+            Some("feature/push-status")
+        );
+        assert_eq!(
+            machine
+                .get_snapshot(&remote_target)
+                .data
+                .unwrap()
+                .ref_name
+                .as_deref(),
+            Some("remote-refName")
+        );
+
+        assert_eq!(
+            machine.unwatch("environment-local:/repo"),
+            GitStatusUnwatchPlan::Keep {
+                target_key: "environment-local:/repo".to_string(),
+                ref_count: 1,
+            }
+        );
+        assert_eq!(
+            machine.unwatch("environment-local:/repo"),
+            GitStatusUnwatchPlan::Unsubscribe {
+                target_key: "environment-local:/repo".to_string(),
+            }
+        );
+
+        machine.mark_pending("environment-remote:/repo");
+        let pending = machine.get_snapshot(&remote_target);
+        assert!(pending.is_pending);
+        assert!(pending.error.is_none());
+        assert_eq!(
+            pending.data.unwrap().ref_name.as_deref(),
+            Some("remote-refName")
+        );
+
+        assert_eq!(
+            machine.refresh_plan(
+                &GitStatusTarget {
+                    environment_id: None,
+                    cwd: Some("/repo".to_string()),
+                },
+                true,
+                2_000,
+            ),
+            GitStatusRefreshPlan::NullTarget
+        );
+        assert_eq!(
+            machine.refresh_plan(&target, false, 2_000),
+            GitStatusRefreshPlan::MissingClient {
+                cached: Some(git_status("feature/push-status")),
+            }
+        );
+        assert_eq!(
+            machine.refresh_plan(&target, true, 2_000),
+            GitStatusRefreshPlan::Start {
+                target_key: "environment-local:/repo".to_string(),
+                cwd: "/repo".to_string(),
+            }
+        );
+        assert_eq!(
+            machine.refresh_plan(&target, true, 2_100),
+            GitStatusRefreshPlan::ReturnInFlight
+        );
+        machine.complete_refresh("environment-local:/repo");
+        assert_eq!(
+            machine.refresh_plan(&target, true, 2_500),
+            GitStatusRefreshPlan::Debounced {
+                cached: Some(git_status("feature/push-status")),
+            }
+        );
+
+        machine.reset();
+        assert_eq!(machine.get_snapshot(&target), initial_git_status_state());
+        assert_eq!(
+            machine.unwatch("environment-local:/repo"),
+            GitStatusUnwatchPlan::Missing
         );
     }
 
