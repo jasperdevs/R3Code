@@ -4268,6 +4268,195 @@ pub const PROVIDER_OPTIONS: [ProviderOption; 4] = [
 ];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderSettingsFormControl {
+    Text,
+    Password,
+    Textarea,
+    Switch,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderSettingsClearWhenEmpty {
+    Omit,
+    Persist,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderSettingsFieldModel {
+    pub key: &'static str,
+    pub control: ProviderSettingsFormControl,
+    pub label: &'static str,
+    pub description: Option<&'static str>,
+    pub placeholder: Option<&'static str>,
+    pub clear_when_empty: ProviderSettingsClearWhenEmpty,
+    pub default_boolean_value: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderSettingsFieldValue {
+    String(String),
+    Boolean(bool),
+}
+
+fn provider_settings_field(
+    key: &'static str,
+    label: &'static str,
+    description: &'static str,
+    placeholder: &'static str,
+) -> ProviderSettingsFieldModel {
+    ProviderSettingsFieldModel {
+        key,
+        control: ProviderSettingsFormControl::Text,
+        label,
+        description: Some(description),
+        placeholder: Some(placeholder),
+        clear_when_empty: ProviderSettingsClearWhenEmpty::Omit,
+        default_boolean_value: None,
+    }
+}
+
+pub fn derive_provider_settings_fields(
+    definition: &ProviderClientDefinition,
+) -> Vec<ProviderSettingsFieldModel> {
+    match definition.value {
+        "codex" => vec![
+            provider_settings_field(
+                "binaryPath",
+                "Binary path",
+                "Path to the Codex binary used by this instance.",
+                "codex",
+            ),
+            provider_settings_field(
+                "homePath",
+                "CODEX_HOME path",
+                "Custom Codex home and config directory.",
+                "~/.codex",
+            ),
+            provider_settings_field(
+                "shadowHomePath",
+                "Shadow home path",
+                "Account-specific Codex home. Keeps auth.json separate while sharing state from CODEX_HOME.",
+                "~/.codex-t3/personal",
+            ),
+        ],
+        "claudeAgent" => vec![
+            provider_settings_field(
+                "binaryPath",
+                "Binary path",
+                "Path to the Claude binary used by this instance.",
+                "claude",
+            ),
+            provider_settings_field(
+                "homePath",
+                "Claude HOME path",
+                "Custom HOME used when running this Claude instance. Keeps .claude.json and .claude separate.",
+                "~",
+            ),
+            provider_settings_field(
+                "launchArgs",
+                "Launch arguments",
+                "Additional CLI arguments passed on session start.",
+                "e.g. --chrome",
+            ),
+        ],
+        "cursor" => vec![
+            provider_settings_field(
+                "binaryPath",
+                "Binary path",
+                "Path to the Cursor agent binary.",
+                "agent",
+            ),
+            provider_settings_field(
+                "apiEndpoint",
+                "API endpoint",
+                "Override the Cursor API endpoint for this instance.",
+                "https://...",
+            ),
+        ],
+        "opencode" => vec![
+            provider_settings_field(
+                "binaryPath",
+                "Binary path",
+                "Path to the OpenCode binary.",
+                "opencode",
+            ),
+            provider_settings_field(
+                "serverUrl",
+                "Server URL",
+                "Leave blank to let T3 Code spawn the server when needed.",
+                "http://127.0.0.1:4096",
+            ),
+            ProviderSettingsFieldModel {
+                key: "serverPassword",
+                control: ProviderSettingsFormControl::Password,
+                label: "Server password",
+                description: Some("Stored in plain text on disk."),
+                placeholder: Some("Optional"),
+                clear_when_empty: ProviderSettingsClearWhenEmpty::Omit,
+                default_boolean_value: None,
+            },
+        ],
+        _ => Vec::new(),
+    }
+}
+
+pub fn read_provider_config_string(config: Option<&serde_json::Value>, key: &str) -> String {
+    config
+        .and_then(serde_json::Value::as_object)
+        .and_then(|config| config.get(key))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string()
+}
+
+pub fn read_provider_config_boolean(
+    config: Option<&serde_json::Value>,
+    key: &str,
+    default_value: bool,
+) -> bool {
+    config
+        .and_then(serde_json::Value::as_object)
+        .and_then(|config| config.get(key))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(default_value)
+}
+
+pub fn next_provider_config_with_field_value(
+    config: Option<&serde_json::Value>,
+    field: &ProviderSettingsFieldModel,
+    value: ProviderSettingsFieldValue,
+) -> Option<serde_json::Value> {
+    let mut base = config
+        .and_then(serde_json::Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+
+    match value {
+        ProviderSettingsFieldValue::Boolean(value) => {
+            let empty_boolean_value = field.default_boolean_value.unwrap_or(false);
+            if field.clear_when_empty == ProviderSettingsClearWhenEmpty::Omit
+                && value == empty_boolean_value
+            {
+                base.remove(field.key);
+            } else {
+                base.insert(field.key.to_string(), serde_json::Value::Bool(value));
+            }
+        }
+        ProviderSettingsFieldValue::String(value) => {
+            if field.clear_when_empty == ProviderSettingsClearWhenEmpty::Omit
+                && value.trim().is_empty()
+            {
+                base.remove(field.key);
+            } else {
+                base.insert(field.key.to_string(), serde_json::Value::String(value));
+            }
+        }
+    }
+
+    (!base.is_empty()).then_some(serde_json::Value::Object(base))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServerProviderState {
     Ready,
     Warning,
@@ -33825,6 +34014,127 @@ mod tests {
             provider_status_dot_style(ServerProviderState::Warning),
             "bg-warning"
         );
+    }
+
+    #[test]
+    fn provider_settings_form_helpers_match_upstream_contract() {
+        let codex = get_driver_option(Some("codex")).unwrap();
+        assert_eq!(
+            derive_provider_settings_fields(codex)
+                .iter()
+                .map(|field| field.key)
+                .collect::<Vec<_>>(),
+            vec!["binaryPath", "homePath", "shadowHomePath"]
+        );
+
+        let opencode = get_driver_option(Some("opencode")).unwrap();
+        let server_password = derive_provider_settings_fields(opencode)
+            .into_iter()
+            .find(|field| field.key == "serverPassword")
+            .unwrap();
+        assert_eq!(server_password.label, "Server password");
+        assert_eq!(
+            server_password.description,
+            Some("Stored in plain text on disk.")
+        );
+        assert_eq!(
+            server_password.control,
+            ProviderSettingsFormControl::Password
+        );
+
+        let server_url = derive_provider_settings_fields(opencode)
+            .into_iter()
+            .find(|field| field.key == "serverUrl")
+            .unwrap();
+        assert_eq!(
+            next_provider_config_with_field_value(
+                Some(&serde_json::json!({
+                    "forkOwned": 1,
+                    "serverUrl": "http://127.0.0.1:4096",
+                })),
+                &server_url,
+                ProviderSettingsFieldValue::String(String::new()),
+            ),
+            Some(serde_json::json!({ "forkOwned": 1 }))
+        );
+
+        assert_eq!(
+            read_provider_config_string(
+                Some(&serde_json::json!({ "binaryPath": 123 })),
+                "binaryPath"
+            ),
+            ""
+        );
+
+        let false_default_switch = ProviderSettingsFieldModel {
+            key: "experimental",
+            control: ProviderSettingsFormControl::Switch,
+            label: "Experimental",
+            description: None,
+            placeholder: None,
+            clear_when_empty: ProviderSettingsClearWhenEmpty::Omit,
+            default_boolean_value: Some(false),
+        };
+        assert_eq!(
+            next_provider_config_with_field_value(
+                Some(&serde_json::json!({
+                    "forkOwned": 1,
+                    "experimental": true,
+                })),
+                &false_default_switch,
+                ProviderSettingsFieldValue::Boolean(false),
+            ),
+            Some(serde_json::json!({ "forkOwned": 1 }))
+        );
+
+        let true_default_switch = ProviderSettingsFieldModel {
+            default_boolean_value: Some(true),
+            ..false_default_switch.clone()
+        };
+        assert_eq!(
+            next_provider_config_with_field_value(
+                Some(&serde_json::json!({
+                    "forkOwned": 1,
+                    "experimental": false,
+                })),
+                &true_default_switch,
+                ProviderSettingsFieldValue::Boolean(true),
+            ),
+            Some(serde_json::json!({ "forkOwned": 1 }))
+        );
+        assert_eq!(
+            next_provider_config_with_field_value(
+                None,
+                &true_default_switch,
+                ProviderSettingsFieldValue::Boolean(false),
+            ),
+            Some(serde_json::json!({ "experimental": false }))
+        );
+
+        let persist_switch = ProviderSettingsFieldModel {
+            clear_when_empty: ProviderSettingsClearWhenEmpty::Persist,
+            default_boolean_value: None,
+            ..false_default_switch
+        };
+        assert_eq!(
+            next_provider_config_with_field_value(
+                None,
+                &persist_switch,
+                ProviderSettingsFieldValue::Boolean(false),
+            ),
+            Some(serde_json::json!({ "experimental": false }))
+        );
+
+        assert!(!read_provider_config_boolean(
+            Some(&serde_json::json!({ "experimental": "true" })),
+            "experimental",
+            false,
+        ));
+        assert!(read_provider_config_boolean(
+            Some(&serde_json::json!({})),
+            "experimental",
+            true,
+        ));
     }
 
     #[test]

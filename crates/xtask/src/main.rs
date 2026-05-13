@@ -2459,6 +2459,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace build_provider_instance_update_patch_matches_upstream_settings_panels_logic`; `cargo test --workspace formats_diagnostics_settings_description_like_upstream`",
             "Wire settings patches into live GPUI provider settings mutations, server persistence, and exact settings panel routing/rendering.",
         )
+    } else if path == "apps/web/src/components/settings/ProviderSettingsForm.test.ts"
+        || path == "apps/web/src/components/settings/ProviderSettingsForm.tsx"
+    {
+        (
+            "ProviderSettingsForm visible field derivation, schema annotation metadata, config string/boolean reads, and empty/default field omission behavior in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace provider_settings_form_helpers_match_upstream_contract`",
+            "Wire derived fields into the live GPUI provider settings form, card/dialog variants, commit-on-blur controls, and exact input/switch styling.",
+        )
     } else if path.starts_with("apps/web/src/components/")
         || path.starts_with("apps/web/src/composer")
         || path.starts_with("apps/web/src/diff")
