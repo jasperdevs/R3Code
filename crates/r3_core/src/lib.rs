@@ -975,6 +975,28 @@ pub const RADIO_CLASS_NAME: &str = "relative inline-flex size-4.5 shrink-0 items
 pub const RADIO_INDICATOR_CLASS_NAME: &str = "-inset-px absolute flex size-4.5 items-center justify-center rounded-full before:size-2 before:rounded-full before:bg-primary-foreground data-unchecked:hidden data-checked:bg-primary sm:size-4 sm:before:size-1.5";
 pub const RADIO_GROUP_ITEM_EXPORT_ALIAS: &str = "Radio";
 
+pub const FIELD_SLOT: &str = "field";
+pub const FIELD_LABEL_SLOT: &str = "field-label";
+pub const FIELD_ITEM_SLOT: &str = "field-item";
+pub const FIELD_DESCRIPTION_SLOT: &str = "field-description";
+pub const FIELD_ERROR_SLOT: &str = "field-error";
+pub const FIELD_CLASS_NAME: &str = "flex flex-col items-start gap-2";
+pub const FIELD_LABEL_CLASS_NAME: &str =
+    "inline-flex items-center gap-2 font-medium text-base/4.5 text-foreground sm:text-sm/4";
+pub const FIELD_ITEM_CLASS_NAME: &str = "flex";
+pub const FIELD_DESCRIPTION_CLASS_NAME: &str = "text-muted-foreground text-xs";
+pub const FIELD_ERROR_CLASS_NAME: &str = "text-destructive-foreground text-xs";
+pub const FIELD_CONTROL_EXPORT: &str = "FieldPrimitive.Control";
+pub const FIELD_VALIDITY_EXPORT: &str = "FieldPrimitive.Validity";
+
+pub const FIELDSET_SLOT: &str = "fieldset";
+pub const FIELDSET_LEGEND_SLOT: &str = "fieldset-legend";
+pub const FIELDSET_CLASS_NAME: &str = "flex w-full max-w-64 flex-col gap-6";
+pub const FIELDSET_LEGEND_CLASS_NAME: &str = "font-semibold text-foreground";
+
+pub const FORM_SLOT: &str = "form";
+pub const FORM_CLASS_NAME: &str = "flex w-full flex-col gap-4";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmptyMediaVariant {
     Default,
@@ -37151,6 +37173,39 @@ mod tests {
             "-inset-px absolute flex size-4.5 items-center justify-center rounded-full before:size-2 before:rounded-full before:bg-primary-foreground data-unchecked:hidden data-checked:bg-primary sm:size-4 sm:before:size-1.5"
         );
         assert_eq!(RADIO_GROUP_ITEM_EXPORT_ALIAS, "Radio");
+    }
+
+    #[test]
+    fn form_primitive_contracts_match_upstream_components() {
+        assert_eq!(FIELD_SLOT, "field");
+        assert_eq!(FIELD_LABEL_SLOT, "field-label");
+        assert_eq!(FIELD_ITEM_SLOT, "field-item");
+        assert_eq!(FIELD_DESCRIPTION_SLOT, "field-description");
+        assert_eq!(FIELD_ERROR_SLOT, "field-error");
+        assert_eq!(FIELD_CLASS_NAME, "flex flex-col items-start gap-2");
+        assert_eq!(
+            FIELD_LABEL_CLASS_NAME,
+            "inline-flex items-center gap-2 font-medium text-base/4.5 text-foreground sm:text-sm/4"
+        );
+        assert_eq!(FIELD_ITEM_CLASS_NAME, "flex");
+        assert_eq!(
+            FIELD_DESCRIPTION_CLASS_NAME,
+            "text-muted-foreground text-xs"
+        );
+        assert_eq!(
+            FIELD_ERROR_CLASS_NAME,
+            "text-destructive-foreground text-xs"
+        );
+        assert_eq!(FIELD_CONTROL_EXPORT, "FieldPrimitive.Control");
+        assert_eq!(FIELD_VALIDITY_EXPORT, "FieldPrimitive.Validity");
+
+        assert_eq!(FIELDSET_SLOT, "fieldset");
+        assert_eq!(FIELDSET_LEGEND_SLOT, "fieldset-legend");
+        assert_eq!(FIELDSET_CLASS_NAME, "flex w-full max-w-64 flex-col gap-6");
+        assert_eq!(FIELDSET_LEGEND_CLASS_NAME, "font-semibold text-foreground");
+
+        assert_eq!(FORM_SLOT, "form");
+        assert_eq!(FORM_CLASS_NAME, "flex w-full flex-col gap-4");
     }
 
     #[test]

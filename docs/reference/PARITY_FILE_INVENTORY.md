@@ -12,8 +12,8 @@ Do not edit individual rows by hand; update `crates/xtask/src/main.rs` classific
 
 | Status | Files |
 | --- | ---: |
-| `covered` | 16 |
-| `partial` | 982 |
+| `covered` | 19 |
+| `partial` | 979 |
 
 ## Files
 
@@ -656,9 +656,9 @@ Do not edit individual rows by hand; update `crates/xtask/src/main.rs` classific
 | `apps/web/src/components/ui/dialog.tsx` | crates/r3_core/src/lib.rs; crates/r3_ui/src/shell.rs | `partial` | `cargo test --workspace`; current screenshot gates where captured | Replace seeded/static state with live GPUI state and port remaining component behavior. |
 | `apps/web/src/components/ui/draft-input.tsx` | crates/r3_core/src/lib.rs; crates/r3_ui/src/shell.rs | `partial` | `cargo test --workspace`; current screenshot gates where captured | Replace seeded/static state with live GPUI state and port remaining component behavior. |
 | `apps/web/src/components/ui/empty.tsx` | Empty primitive data slots, root/header/media/title/description/content class contracts, media variant classes, and icon decoration classes in crates/r3_core/src/lib.rs | `covered` | `cargo test --workspace empty_primitive_contract_matches_upstream_component`; current screenshot gates where captured | Maintain this primitive contract if upstream changes Empty styling or slots. |
-| `apps/web/src/components/ui/field.tsx` | crates/r3_core/src/lib.rs; crates/r3_ui/src/shell.rs | `partial` | `cargo test --workspace`; current screenshot gates where captured | Replace seeded/static state with live GPUI state and port remaining component behavior. |
-| `apps/web/src/components/ui/fieldset.tsx` | crates/r3_core/src/lib.rs; crates/r3_ui/src/shell.rs | `partial` | `cargo test --workspace`; current screenshot gates where captured | Replace seeded/static state with live GPUI state and port remaining component behavior. |
-| `apps/web/src/components/ui/form.tsx` | crates/r3_core/src/lib.rs; crates/r3_ui/src/shell.rs | `partial` | `cargo test --workspace`; current screenshot gates where captured | Replace seeded/static state with live GPUI state and port remaining component behavior. |
+| `apps/web/src/components/ui/field.tsx` | Field, Fieldset, and Form primitive data slots, class contracts, and FieldControl/FieldValidity export contracts in crates/r3_core/src/lib.rs | `covered` | `cargo test --workspace form_primitive_contracts_match_upstream_components`; current screenshot gates where captured | Maintain these primitive contracts if upstream changes form primitive slots, classes, or exported Base UI aliases. |
+| `apps/web/src/components/ui/fieldset.tsx` | Field, Fieldset, and Form primitive data slots, class contracts, and FieldControl/FieldValidity export contracts in crates/r3_core/src/lib.rs | `covered` | `cargo test --workspace form_primitive_contracts_match_upstream_components`; current screenshot gates where captured | Maintain these primitive contracts if upstream changes form primitive slots, classes, or exported Base UI aliases. |
+| `apps/web/src/components/ui/form.tsx` | Field, Fieldset, and Form primitive data slots, class contracts, and FieldControl/FieldValidity export contracts in crates/r3_core/src/lib.rs | `covered` | `cargo test --workspace form_primitive_contracts_match_upstream_components`; current screenshot gates where captured | Maintain these primitive contracts if upstream changes form primitive slots, classes, or exported Base UI aliases. |
 | `apps/web/src/components/ui/group.tsx` | crates/r3_core/src/lib.rs; crates/r3_ui/src/shell.rs | `partial` | `cargo test --workspace`; current screenshot gates where captured | Replace seeded/static state with live GPUI state and port remaining component behavior. |
 | `apps/web/src/components/ui/input-group.tsx` | crates/r3_core/src/lib.rs; crates/r3_ui/src/shell.rs | `partial` | `cargo test --workspace`; current screenshot gates where captured | Replace seeded/static state with live GPUI state and port remaining component behavior. |
 | `apps/web/src/components/ui/input.tsx` | Input and Textarea primitive control/field data slots, default props, wrapper classes, inner field classes, size class branches, and search/file type class branches in crates/r3_core/src/lib.rs | `covered` | `cargo test --workspace input_and_textarea_primitive_contracts_match_upstream_components`; current screenshot gates where captured | Maintain these primitive contracts if upstream changes Input or Textarea sizing, control styling, native-input behavior, or file/search branches. |

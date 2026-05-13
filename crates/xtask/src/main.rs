@@ -2763,6 +2763,16 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace selection_control_primitive_contracts_match_upstream_components`; current screenshot gates where captured",
             "Maintain these primitive contracts if upstream changes selection-control slots, classes, SVG path data, or export aliases.",
         )
+    } else if path == "apps/web/src/components/ui/field.tsx"
+        || path == "apps/web/src/components/ui/fieldset.tsx"
+        || path == "apps/web/src/components/ui/form.tsx"
+    {
+        (
+            "Field, Fieldset, and Form primitive data slots, class contracts, and FieldControl/FieldValidity export contracts in crates/r3_core/src/lib.rs",
+            "covered",
+            "`cargo test --workspace form_primitive_contracts_match_upstream_components`; current screenshot gates where captured",
+            "Maintain these primitive contracts if upstream changes form primitive slots, classes, or exported Base UI aliases.",
+        )
     } else if path == "apps/web/src/components/ui/kbd.tsx"
         || path == "apps/web/src/components/ui/label.tsx"
         || path == "apps/web/src/components/ui/separator.tsx"
