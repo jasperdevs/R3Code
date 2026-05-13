@@ -2539,6 +2539,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace composer_prompt_editor_render_contract_matches_upstream_component`; `cargo test --workspace composer_inline_token_adjacency_matches_upstream_contract`",
             "Wire full GPUI editor input behavior, controlled cursor/selection updates, paste handling, inline token editing, keyboard command interception, and browser composition/dead-key behavior.",
         )
+    } else if path == "apps/web/src/components/DiffWorkerPoolProvider.tsx" {
+        (
+            "DiffWorkerPoolProvider worker import, provider/hook contract, navigator hardware-concurrency pool sizing, AST cache size, tokenizer limit, theme resolution, and theme-sync merge/skip/catch behavior in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace diff_worker_pool_provider_contract_matches_upstream_component`; `cargo test --workspace diff_panel_render_contract_matches_upstream_components`",
+            "Wire actual GPUI/background diff worker execution, async theme option updates, worker lifecycle disposal, and rendered diff cache integration.",
+        )
     } else if path == "apps/web/src/components/DiffPanel.tsx"
         || path == "apps/web/src/components/DiffPanelShell.tsx"
     {

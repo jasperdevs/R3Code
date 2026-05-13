@@ -136,6 +136,23 @@ pub struct DiffPanelRenderContract {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffWorkerPoolContract {
+    pub provider_component: &'static str,
+    pub worker_pool_hook: &'static str,
+    pub worker_import: &'static str,
+    pub worker_import_query_suffix: &'static str,
+    pub pool_size: u32,
+    pub total_ast_lru_cache_size: u32,
+    pub highlighter_theme: &'static str,
+    pub tokenize_max_line_length: u32,
+    pub theme_sync_child_before_children: bool,
+    pub theme_sync_reads_current_options: bool,
+    pub theme_sync_skips_matching_theme: bool,
+    pub theme_sync_merges_current_options: bool,
+    pub theme_sync_catches_set_errors: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebDesktopAppBranding {
     pub base_name: String,
     pub stage_label: String,
@@ -814,6 +831,41 @@ pub fn resolve_diff_theme_name(theme: DiffColorScheme) -> &'static str {
     }
 }
 
+pub fn derive_diff_worker_pool_size(
+    navigator_available: bool,
+    hardware_concurrency: Option<u32>,
+) -> u32 {
+    let reported_cores = if navigator_available {
+        hardware_concurrency.filter(|cores| *cores > 0).unwrap_or(4)
+    } else {
+        4
+    };
+    let cores = reported_cores.max(1);
+    (cores / 2).clamp(2, 6)
+}
+
+pub fn derive_diff_worker_pool_contract(
+    theme: DiffColorScheme,
+    navigator_available: bool,
+    hardware_concurrency: Option<u32>,
+) -> DiffWorkerPoolContract {
+    DiffWorkerPoolContract {
+        provider_component: DIFF_WORKER_POOL_PROVIDER_COMPONENT,
+        worker_pool_hook: DIFF_WORKER_POOL_HOOK_NAME,
+        worker_import: DIFF_WORKER_POOL_WORKER_IMPORT,
+        worker_import_query_suffix: DIFF_WORKER_POOL_WORKER_IMPORT_QUERY_SUFFIX,
+        pool_size: derive_diff_worker_pool_size(navigator_available, hardware_concurrency),
+        total_ast_lru_cache_size: DIFF_WORKER_POOL_TOTAL_AST_LRU_CACHE_SIZE,
+        highlighter_theme: resolve_diff_theme_name(theme),
+        tokenize_max_line_length: DIFF_WORKER_POOL_TOKENIZE_MAX_LINE_LENGTH,
+        theme_sync_child_before_children: true,
+        theme_sync_reads_current_options: true,
+        theme_sync_skips_matching_theme: true,
+        theme_sync_merges_current_options: true,
+        theme_sync_catches_set_errors: true,
+    }
+}
+
 pub fn derive_diff_panel_shell_contract(
     mode: DiffPanelMode,
     is_electron: bool,
@@ -1457,6 +1509,12 @@ pub const TERMINAL_HELPER_TEXTAREA_CLASS: &str = "xterm-helper-textarea";
 pub const THREAD_TERMINAL_DRAWER_XTERM_SELECTOR: &str = ".thread-terminal-drawer .xterm";
 pub const DIFF_THEME_LIGHT_NAME: &str = "pierre-light";
 pub const DIFF_THEME_DARK_NAME: &str = "pierre-dark";
+pub const DIFF_WORKER_POOL_PROVIDER_COMPONENT: &str = "WorkerPoolContextProvider";
+pub const DIFF_WORKER_POOL_HOOK_NAME: &str = "useWorkerPool";
+pub const DIFF_WORKER_POOL_WORKER_IMPORT: &str = "@pierre/diffs/worker/worker.js";
+pub const DIFF_WORKER_POOL_WORKER_IMPORT_QUERY_SUFFIX: &str = "?worker";
+pub const DIFF_WORKER_POOL_TOTAL_AST_LRU_CACHE_SIZE: u32 = 240;
+pub const DIFF_WORKER_POOL_TOKENIZE_MAX_LINE_LENGTH: u32 = 1_000;
 pub const DIFF_PANEL_SHELL_ROOT_CLASS_NAME: &str = "flex h-full min-w-0 flex-col bg-background";
 pub const DIFF_PANEL_SHELL_INLINE_CLASS_NAME: &str =
     "w-[42vw] min-w-[360px] max-w-[560px] shrink-0 border-l border-border";
@@ -45869,6 +45927,46 @@ mod tests {
             vec!["terminal-2"]
         );
         assert_eq!(snapshot.terminal_event_entries.len(), 2);
+    }
+
+    #[test]
+    fn diff_worker_pool_provider_contract_matches_upstream_component() {
+        let default = derive_diff_worker_pool_contract(DiffColorScheme::Light, false, None);
+
+        assert_eq!(
+            default.provider_component,
+            DIFF_WORKER_POOL_PROVIDER_COMPONENT
+        );
+        assert_eq!(default.worker_pool_hook, DIFF_WORKER_POOL_HOOK_NAME);
+        assert_eq!(default.worker_import, DIFF_WORKER_POOL_WORKER_IMPORT);
+        assert_eq!(
+            default.worker_import_query_suffix,
+            DIFF_WORKER_POOL_WORKER_IMPORT_QUERY_SUFFIX
+        );
+        assert_eq!(default.pool_size, 2);
+        assert_eq!(
+            default.total_ast_lru_cache_size,
+            DIFF_WORKER_POOL_TOTAL_AST_LRU_CACHE_SIZE
+        );
+        assert_eq!(default.highlighter_theme, DIFF_THEME_LIGHT_NAME);
+        assert_eq!(
+            default.tokenize_max_line_length,
+            DIFF_WORKER_POOL_TOKENIZE_MAX_LINE_LENGTH
+        );
+        assert!(default.theme_sync_child_before_children);
+        assert!(default.theme_sync_reads_current_options);
+        assert!(default.theme_sync_skips_matching_theme);
+        assert!(default.theme_sync_merges_current_options);
+        assert!(default.theme_sync_catches_set_errors);
+
+        let four_core_browser =
+            derive_diff_worker_pool_contract(DiffColorScheme::Dark, true, Some(8));
+        assert_eq!(four_core_browser.pool_size, 4);
+        assert_eq!(four_core_browser.highlighter_theme, DIFF_THEME_DARK_NAME);
+
+        assert_eq!(derive_diff_worker_pool_size(true, Some(1)), 2);
+        assert_eq!(derive_diff_worker_pool_size(true, Some(0)), 2);
+        assert_eq!(derive_diff_worker_pool_size(true, Some(24)), 6);
     }
 
     #[test]
