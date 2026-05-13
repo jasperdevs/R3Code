@@ -2441,6 +2441,42 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace websocket_connection_state_matches_upstream_reconnect_logic`; `cargo test --workspace request_latency_state_matches_upstream_ack_tracking`",
             "Wire live GPUI toast lifecycle, browser online/focus listeners, debounce timers, manual reconnect action, and slow request expandable details.",
         )
+    } else if path == "apps/web/src/components/BranchToolbar.logic.test.ts"
+        || path == "apps/web/src/components/BranchToolbar.logic.ts"
+    {
+        (
+            "BranchToolbar draft env-mode transitions, toolbar values, workspace labels, branch selection targets, remote/local ref dedupe, and picker filtering in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace branch_toolbar_env_mode_and_value_match_upstream_logic`; `cargo test --workspace branch_toolbar_labels_match_upstream_logic`",
+            "Wire the remaining branch popover rendering, live checkout actions, saved draft mutation, and exact GPUI branch toolbar layout.",
+        )
+    } else if path == "apps/web/src/components/CommandPalette.logic.test.ts"
+        || path == "apps/web/src/components/CommandPalette.logic.ts"
+    {
+        (
+            "CommandPalette recent-thread sorting, title/context search ranking, archived filtering, action-only queries, project/thread injection, and store transitions in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace command_palette_builds_recent_threads_with_upstream_sort_and_timestamp_rules`; `cargo test --workspace command_palette_search_ranks_titles_over_context_and_filters_archived_threads`; `cargo test --workspace command_palette_filters_action_only_queries_and_injects_projects_and_threads`; `cargo test --workspace command_palette_store_transitions_match_upstream_zustand_logic`",
+            "Wire live GPUI command palette keyboard handling, async data refresh, project creation flow, and exact list rendering.",
+        )
+    } else if path == "apps/web/src/components/GitActionsControl.logic.test.ts"
+        || path == "apps/web/src/components/GitActionsControl.logic.ts"
+    {
+        (
+            "GitActionsControl clean/default branch menu and quick-action derivation plus progress-stage helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace git_action_menu_items_match_upstream_clean_main_status`",
+            "Port the remaining upstream git action scenarios, dialog copy, branch update rules, progress states, and live GPUI action execution.",
+        )
+    } else if path == "apps/web/src/components/Sidebar.logic.test.ts"
+        || path == "apps/web/src/components/Sidebar.logic.ts"
+    {
+        (
+            "Sidebar project grouping modes, labels, repository grouping, logical project helpers, and sidebar environment grouping selectors in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace sidebar_project_grouping_matches_upstream_contract`; `cargo test --workspace logical_project_helpers_match_upstream_grouping_rules`; `cargo test --workspace environment_grouping_selectors_match_upstream_contract`",
+            "Wire remaining live sidebar rendering, drag/reorder persistence, context menus, thread previews, and exact GPUI navigation states.",
+        )
     } else if path == "apps/web/src/components/chat/ComposerPrimaryActions.test.ts"
         || path == "apps/web/src/components/chat/ComposerPrimaryActions.tsx"
     {
@@ -2476,6 +2512,24 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "partial",
             "`cargo test --workspace composer_provider_state_matches_upstream_descriptor_contracts`",
             "Wire traits picker/menu controls into live GPUI composer targets, prompt mutation, draft/thread routing, and exact traits UI rendering.",
+        )
+    } else if path == "apps/web/src/components/chat/composerSlashCommandSearch.test.ts"
+        || path == "apps/web/src/components/chat/composerSlashCommandSearch.ts"
+    {
+        (
+            "composer slash-command search exact provider command priority, description matching, boundary-aware fuzzy matching, and replacement contracts in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace composer_menu_item_derivation_matches_upstream_contract`; `cargo test --workspace composer_slash_command_and_replacement_match_upstream_contract`",
+            "Wire remaining live composer command menu rendering, provider slash command execution, and exact keyboard navigation.",
+        )
+    } else if path == "apps/web/src/components/chat/modelPickerSearch.test.ts"
+        || path == "apps/web/src/components/chat/modelPickerSearch.ts"
+    {
+        (
+            "model picker search text, score ordering, trigger filtering, selection locking, jump hints, and selected-instance state in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace model_picker_search_sorting_and_selection_match_upstream_logic`; `cargo test --workspace model_picker_trigger_filtering_and_locking_match_upstream_logic`",
+            "Wire remaining live GPUI picker search input, provider rail, focus management, and exact popup rendering.",
         )
     } else if path == "apps/web/src/components/settings/SettingsPanels.logic.test.ts"
         || path == "apps/web/src/components/settings/SettingsPanels.logic.ts"
