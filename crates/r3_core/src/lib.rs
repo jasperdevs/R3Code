@@ -6258,6 +6258,174 @@ pub fn source_control_provider_auth_plan(
     }
 }
 
+pub fn source_control_provider_cli_specs() -> Vec<SourceControlCliDiscoverySpec> {
+    vec![
+        SourceControlCliDiscoverySpec {
+            kind: SourceControlProviderKind::Github,
+            label: "GitHub",
+            executable: "gh",
+            version_args: &["--version"],
+            auth_args: &["auth", "status"],
+            install_hint: "Install the GitHub command-line tool (`gh`) via https://cli.github.com/ or your package manager (for example `brew install gh`).",
+        },
+        SourceControlCliDiscoverySpec {
+            kind: SourceControlProviderKind::Gitlab,
+            label: "GitLab",
+            executable: "glab",
+            version_args: &["--version"],
+            auth_args: &["auth", "status"],
+            install_hint: "Install the GitLab command-line tool (`glab`) from https://gitlab.com/gitlab-org/cli or your package manager (for example `brew install glab`).",
+        },
+        SourceControlCliDiscoverySpec {
+            kind: SourceControlProviderKind::AzureDevops,
+            label: "Azure DevOps",
+            executable: "az",
+            version_args: &["--version"],
+            auth_args: &["account", "show", "--query", "user.name", "-o", "tsv"],
+            install_hint: "Install the Azure command-line tools (`az`), then enable Azure DevOps support with `az extension add --name azure-devops`.",
+        },
+    ]
+}
+
+fn source_control_account_after_marker(line: &str, marker: &str) -> Option<String> {
+    let lower = line.to_ascii_lowercase();
+    let marker_index = lower.find(marker)?;
+    let rest = line[marker_index + marker.len()..].trim_start();
+    let account = rest
+        .split(|character: char| character.is_whitespace() || character == '(')
+        .next()
+        .unwrap_or("")
+        .trim();
+    (!account.is_empty()).then(|| account.to_string())
+}
+
+fn source_control_account_after_label(line: &str, label: &str) -> Option<String> {
+    let lower = line.to_ascii_lowercase();
+    let label_index = lower.find(label)?;
+    let rest = line[label_index + label.len()..].trim_start();
+    let account = rest
+        .split(|character: char| character.is_whitespace() || character == '(')
+        .next()
+        .unwrap_or("")
+        .trim();
+    (!account.is_empty()).then(|| account.to_string())
+}
+
+pub fn parse_github_source_control_auth(
+    input: &SourceControlAuthProbeInput,
+) -> SourceControlProviderAuth {
+    let output = source_control_combined_auth_output(input);
+    let account = output.lines().find_map(|line| {
+        source_control_account_after_marker(line, " account ")
+            .or_else(|| source_control_account_after_marker(line, " as "))
+    });
+    let host = source_control_parse_cli_host(&output);
+
+    if input.exit_code != 0 {
+        return source_control_provider_auth(
+            SourceControlProviderAuthStatus::Unauthenticated,
+            None,
+            host.as_deref(),
+            source_control_first_safe_auth_line(&output)
+                .as_deref()
+                .or(Some("Run `gh auth login` to authenticate GitHub CLI.")),
+        );
+    }
+
+    if let Some(account) = account {
+        return source_control_provider_auth(
+            SourceControlProviderAuthStatus::Authenticated,
+            Some(&account),
+            host.as_deref(),
+            None,
+        );
+    }
+
+    source_control_provider_auth(
+        SourceControlProviderAuthStatus::Unknown,
+        None,
+        host.as_deref(),
+        source_control_first_safe_auth_line(&output)
+            .as_deref()
+            .or(Some("GitHub CLI auth status could not be parsed.")),
+    )
+}
+
+pub fn parse_gitlab_source_control_auth(
+    input: &SourceControlAuthProbeInput,
+) -> SourceControlProviderAuth {
+    let output = source_control_combined_auth_output(input);
+    let account = output.lines().find_map(|line| {
+        source_control_account_after_marker(line, " as ")
+            .or_else(|| source_control_account_after_marker(line, " account "))
+            .or_else(|| source_control_account_after_label(line, "account:"))
+    });
+    let host = source_control_parse_cli_host(&output);
+
+    if input.exit_code != 0 {
+        return source_control_provider_auth(
+            SourceControlProviderAuthStatus::Unauthenticated,
+            None,
+            host.as_deref(),
+            source_control_first_safe_auth_line(&output)
+                .as_deref()
+                .or(Some("Run `glab auth login` to authenticate GitLab CLI.")),
+        );
+    }
+
+    if let Some(account) = account {
+        return source_control_provider_auth(
+            SourceControlProviderAuthStatus::Authenticated,
+            Some(&account),
+            host.as_deref(),
+            None,
+        );
+    }
+
+    source_control_provider_auth(
+        SourceControlProviderAuthStatus::Unknown,
+        None,
+        host.as_deref(),
+        source_control_first_safe_auth_line(&output)
+            .as_deref()
+            .or(Some("GitLab CLI auth status could not be parsed.")),
+    )
+}
+
+pub fn parse_azure_devops_source_control_auth(
+    input: &SourceControlAuthProbeInput,
+) -> SourceControlProviderAuth {
+    let account = input.stdout.lines().next().map(str::trim).unwrap_or("");
+
+    if input.exit_code != 0 {
+        let output = source_control_combined_auth_output(input);
+        return source_control_provider_auth(
+            SourceControlProviderAuthStatus::Unauthenticated,
+            None,
+            None,
+            source_control_first_safe_auth_line(&output)
+                .as_deref()
+                .or(Some("Run `az login` to authenticate Azure CLI.")),
+        );
+    }
+
+    if !account.is_empty() {
+        return source_control_provider_auth(
+            SourceControlProviderAuthStatus::Authenticated,
+            Some(account),
+            Some("dev.azure.com"),
+            None,
+        );
+    }
+
+    source_control_provider_auth(
+        SourceControlProviderAuthStatus::Unknown,
+        None,
+        Some("dev.azure.com"),
+        Some("Azure CLI account status could not be parsed."),
+    )
+}
+
 pub fn source_control_vcs_probe_specs() -> Vec<SourceControlVcsProbeSpec> {
     vec![
         SourceControlVcsProbeSpec {
@@ -17417,6 +17585,107 @@ mod tests {
                 timeout_ms: 5_000,
                 max_output_bytes: 8_000,
                 append_truncation_marker: true,
+            }
+        );
+        let provider_specs = source_control_provider_cli_specs();
+        assert_eq!(
+            provider_specs
+                .iter()
+                .map(|spec| (spec.kind, spec.executable, spec.auth_args))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    SourceControlProviderKind::Github,
+                    "gh",
+                    &["auth", "status"][..]
+                ),
+                (
+                    SourceControlProviderKind::Gitlab,
+                    "glab",
+                    &["auth", "status"][..]
+                ),
+                (
+                    SourceControlProviderKind::AzureDevops,
+                    "az",
+                    &["account", "show", "--query", "user.name", "-o", "tsv"][..]
+                ),
+            ]
+        );
+
+        assert_eq!(
+            parse_github_source_control_auth(&SourceControlAuthProbeInput {
+                stdout: "github.com\nLogged in to github.com account octocat (keyring)\n- Token: secret\n"
+                    .to_string(),
+                stderr: String::new(),
+                exit_code: 0,
+            }),
+            SourceControlProviderAuth {
+                status: SourceControlProviderAuthStatus::Authenticated,
+                account: Some("octocat".to_string()),
+                host: Some("github.com".to_string()),
+                detail: None,
+            }
+        );
+        assert_eq!(
+            parse_github_source_control_auth(&SourceControlAuthProbeInput {
+                stdout: "- Token: secret\n".to_string(),
+                stderr: String::new(),
+                exit_code: 1,
+            }),
+            SourceControlProviderAuth {
+                status: SourceControlProviderAuthStatus::Unauthenticated,
+                account: None,
+                host: None,
+                detail: Some("Run `gh auth login` to authenticate GitHub CLI.".to_string()),
+            }
+        );
+        assert_eq!(
+            parse_gitlab_source_control_auth(&SourceControlAuthProbeInput {
+                stdout: "gitlab.com\nLogged in to gitlab.com as gitlab-user\n".to_string(),
+                stderr: String::new(),
+                exit_code: 0,
+            }),
+            SourceControlProviderAuth {
+                status: SourceControlProviderAuthStatus::Authenticated,
+                account: Some("gitlab-user".to_string()),
+                host: Some("gitlab.com".to_string()),
+                detail: None,
+            }
+        );
+        assert_eq!(
+            parse_gitlab_source_control_auth(&SourceControlAuthProbeInput {
+                stdout: "account: fallback-user\n".to_string(),
+                stderr: String::new(),
+                exit_code: 0,
+            })
+            .account
+            .as_deref(),
+            Some("fallback-user")
+        );
+        assert_eq!(
+            parse_azure_devops_source_control_auth(&SourceControlAuthProbeInput {
+                stdout: "azure-user@example.com\n".to_string(),
+                stderr: String::new(),
+                exit_code: 0,
+            }),
+            SourceControlProviderAuth {
+                status: SourceControlProviderAuthStatus::Authenticated,
+                account: Some("azure-user@example.com".to_string()),
+                host: Some("dev.azure.com".to_string()),
+                detail: None,
+            }
+        );
+        assert_eq!(
+            parse_azure_devops_source_control_auth(&SourceControlAuthProbeInput {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: 0,
+            }),
+            SourceControlProviderAuth {
+                status: SourceControlProviderAuthStatus::Unknown,
+                account: None,
+                host: Some("dev.azure.com".to_string()),
+                detail: Some("Azure CLI account status could not be parsed.".to_string()),
             }
         );
 
