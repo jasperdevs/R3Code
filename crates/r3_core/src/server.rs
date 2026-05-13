@@ -1157,6 +1157,17 @@ pub enum OtlpTracesProxyDecision {
     ExportFailed { body: &'static str, status: u16 },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BrowserApiCorsRouteDecision {
+    Preflight {
+        status: u16,
+        headers: BTreeMap<&'static str, String>,
+    },
+    ApplyHeaders {
+        headers: BTreeMap<&'static str, String>,
+    },
+}
+
 pub const BROWSER_API_CORS_ALLOWED_METHODS: &[&str] = &["GET", "POST", "OPTIONS"];
 pub const BROWSER_API_CORS_ALLOWED_HEADERS: &[&str] =
     &["authorization", "b3", "traceparent", "content-type"];
@@ -1504,6 +1515,21 @@ pub fn browser_api_cors_headers() -> BTreeMap<&'static str, String> {
             BROWSER_API_CORS_ALLOWED_HEADERS.join(", "),
         ),
     ])
+}
+
+pub fn browser_api_cors_route_decision(method: &str) -> BrowserApiCorsRouteDecision {
+    let mut headers = browser_api_cors_headers();
+    if method.eq_ignore_ascii_case("OPTIONS") {
+        headers.insert(
+            "access-control-max-age",
+            BROWSER_API_CORS_MAX_AGE_SECONDS.to_string(),
+        );
+        return BrowserApiCorsRouteDecision::Preflight {
+            status: 204,
+            headers,
+        };
+    }
+    BrowserApiCorsRouteDecision::ApplyHeaders { headers }
 }
 
 pub fn project_favicon_route_decision(
@@ -3147,6 +3173,30 @@ mod tests {
                     "authorization, b3, traceparent, content-type".to_string(),
                 ),
             ])
+        );
+        assert_eq!(
+            browser_api_cors_route_decision("OPTIONS"),
+            BrowserApiCorsRouteDecision::Preflight {
+                status: 204,
+                headers: BTreeMap::from([
+                    ("access-control-allow-origin", "*".to_string()),
+                    (
+                        "access-control-allow-methods",
+                        "GET, POST, OPTIONS".to_string(),
+                    ),
+                    (
+                        "access-control-allow-headers",
+                        "authorization, b3, traceparent, content-type".to_string(),
+                    ),
+                    ("access-control-max-age", "600".to_string()),
+                ]),
+            }
+        );
+        assert_eq!(
+            browser_api_cors_route_decision("get"),
+            BrowserApiCorsRouteDecision::ApplyHeaders {
+                headers: browser_api_cors_headers(),
+            }
         );
         assert!(FALLBACK_PROJECT_FAVICON_SVG.contains(r#"data-fallback="project-favicon""#));
         assert_eq!(PROJECT_FAVICON_CACHE_CONTROL, "public, max-age=3600");
