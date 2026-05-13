@@ -12327,6 +12327,23 @@ pub struct ThreadSummary {
     pub worktree_path: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadSortMessage {
+    pub created_at: String,
+    pub role: MessageRole,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadSortInput {
+    pub id: String,
+    pub project_id: String,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+    pub archived_at: Option<String>,
+    pub latest_user_message_at: Option<String>,
+    pub messages: Vec<ThreadSortMessage>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThreadStatus {
     Idle,
@@ -12791,6 +12808,82 @@ fn get_thread_sort_timestamp(thread: &ThreadSummary, sort_order: SidebarThreadSo
         .or_else(|| iso_utc_timestamp_seconds(&thread.updated_at))
         .or_else(|| iso_utc_timestamp_seconds(&thread.created_at))
         .unwrap_or(i64::MIN)
+}
+
+pub fn to_sortable_timestamp(iso: Option<&str>) -> Option<i64> {
+    let iso = iso?;
+    if iso.is_empty() {
+        return None;
+    }
+    iso_utc_timestamp_seconds(iso)
+}
+
+fn latest_user_message_sort_timestamp(thread: &ThreadSortInput) -> i64 {
+    if thread
+        .latest_user_message_at
+        .as_deref()
+        .is_some_and(|value| !value.is_empty())
+    {
+        return to_sortable_timestamp(thread.latest_user_message_at.as_deref()).unwrap_or(i64::MIN);
+    }
+
+    let latest_message_timestamp = thread
+        .messages
+        .iter()
+        .filter(|message| message.role == MessageRole::User)
+        .filter_map(|message| to_sortable_timestamp(Some(&message.created_at)))
+        .max();
+    if let Some(timestamp) = latest_message_timestamp {
+        return timestamp;
+    }
+
+    to_sortable_timestamp(
+        thread
+            .updated_at
+            .as_deref()
+            .or(thread.created_at.as_deref()),
+    )
+    .unwrap_or(i64::MIN)
+}
+
+pub fn get_thread_sort_input_timestamp(
+    thread: &ThreadSortInput,
+    sort_order: SidebarThreadSortOrder,
+) -> i64 {
+    if sort_order == SidebarThreadSortOrder::CreatedAt {
+        return to_sortable_timestamp(thread.created_at.as_deref()).unwrap_or(i64::MIN);
+    }
+    latest_user_message_sort_timestamp(thread)
+}
+
+pub fn sort_thread_inputs(
+    threads: &[ThreadSortInput],
+    sort_order: SidebarThreadSortOrder,
+) -> Vec<ThreadSortInput> {
+    let mut threads = threads.to_vec();
+    threads.sort_by(|left, right| {
+        let right_timestamp = get_thread_sort_input_timestamp(right, sort_order);
+        let left_timestamp = get_thread_sort_input_timestamp(left, sort_order);
+        right_timestamp
+            .cmp(&left_timestamp)
+            .then_with(|| right.id.cmp(&left.id))
+    });
+    threads
+}
+
+pub fn latest_thread_for_project(
+    threads: &[ThreadSortInput],
+    project_id: &str,
+    sort_order: SidebarThreadSortOrder,
+) -> Option<ThreadSortInput> {
+    let active_threads = threads
+        .iter()
+        .filter(|thread| thread.project_id == project_id && thread.archived_at.is_none())
+        .cloned()
+        .collect::<Vec<_>>();
+    sort_thread_inputs(&active_threads, sort_order)
+        .into_iter()
+        .next()
 }
 
 pub fn format_relative_time_label_at(iso_date: &str, now_iso: &str) -> String {
@@ -22588,6 +22681,155 @@ mod tests {
 
         let custom = DebouncedMemoryStorage::new(MemoryStateStorage::new(), Some(25));
         assert_eq!(custom.debounce_ms(), 25);
+    }
+
+    fn thread_sort_input(id: &str) -> ThreadSortInput {
+        ThreadSortInput {
+            id: id.to_string(),
+            project_id: "project-1".to_string(),
+            created_at: Some("2026-03-09T10:00:00.000Z".to_string()),
+            updated_at: Some("2026-03-09T10:00:00.000Z".to_string()),
+            archived_at: None,
+            latest_user_message_at: None,
+            messages: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn thread_sort_helpers_match_upstream_contract() {
+        let sorted = sort_thread_inputs(
+            &[
+                ThreadSortInput {
+                    id: "thread-1".to_string(),
+                    updated_at: Some("2026-03-09T10:10:00.000Z".to_string()),
+                    messages: vec![ThreadSortMessage {
+                        role: MessageRole::User,
+                        created_at: "2026-03-09T10:01:00.000Z".to_string(),
+                    }],
+                    ..thread_sort_input("thread-1")
+                },
+                ThreadSortInput {
+                    id: "thread-2".to_string(),
+                    created_at: Some("2026-03-09T10:05:00.000Z".to_string()),
+                    updated_at: Some("2026-03-09T10:05:00.000Z".to_string()),
+                    messages: vec![ThreadSortMessage {
+                        role: MessageRole::User,
+                        created_at: "2026-03-09T10:06:00.000Z".to_string(),
+                    }],
+                    ..thread_sort_input("thread-2")
+                },
+            ],
+            SidebarThreadSortOrder::UpdatedAt,
+        );
+        assert_eq!(
+            sorted
+                .iter()
+                .map(|thread| thread.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["thread-2", "thread-1"]
+        );
+
+        let fallback_sorted = sort_thread_inputs(
+            &[
+                ThreadSortInput {
+                    id: "thread-1".to_string(),
+                    updated_at: Some("2026-03-09T10:01:00.000Z".to_string()),
+                    messages: vec![ThreadSortMessage {
+                        role: MessageRole::Assistant,
+                        created_at: "2026-03-09T10:02:00.000Z".to_string(),
+                    }],
+                    ..thread_sort_input("thread-1")
+                },
+                ThreadSortInput {
+                    id: "thread-2".to_string(),
+                    created_at: Some("2026-03-09T10:05:00.000Z".to_string()),
+                    updated_at: Some("2026-03-09T10:05:00.000Z".to_string()),
+                    ..thread_sort_input("thread-2")
+                },
+            ],
+            SidebarThreadSortOrder::UpdatedAt,
+        );
+        assert_eq!(
+            fallback_sorted
+                .iter()
+                .map(|thread| thread.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["thread-2", "thread-1"]
+        );
+
+        let no_timestamp_sorted = sort_thread_inputs(
+            &[
+                ThreadSortInput {
+                    id: "thread-1".to_string(),
+                    created_at: Some(String::new()),
+                    updated_at: None,
+                    ..thread_sort_input("thread-1")
+                },
+                ThreadSortInput {
+                    id: "thread-2".to_string(),
+                    created_at: Some(String::new()),
+                    updated_at: None,
+                    ..thread_sort_input("thread-2")
+                },
+            ],
+            SidebarThreadSortOrder::UpdatedAt,
+        );
+        assert_eq!(
+            no_timestamp_sorted
+                .iter()
+                .map(|thread| thread.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["thread-2", "thread-1"]
+        );
+
+        let created_at_sorted = sort_thread_inputs(
+            &[
+                ThreadSortInput {
+                    id: "thread-1".to_string(),
+                    created_at: Some("2026-03-09T10:05:00.000Z".to_string()),
+                    updated_at: Some("2026-03-09T10:05:00.000Z".to_string()),
+                    ..thread_sort_input("thread-1")
+                },
+                ThreadSortInput {
+                    id: "thread-2".to_string(),
+                    created_at: Some("2026-03-09T10:00:00.000Z".to_string()),
+                    updated_at: Some("2026-03-09T10:10:00.000Z".to_string()),
+                    ..thread_sort_input("thread-2")
+                },
+            ],
+            SidebarThreadSortOrder::CreatedAt,
+        );
+        assert_eq!(
+            created_at_sorted
+                .iter()
+                .map(|thread| thread.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["thread-1", "thread-2"]
+        );
+
+        let latest = latest_thread_for_project(
+            &[
+                ThreadSortInput {
+                    id: "thread-1".to_string(),
+                    updated_at: Some("2026-03-09T10:01:00.000Z".to_string()),
+                    ..thread_sort_input("thread-1")
+                },
+                ThreadSortInput {
+                    id: "thread-2".to_string(),
+                    updated_at: Some("2026-03-09T10:10:00.000Z".to_string()),
+                    archived_at: Some("2026-03-10T00:00:00.000Z".to_string()),
+                    ..thread_sort_input("thread-2")
+                },
+                ThreadSortInput {
+                    id: "thread-3".to_string(),
+                    updated_at: Some("2026-03-09T10:06:00.000Z".to_string()),
+                    ..thread_sort_input("thread-3")
+                },
+            ],
+            "project-1",
+            SidebarThreadSortOrder::UpdatedAt,
+        );
+        assert_eq!(latest.map(|thread| thread.id).as_deref(), Some("thread-3"));
     }
 
     #[test]
