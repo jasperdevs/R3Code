@@ -5988,7 +5988,40 @@ pub struct DesktopSshEnvironmentTarget {
     pub port: Option<u16>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SshAskpassFile {
+    pub path: String,
+    pub contents: &'static str,
+    pub mode: Option<u32>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SshAskpassHelperDescriptor {
+    pub launcher_path: String,
+    pub files: Vec<SshAskpassFile>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SshChildEnvironmentPlan {
+    pub env: BTreeMap<String, String>,
+    pub askpass: Option<SshAskpassHelperDescriptor>,
+}
+
 pub const DEFAULT_SSH_COMMAND_TIMEOUT_MS: u64 = 60_000;
+pub const SSH_ASKPASS_DIR_NAME: &str = "t3code-ssh-askpass";
+pub const ASKPASS_POSIX_SCRIPT: &str = r#"#!/bin/sh
+# Invoked by ssh via SSH_ASKPASS when R3Code re-runs ssh with a cached password
+# from the renderer's in-app prompt. We never expose a native dialog here - if
+# T3_SSH_AUTH_SECRET is missing, that's a caller bug and we fail loudly.
+if [ "${T3_SSH_AUTH_SECRET+x}" = "x" ]; then
+  printf "%s\n" "$T3_SSH_AUTH_SECRET"
+  exit 0
+fi
+printf 'R3Code ssh-askpass invoked without T3_SSH_AUTH_SECRET.\n' >&2
+exit 1
+"#;
+pub const ASKPASS_WINDOWS_LAUNCHER_SCRIPT: &str = "@echo off\r\npowershell -NoProfile -ExecutionPolicy Bypass -File \"%~dp0ssh-askpass.ps1\" %*\r\n";
+pub const ASKPASS_WINDOWS_SCRIPT: &str = "# Invoked by ssh via SSH_ASKPASS (through ssh-askpass.cmd) when R3Code re-runs\r\n# ssh with a cached password from the renderer's in-app prompt. We never expose\r\n# a native dialog here - if T3_SSH_AUTH_SECRET is missing, that's a caller bug\r\n# and we fail loudly.\r\nif ($null -ne $env:T3_SSH_AUTH_SECRET) {\r\n  [Console]::Out.WriteLine($env:T3_SSH_AUTH_SECRET)\r\n  exit 0\r\n}\r\n[Console]::Error.WriteLine(\"R3Code ssh-askpass invoked without T3_SSH_AUTH_SECRET.\")\r\nexit 1\r\n";
 
 pub fn format_desktop_ssh_target(target: &DesktopSshEnvironmentTarget) -> String {
     let authority = if let Some(username) = target.username.as_deref() {
@@ -6062,6 +6095,95 @@ pub fn remote_state_key(target: &DesktopSshEnvironmentTarget) -> String {
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>()[..16]
         .to_string()
+}
+
+fn join_ssh_askpass_path(directory: &str, file_name: &str, platform: &str) -> String {
+    let trimmed = directory.trim_end_matches(['/', '\\']);
+    if platform == "win32" {
+        format!("{trimmed}\\{file_name}")
+    } else {
+        format!("{trimmed}/{file_name}")
+    }
+}
+
+pub fn build_ssh_askpass_helper_descriptor(
+    directory: &str,
+    platform: &str,
+) -> SshAskpassHelperDescriptor {
+    if platform == "win32" {
+        let powershell_path = join_ssh_askpass_path(directory, "ssh-askpass.ps1", platform);
+        return SshAskpassHelperDescriptor {
+            launcher_path: join_ssh_askpass_path(directory, "ssh-askpass.cmd", platform),
+            files: vec![
+                SshAskpassFile {
+                    path: join_ssh_askpass_path(directory, "ssh-askpass.cmd", platform),
+                    contents: ASKPASS_WINDOWS_LAUNCHER_SCRIPT,
+                    mode: None,
+                },
+                SshAskpassFile {
+                    path: powershell_path,
+                    contents: ASKPASS_WINDOWS_SCRIPT,
+                    mode: None,
+                },
+            ],
+        };
+    }
+
+    let script_path = join_ssh_askpass_path(directory, "ssh-askpass.sh", platform);
+    SshAskpassHelperDescriptor {
+        launcher_path: script_path.clone(),
+        files: vec![SshAskpassFile {
+            path: script_path,
+            contents: ASKPASS_POSIX_SCRIPT,
+            mode: Some(0o700),
+        }],
+    }
+}
+
+pub fn build_ssh_child_environment_plan(
+    base_env: &BTreeMap<String, String>,
+    interactive_auth: bool,
+    askpass_directory: &str,
+    auth_secret: Option<Option<&str>>,
+    platform: &str,
+) -> SshChildEnvironmentPlan {
+    let mut env = base_env.clone();
+    if !interactive_auth {
+        return SshChildEnvironmentPlan { env, askpass: None };
+    }
+
+    let descriptor = build_ssh_askpass_helper_descriptor(askpass_directory, platform);
+    env.insert("SSH_ASKPASS".to_string(), descriptor.launcher_path.clone());
+    env.insert("SSH_ASKPASS_REQUIRE".to_string(), "force".to_string());
+    if let Some(auth_secret) = auth_secret {
+        env.insert(
+            "T3_SSH_AUTH_SECRET".to_string(),
+            auth_secret.unwrap_or("").to_string(),
+        );
+    }
+    if platform != "win32" && !env.contains_key("DISPLAY") {
+        env.insert("DISPLAY".to_string(), "t3code".to_string());
+    }
+    SshChildEnvironmentPlan {
+        env,
+        askpass: Some(descriptor),
+    }
+}
+
+pub fn is_ssh_auth_failure(message: &str) -> bool {
+    let normalized = message.to_ascii_lowercase();
+    (normalized.contains("permission denied (")
+        && [
+            "publickey",
+            "password",
+            "keyboard-interactive",
+            "hostbased",
+            "gssapi-with-mic",
+        ]
+        .iter()
+        .any(|method| normalized.contains(method)))
+        || normalized.contains("authentication failed")
+        || normalized.contains("too many authentication failures")
 }
 
 pub fn build_ssh_host_spec(target: &DesktopSshEnvironmentTarget) -> Result<String, String> {
@@ -11504,6 +11626,44 @@ mod tests {
             "t3@latest"
         );
         assert_eq!(DEFAULT_SSH_COMMAND_TIMEOUT_MS, 60_000);
+        assert_eq!(SSH_ASKPASS_DIR_NAME, "t3code-ssh-askpass");
+        assert!(is_ssh_auth_failure(
+            "julius@100.65.180.100: Permission denied (publickey,password,keyboard-interactive)."
+        ));
+        assert!(is_ssh_auth_failure("Too many authentication failures"));
+        assert!(!is_ssh_auth_failure("mkdir: Permission denied"));
+        let askpass = build_ssh_askpass_helper_descriptor("C:\\temp\\t3code-ssh-askpass", "win32");
+        assert_eq!(
+            askpass.launcher_path,
+            "C:\\temp\\t3code-ssh-askpass\\ssh-askpass.cmd"
+        );
+        assert_eq!(
+            askpass
+                .files
+                .iter()
+                .filter_map(|file| file.path.rsplit('\\').next())
+                .collect::<Vec<_>>(),
+            vec!["ssh-askpass.cmd", "ssh-askpass.ps1"]
+        );
+        let env_plan = build_ssh_child_environment_plan(
+            &BTreeMap::new(),
+            true,
+            "/tmp/t3code-ssh-askpass",
+            Some(Some("super-secret")),
+            "linux",
+        );
+        assert_eq!(
+            env_plan.env["SSH_ASKPASS"],
+            "/tmp/t3code-ssh-askpass/ssh-askpass.sh"
+        );
+        assert_eq!(env_plan.env["SSH_ASKPASS_REQUIRE"], "force");
+        assert_eq!(env_plan.env["T3_SSH_AUTH_SECRET"], "super-secret");
+        assert_eq!(env_plan.env["DISPLAY"], "t3code");
+        assert!(
+            env_plan.askpass.as_ref().unwrap().files[0]
+                .contents
+                .contains("R3Code ssh-askpass")
+        );
 
         let target = parse_manual_desktop_ssh_target("alice@example.com:2222", "", "").unwrap();
         assert_eq!(
