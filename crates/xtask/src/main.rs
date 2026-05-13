@@ -1900,6 +1900,20 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core turn_diff_stats_sum_only_files_with_numeric_values`",
             "Wire core label segments into live GPUI changed-files and timeline diff labels.",
         )
+    } else if path == "apps/web/src/components/chat/ProviderStatusBanner.tsx" {
+        (
+            "provider status banner visibility, provider label fallback, alert variant, title, message fallback, and class/icon contracts in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core provider_status_summary`",
+            "Wire core banner plan into live GPUI chat provider status surface.",
+        )
+    } else if path == "apps/web/src/components/chat/ThreadErrorBanner.tsx" {
+        (
+            "thread error banner nullability, alert description, optional dismiss action, class/icon, and aria-label contracts in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core transport_error_filtering`",
+            "Wire core banner plan into live GPUI thread error surface.",
+        )
     } else if path == "apps/web/src/components/chat/modelPickerModelHighlights.ts" {
         (
             "model picker new-model highlight key lookup in crates/r3_core/src/lib.rs",

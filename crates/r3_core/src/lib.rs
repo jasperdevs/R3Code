@@ -3679,6 +3679,36 @@ pub struct ProviderVersionAdvisoryPresentation {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderStatusBannerPlan {
+    pub wrapper_class_name: &'static str,
+    pub alert_variant: &'static str,
+    pub icon_name: &'static str,
+    pub title: String,
+    pub description: String,
+    pub description_title: String,
+    pub description_class_name: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadErrorBannerPlan {
+    pub wrapper_class_name: &'static str,
+    pub alert_variant: &'static str,
+    pub icon_name: &'static str,
+    pub description: String,
+    pub description_title: String,
+    pub description_class_name: &'static str,
+    pub dismiss_action: Option<ThreadErrorBannerDismissAction>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadErrorBannerDismissAction {
+    pub aria_label: &'static str,
+    pub button_class_name: &'static str,
+    pub icon_name: &'static str,
+    pub icon_class_name: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerProvider {
     pub instance_id: String,
     pub driver: String,
@@ -3839,6 +3869,71 @@ pub fn provider_status_dot_style(status: ServerProviderState) -> &'static str {
         ServerProviderState::Ready => "bg-success",
         ServerProviderState::Warning => "bg-warning",
     }
+}
+
+pub fn provider_status_banner_plan(
+    status: Option<&ServerProvider>,
+) -> Option<ProviderStatusBannerPlan> {
+    let status = status?;
+    if matches!(
+        status.status,
+        ServerProviderState::Ready | ServerProviderState::Disabled
+    ) {
+        return None;
+    }
+
+    let provider_label = status
+        .display_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format_provider_driver_kind_label(&status.driver));
+    let default_message = if status.status == ServerProviderState::Error {
+        format!("{provider_label} provider is unavailable.")
+    } else {
+        format!("{provider_label} provider has limited availability.")
+    };
+    let description = status.message.clone().unwrap_or(default_message);
+
+    Some(ProviderStatusBannerPlan {
+        wrapper_class_name: "pt-3 mx-auto max-w-3xl",
+        alert_variant: if status.status == ServerProviderState::Error {
+            "error"
+        } else {
+            "warning"
+        },
+        icon_name: "CircleAlertIcon",
+        title: format!("{provider_label} provider status"),
+        description_title: description.clone(),
+        description,
+        description_class_name: "line-clamp-3",
+    })
+}
+
+pub fn thread_error_banner_plan(
+    error: Option<&str>,
+    has_dismiss_handler: bool,
+) -> Option<ThreadErrorBannerPlan> {
+    let error = error?;
+    if error.is_empty() {
+        return None;
+    }
+
+    Some(ThreadErrorBannerPlan {
+        wrapper_class_name: "pt-3 mx-auto max-w-3xl",
+        alert_variant: "error",
+        icon_name: "CircleAlertIcon",
+        description: error.to_string(),
+        description_title: error.to_string(),
+        description_class_name: "line-clamp-3",
+        dismiss_action: has_dismiss_handler.then_some(ThreadErrorBannerDismissAction {
+            aria_label: "Dismiss error",
+            button_class_name: "inline-flex size-6 items-center justify-center rounded-md text-destructive/60 transition-colors hover:text-destructive",
+            icon_name: "XIcon",
+            icon_class_name: "size-3.5",
+        }),
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -21573,6 +21668,38 @@ mod tests {
             None
         );
         assert_eq!(sanitize_thread_error_message(None), None);
+
+        assert_eq!(thread_error_banner_plan(None, true), None);
+        assert_eq!(thread_error_banner_plan(Some(""), true), None);
+        assert_eq!(
+            thread_error_banner_plan(Some("   "), false),
+            Some(ThreadErrorBannerPlan {
+                wrapper_class_name: "pt-3 mx-auto max-w-3xl",
+                alert_variant: "error",
+                icon_name: "CircleAlertIcon",
+                description: "   ".to_string(),
+                description_title: "   ".to_string(),
+                description_class_name: "line-clamp-3",
+                dismiss_action: None,
+            })
+        );
+        assert_eq!(
+            thread_error_banner_plan(Some("Turn failed"), true),
+            Some(ThreadErrorBannerPlan {
+                wrapper_class_name: "pt-3 mx-auto max-w-3xl",
+                alert_variant: "error",
+                icon_name: "CircleAlertIcon",
+                description: "Turn failed".to_string(),
+                description_title: "Turn failed".to_string(),
+                description_class_name: "line-clamp-3",
+                dismiss_action: Some(ThreadErrorBannerDismissAction {
+                    aria_label: "Dismiss error",
+                    button_class_name: "inline-flex size-6 items-center justify-center rounded-md text-destructive/60 transition-colors hover:text-destructive",
+                    icon_name: "XIcon",
+                    icon_class_name: "size-3.5",
+                }),
+            })
+        );
     }
 
     #[test]
@@ -21851,6 +21978,35 @@ mod tests {
             provider.auth.status = ServerProviderAuthStatus::Unknown;
         });
         assert_eq!(get_provider_summary(Some(&error)).headline, "Unavailable");
+
+        assert_eq!(provider_status_banner_plan(None), None);
+        assert_eq!(provider_status_banner_plan(Some(&disabled)), None);
+        assert_eq!(provider_status_banner_plan(Some(&authenticated)), None);
+
+        let warning_banner = provider_status_banner_plan(Some(&warning)).unwrap();
+        assert_eq!(warning_banner.wrapper_class_name, "pt-3 mx-auto max-w-3xl");
+        assert_eq!(warning_banner.alert_variant, "warning");
+        assert_eq!(warning_banner.icon_name, "CircleAlertIcon");
+        assert_eq!(warning_banner.title, "Codex provider status");
+        assert_eq!(
+            warning_banner.description,
+            "Codex provider has limited availability."
+        );
+        assert_eq!(warning_banner.description_title, warning_banner.description);
+        assert_eq!(warning_banner.description_class_name, "line-clamp-3");
+
+        let custom_error_banner =
+            provider_status_banner_plan(Some(&make_server_provider(|provider| {
+                provider.status = ServerProviderState::Error;
+                provider.driver = "customProvider".to_string();
+                provider.display_name = Some("   ".to_string());
+                provider.message = Some("".to_string());
+            })))
+            .unwrap();
+        assert_eq!(custom_error_banner.alert_variant, "error");
+        assert_eq!(custom_error_banner.title, "Custom Provider provider status");
+        assert_eq!(custom_error_banner.description, "");
+        assert_eq!(custom_error_banner.description_title, "");
     }
 
     #[test]
