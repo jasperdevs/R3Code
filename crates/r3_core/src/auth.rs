@@ -1928,7 +1928,8 @@ fn extract_websocket_query_token(request_url: &str) -> Option<String> {
         .unwrap_or("");
     for pair in query.split('&') {
         let (key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        if key == WEBSOCKET_TOKEN_QUERY_PARAM {
+        if decode_url_query_component(key) == WEBSOCKET_TOKEN_QUERY_PARAM {
+            let value = decode_url_query_component(value);
             let trimmed = value.trim();
             if !trimmed.is_empty() {
                 return Some(trimmed.to_string());
@@ -1936,6 +1937,47 @@ fn extract_websocket_query_token(request_url: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn decode_url_query_component(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+
+    while index < bytes.len() {
+        match bytes[index] {
+            b'+' => {
+                decoded.push(b' ');
+                index += 1;
+            }
+            b'%' if index + 2 < bytes.len() => {
+                if let (Some(high), Some(low)) =
+                    (hex_nibble(bytes[index + 1]), hex_nibble(bytes[index + 2]))
+                {
+                    decoded.push((high << 4) | low);
+                    index += 3;
+                } else {
+                    decoded.push(bytes[index]);
+                    index += 1;
+                }
+            }
+            byte => {
+                decoded.push(byte);
+                index += 1;
+            }
+        }
+    }
+
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
+fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn base64_url_decode(input: &str) -> Result<Vec<u8>, AuthError> {
@@ -2589,7 +2631,33 @@ mod tests {
         );
         assert_eq!(
             select_websocket_upgrade_credential(
+                Some("http://127.0.0.1:3773/ws?%77%73%54%6f%6b%65%6e=ws%2Dtoken%2B1"),
+                Some("cookie-token"),
+                Some("Bearer bearer-token"),
+            ),
+            WebSocketUpgradeCredentialSelection::WebSocketToken("ws-token+1".to_string())
+        );
+        assert_eq!(
+            select_websocket_upgrade_credential(
+                Some("http://127.0.0.1:3773/ws?wsToken=ws+token"),
+                Some("cookie-token"),
+                Some("Bearer bearer-token"),
+            ),
+            WebSocketUpgradeCredentialSelection::WebSocketToken("ws token".to_string())
+        );
+        assert_eq!(
+            select_websocket_upgrade_credential(
                 Some("http://127.0.0.1:3773/ws?wsToken=   "),
+                Some("cookie-token"),
+                None,
+            ),
+            WebSocketUpgradeCredentialSelection::Fallback(AuthCredentialSelection::Credential(
+                "cookie-token".to_string()
+            ))
+        );
+        assert_eq!(
+            select_websocket_upgrade_credential(
+                Some("http://127.0.0.1:3773/ws?wsToken=++"),
                 Some("cookie-token"),
                 None,
             ),
