@@ -686,6 +686,12 @@ pub struct ThreadDeleteConfirmationPlan {
     pub proceed_to_delete: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TurnDiffSummariesHookState {
+    pub turn_diff_summaries: Vec<TurnDiffSummary>,
+    pub inferred_checkpoint_turn_count_by_turn_id: BTreeMap<String, u32>,
+}
+
 pub type ReactQueryKey = Vec<Option<String>>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22738,6 +22744,30 @@ pub fn ordered_turn_diff_files(files: &[TurnDiffFileChange]) -> Vec<TurnDiffFile
     ordered
 }
 
+pub fn infer_checkpoint_turn_count_by_turn_id(
+    summaries: &[TurnDiffSummary],
+) -> BTreeMap<String, u32> {
+    let mut sorted = summaries.to_vec();
+    sorted.sort_by(|left, right| left.completed_at.cmp(&right.completed_at));
+    sorted
+        .into_iter()
+        .enumerate()
+        .map(|(index, summary)| (summary.turn_id, index as u32 + 1))
+        .collect()
+}
+
+pub fn turn_diff_summaries_hook_state(
+    active_thread_summaries: Option<&[TurnDiffSummary]>,
+) -> TurnDiffSummariesHookState {
+    let turn_diff_summaries = active_thread_summaries.unwrap_or(&[]).to_vec();
+    let inferred_checkpoint_turn_count_by_turn_id =
+        infer_checkpoint_turn_count_by_turn_id(&turn_diff_summaries);
+    TurnDiffSummariesHookState {
+        turn_diff_summaries,
+        inferred_checkpoint_turn_count_by_turn_id,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurnDiffSummary {
     pub turn_id: String,
@@ -36923,6 +36953,52 @@ mod tests {
                 diff: Some("1".to_string()),
                 diff_turn_id: None,
                 diff_file_path: None,
+            }
+        );
+    }
+
+    #[test]
+    fn turn_diff_summaries_hook_helpers_match_upstream_contract() {
+        assert_eq!(
+            turn_diff_summaries_hook_state(None),
+            TurnDiffSummariesHookState {
+                turn_diff_summaries: Vec::new(),
+                inferred_checkpoint_turn_count_by_turn_id: BTreeMap::new(),
+            }
+        );
+
+        let summaries = vec![
+            TurnDiffSummary {
+                turn_id: "turn-late".to_string(),
+                completed_at: "2026-05-13T10:00:00.000Z".to_string(),
+                status: Some("completed".to_string()),
+                files: vec![diff_file("src/lib.rs", Some(2), Some(1))],
+                checkpoint_ref: Some("checkpoint-late".to_string()),
+                assistant_message_id: Some("message-late".to_string()),
+                checkpoint_turn_count: None,
+            },
+            TurnDiffSummary {
+                turn_id: "turn-early".to_string(),
+                completed_at: "2026-05-13T09:00:00.000Z".to_string(),
+                status: Some("completed".to_string()),
+                files: vec![diff_file("README.md", Some(1), Some(0))],
+                checkpoint_ref: Some("checkpoint-early".to_string()),
+                assistant_message_id: Some("message-early".to_string()),
+                checkpoint_turn_count: None,
+            },
+        ];
+        assert_eq!(
+            infer_checkpoint_turn_count_by_turn_id(&summaries),
+            BTreeMap::from([("turn-early".to_string(), 1), ("turn-late".to_string(), 2),])
+        );
+        assert_eq!(
+            turn_diff_summaries_hook_state(Some(&summaries)),
+            TurnDiffSummariesHookState {
+                turn_diff_summaries: summaries.clone(),
+                inferred_checkpoint_turn_count_by_turn_id: BTreeMap::from([
+                    ("turn-early".to_string(), 1),
+                    ("turn-late".to_string(), 2),
+                ]),
             }
         );
     }

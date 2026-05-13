@@ -1746,6 +1746,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core thread_actions_helpers_match_upstream_archive_delete_flow`",
             "Wire helpers into live GPUI sidebar/thread menus, environment API commands, local dialog confirmations, router navigation, terminal/composer cleanup, and worktree removal toasts.",
         )
+    } else if path == "apps/web/src/hooks/useTurnDiffSummaries.ts" {
+        (
+            "turn diff summaries hook helper for empty active-thread fallback, active-thread summary passthrough, and inferred checkpoint turn-count mapping by completedAt order in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core turn_diff_summaries_hook_helpers_match_upstream_contract`",
+            "Wire helper into live GPUI active-thread diff summary state and memoized checkpoint turn-count rendering.",
+        )
     } else if path == "apps/web/src/markdown-links.ts"
         || path == "apps/web/src/markdown-links.test.ts"
     {
