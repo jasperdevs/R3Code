@@ -16678,6 +16678,141 @@ pub fn remove_browser_saved_environment_secret(
     }
 }
 
+pub fn list_browser_saved_environment_records_sorted(
+    records: &[BrowserSavedEnvironmentRecord],
+) -> Vec<BrowserSavedEnvironmentRecord> {
+    let mut next = records.to_vec();
+    next.sort_by(|left, right| left.label.cmp(&right.label));
+    next
+}
+
+pub fn upsert_browser_saved_environment_record(
+    records: &[BrowserSavedEnvironmentRecord],
+    record: BrowserSavedEnvironmentRecord,
+) -> Vec<BrowserSavedEnvironmentRecord> {
+    let mut next = records.to_vec();
+    if let Some(existing) = next
+        .iter_mut()
+        .find(|existing| existing.environment_id == record.environment_id)
+    {
+        *existing = record;
+    } else {
+        next.push(record);
+    }
+    next
+}
+
+pub fn remove_browser_saved_environment_record(
+    records: &[BrowserSavedEnvironmentRecord],
+    environment_id: &str,
+) -> Vec<BrowserSavedEnvironmentRecord> {
+    records
+        .iter()
+        .filter(|record| record.environment_id != environment_id)
+        .cloned()
+        .collect()
+}
+
+pub fn mark_browser_saved_environment_connected(
+    records: &[BrowserSavedEnvironmentRecord],
+    environment_id: &str,
+    connected_at: &str,
+) -> Vec<BrowserSavedEnvironmentRecord> {
+    records
+        .iter()
+        .map(|record| {
+            if record.environment_id != environment_id {
+                return record.clone();
+            }
+            BrowserSavedEnvironmentRecord {
+                last_connected_at: Some(connected_at.to_string()),
+                ..record.clone()
+            }
+        })
+        .collect()
+}
+
+pub fn rename_browser_saved_environment_record(
+    records: &[BrowserSavedEnvironmentRecord],
+    environment_id: &str,
+    label: &str,
+) -> Vec<BrowserSavedEnvironmentRecord> {
+    let next_label = label.trim();
+    if next_label.is_empty() {
+        return records.to_vec();
+    }
+    records
+        .iter()
+        .map(|record| {
+            if record.environment_id != environment_id || record.label == next_label {
+                return record.clone();
+            }
+            BrowserSavedEnvironmentRecord {
+                label: next_label.to_string(),
+                ..record.clone()
+            }
+        })
+        .collect()
+}
+
+pub fn get_browser_environment_http_base_url(
+    environment_id: &str,
+    primary_environment: Option<&BrowserSavedEnvironmentRecord>,
+    saved_records: &[BrowserSavedEnvironmentRecord],
+) -> Option<String> {
+    if primary_environment
+        .map(|record| record.environment_id.as_str() == environment_id)
+        .unwrap_or(false)
+    {
+        return primary_environment.map(|record| record.http_base_url.clone());
+    }
+    saved_records
+        .iter()
+        .find(|record| record.environment_id == environment_id)
+        .map(|record| record.http_base_url.clone())
+}
+
+pub fn resolve_browser_environment_http_url(
+    environment_id: &str,
+    primary_environment: Option<&BrowserSavedEnvironmentRecord>,
+    saved_records: &[BrowserSavedEnvironmentRecord],
+    pathname: &str,
+    search_params: &[(&str, &str)],
+) -> Result<String, String> {
+    let Some(base_url) =
+        get_browser_environment_http_base_url(environment_id, primary_environment, saved_records)
+    else {
+        return Err(format!(
+            "Unable to resolve HTTP base URL for environment {environment_id}."
+        ));
+    };
+    let origin_end = base_url
+        .find("://")
+        .and_then(|scheme_end| {
+            base_url[scheme_end + 3..]
+                .find('/')
+                .map(|slash| scheme_end + 3 + slash)
+        })
+        .unwrap_or(base_url.len());
+    let origin = &base_url[..origin_end];
+    let mut url = format!(
+        "{}/{}",
+        origin.trim_end_matches('/'),
+        pathname.trim_start_matches('/')
+    );
+    if !search_params.is_empty() {
+        url.push('?');
+        url.push_str(
+            &search_params
+                .iter()
+                .map(|(key, value)| format!("{key}={value}"))
+                .collect::<Vec<_>>()
+                .join("&"),
+        );
+    }
+    Ok(url)
+}
+
 pub fn parse_ssh_resolve_output(alias: &str, stdout: &str) -> DesktopSshEnvironmentTarget {
     let mut values = BTreeMap::new();
     for line in stdout.lines() {
@@ -26049,6 +26184,111 @@ mod tests {
                 version: Some(1),
                 records: vec![saved_record],
             }
+        );
+    }
+
+    #[test]
+    fn saved_environment_registry_store_helpers_match_upstream_contract() {
+        let alpha = BrowserSavedEnvironmentRecord {
+            environment_id: "environment-a".to_string(),
+            label: "Alpha".to_string(),
+            http_base_url: "https://alpha.example.com/".to_string(),
+            ws_base_url: "wss://alpha.example.com/".to_string(),
+            created_at: "2026-03-04T12:00:00.000Z".to_string(),
+            last_connected_at: None,
+            desktop_ssh: None,
+            bearer_token: None,
+        };
+        let beta = BrowserSavedEnvironmentRecord {
+            environment_id: "environment-b".to_string(),
+            label: "Beta".to_string(),
+            http_base_url: "https://beta.example.com/base".to_string(),
+            ws_base_url: "wss://beta.example.com/base".to_string(),
+            created_at: "2026-03-04T12:01:00.000Z".to_string(),
+            last_connected_at: None,
+            desktop_ssh: None,
+            bearer_token: None,
+        };
+
+        assert_eq!(
+            list_browser_saved_environment_records_sorted(&[beta.clone(), alpha.clone()]),
+            vec![alpha.clone(), beta.clone()]
+        );
+        assert_eq!(
+            upsert_browser_saved_environment_record(&[alpha.clone()], beta.clone()),
+            vec![alpha.clone(), beta.clone()]
+        );
+        assert_eq!(
+            remove_browser_saved_environment_record(
+                &[alpha.clone(), beta.clone()],
+                "environment-a"
+            ),
+            vec![beta.clone()]
+        );
+        assert_eq!(
+            mark_browser_saved_environment_connected(
+                &[alpha.clone()],
+                "environment-a",
+                "2026-03-04T12:02:00.000Z"
+            )[0]
+            .last_connected_at
+            .as_deref(),
+            Some("2026-03-04T12:02:00.000Z")
+        );
+        assert_eq!(
+            rename_browser_saved_environment_record(&[alpha.clone()], "environment-a", "  Local  ")
+                [0]
+            .label,
+            "Local"
+        );
+        assert_eq!(
+            rename_browser_saved_environment_record(&[alpha.clone()], "environment-a", "   "),
+            vec![alpha.clone()]
+        );
+
+        assert_eq!(
+            get_browser_environment_http_base_url(
+                "environment-primary",
+                Some(&alpha),
+                &[beta.clone()]
+            )
+            .as_deref(),
+            None
+        );
+        let primary = BrowserSavedEnvironmentRecord {
+            environment_id: "environment-primary".to_string(),
+            label: "Primary".to_string(),
+            http_base_url: "http://127.0.0.1:3773/".to_string(),
+            ws_base_url: "ws://127.0.0.1:3773/".to_string(),
+            created_at: "2026-03-04T12:00:00.000Z".to_string(),
+            last_connected_at: None,
+            desktop_ssh: None,
+            bearer_token: None,
+        };
+        assert_eq!(
+            get_browser_environment_http_base_url(
+                "environment-primary",
+                Some(&primary),
+                &[beta.clone()]
+            )
+            .as_deref(),
+            Some("http://127.0.0.1:3773/")
+        );
+        assert_eq!(
+            resolve_browser_environment_http_url(
+                "environment-b",
+                Some(&primary),
+                &[beta],
+                "/auth/session",
+                &[("token", "abc"), ("mode", "saved")]
+            )
+            .unwrap(),
+            "https://beta.example.com/auth/session?token=abc&mode=saved"
+        );
+        assert_eq!(
+            resolve_browser_environment_http_url("missing", Some(&primary), &[], "/x", &[])
+                .unwrap_err(),
+            "Unable to resolve HTTP base URL for environment missing."
         );
     }
 
