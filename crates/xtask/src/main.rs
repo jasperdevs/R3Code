@@ -2773,6 +2773,16 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace form_primitive_contracts_match_upstream_components`; current screenshot gates where captured",
             "Maintain these primitive contracts if upstream changes form primitive slots, classes, or exported Base UI aliases.",
         )
+    } else if path == "apps/web/src/components/ui/alert.tsx"
+        || path == "apps/web/src/components/ui/collapsible.tsx"
+        || path == "apps/web/src/components/ui/draft-input.tsx"
+    {
+        (
+            "Alert variant/slot/class/role contracts, Collapsible slot/class/export contracts, and DraftInput commit-on-blur prop/render contract in crates/r3_core/src/lib.rs",
+            "covered",
+            "`cargo test --workspace alert_collapsible_and_draft_input_contracts_match_upstream_components`; current screenshot gates where captured",
+            "Maintain these component contracts if upstream changes Alert variants, Collapsible panel behavior, or DraftInput commit-on-blur behavior.",
+        )
     } else if path == "apps/web/src/components/ui/kbd.tsx"
         || path == "apps/web/src/components/ui/label.tsx"
         || path == "apps/web/src/components/ui/separator.tsx"

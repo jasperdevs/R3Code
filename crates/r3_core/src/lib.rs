@@ -997,6 +997,52 @@ pub const FIELDSET_LEGEND_CLASS_NAME: &str = "font-semibold text-foreground";
 pub const FORM_SLOT: &str = "form";
 pub const FORM_CLASS_NAME: &str = "flex w-full flex-col gap-4";
 
+pub const ALERT_SLOT: &str = "alert";
+pub const ALERT_TITLE_SLOT: &str = "alert-title";
+pub const ALERT_DESCRIPTION_SLOT: &str = "alert-description";
+pub const ALERT_ACTION_SLOT: &str = "alert-action";
+pub const ALERT_ROLE: &str = "alert";
+pub const ALERT_BASE_CLASS_NAME: &str = "relative grid w-full items-start gap-x-2 gap-y-0.5 rounded-xl border px-3.5 py-3 text-card-foreground text-sm has-[>svg]:has-data-[slot=alert-action]:grid-cols-[calc(var(--spacing)*4)_1fr_auto] has-[>svg]:grid-cols-[calc(var(--spacing)*4)_1fr] has-data-[slot=alert-action]:grid-cols-[1fr_auto] has-[>svg]:gap-x-2 [&>svg]:h-lh [&>svg]:w-4";
+pub const ALERT_DEFAULT_VARIANT: AlertVariant = AlertVariant::Default;
+pub const ALERT_TITLE_CLASS_NAME: &str = "font-medium [svg~&]:col-start-2";
+pub const ALERT_DESCRIPTION_CLASS_NAME: &str =
+    "flex flex-col gap-2.5 text-muted-foreground [svg~&]:col-start-2";
+pub const ALERT_ACTION_CLASS_NAME: &str = "flex gap-1 max-sm:col-start-2 max-sm:mt-2 sm:row-start-1 sm:row-end-3 sm:self-center sm:[[data-slot=alert-description]~&]:col-start-2 sm:[[data-slot=alert-title]~&]:col-start-2 sm:[svg~&]:col-start-2 sm:[svg~[data-slot=alert-description]~&]:col-start-3 sm:[svg~[data-slot=alert-title]~&]:col-start-3";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AlertVariant {
+    Default,
+    Error,
+    Info,
+    Success,
+    Warning,
+}
+
+pub fn alert_variant_class_name(variant: AlertVariant) -> &'static str {
+    match variant {
+        AlertVariant::Default => "bg-transparent dark:bg-input/32 [&>svg]:text-muted-foreground",
+        AlertVariant::Error => "border-destructive/32 bg-destructive/4 [&>svg]:text-destructive",
+        AlertVariant::Info => "border-info/32 bg-info/4 [&>svg]:text-info",
+        AlertVariant::Success => "border-success/32 bg-success/4 [&>svg]:text-success",
+        AlertVariant::Warning => "border-warning/32 bg-warning/4 [&>svg]:text-warning",
+    }
+}
+
+pub const COLLAPSIBLE_SLOT: &str = "collapsible";
+pub const COLLAPSIBLE_TRIGGER_SLOT: &str = "collapsible-trigger";
+pub const COLLAPSIBLE_PANEL_SLOT: &str = "collapsible-panel";
+pub const COLLAPSIBLE_TRIGGER_CLASS_NAME: &str = "cursor-pointer";
+pub const COLLAPSIBLE_PANEL_CLASS_NAME: &str = "h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-200 data-ending-style:h-0 data-starting-style:h-0 data-open:data-ending-style:[height:var(--collapsible-panel-height)]";
+pub const COLLAPSIBLE_CONTENT_EXPORT_ALIAS: &str = "CollapsiblePanel";
+
+pub const DRAFT_INPUT_VALUE_PROP: &str = "value";
+pub const DRAFT_INPUT_ON_COMMIT_PROP: &str = "onCommit";
+pub const DRAFT_INPUT_OMITTED_INPUT_PROPS: [&str; 3] = ["value", "onChange", "defaultValue"];
+pub const DRAFT_INPUT_HOOK: &str = "useCommitOnBlur";
+pub const DRAFT_INPUT_RENDERED_COMPONENT: &str = "Input";
+pub const DRAFT_INPUT_SPREAD_ORDER: [&str; 2] = ["rest", "bag"];
+pub const DRAFT_INPUT_DESCRIPTION: &str = "Text `<Input>` that buffers keystrokes locally and invokes `onCommit` only when the user finishes editing (blur or Enter). Prevents each keystroke from triggering a settings-wide re-render or a server RPC round-trip, which otherwise makes fields backed by a server-hydrated value feel laggy.";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmptyMediaVariant {
     Default,
@@ -37206,6 +37252,73 @@ mod tests {
 
         assert_eq!(FORM_SLOT, "form");
         assert_eq!(FORM_CLASS_NAME, "flex w-full flex-col gap-4");
+    }
+
+    #[test]
+    fn alert_collapsible_and_draft_input_contracts_match_upstream_components() {
+        assert_eq!(ALERT_SLOT, "alert");
+        assert_eq!(ALERT_TITLE_SLOT, "alert-title");
+        assert_eq!(ALERT_DESCRIPTION_SLOT, "alert-description");
+        assert_eq!(ALERT_ACTION_SLOT, "alert-action");
+        assert_eq!(ALERT_ROLE, "alert");
+        assert_eq!(
+            ALERT_BASE_CLASS_NAME,
+            "relative grid w-full items-start gap-x-2 gap-y-0.5 rounded-xl border px-3.5 py-3 text-card-foreground text-sm has-[>svg]:has-data-[slot=alert-action]:grid-cols-[calc(var(--spacing)*4)_1fr_auto] has-[>svg]:grid-cols-[calc(var(--spacing)*4)_1fr] has-data-[slot=alert-action]:grid-cols-[1fr_auto] has-[>svg]:gap-x-2 [&>svg]:h-lh [&>svg]:w-4"
+        );
+        assert_eq!(ALERT_DEFAULT_VARIANT, AlertVariant::Default);
+        assert_eq!(
+            alert_variant_class_name(AlertVariant::Default),
+            "bg-transparent dark:bg-input/32 [&>svg]:text-muted-foreground"
+        );
+        assert_eq!(
+            alert_variant_class_name(AlertVariant::Error),
+            "border-destructive/32 bg-destructive/4 [&>svg]:text-destructive"
+        );
+        assert_eq!(
+            alert_variant_class_name(AlertVariant::Info),
+            "border-info/32 bg-info/4 [&>svg]:text-info"
+        );
+        assert_eq!(
+            alert_variant_class_name(AlertVariant::Success),
+            "border-success/32 bg-success/4 [&>svg]:text-success"
+        );
+        assert_eq!(
+            alert_variant_class_name(AlertVariant::Warning),
+            "border-warning/32 bg-warning/4 [&>svg]:text-warning"
+        );
+        assert_eq!(ALERT_TITLE_CLASS_NAME, "font-medium [svg~&]:col-start-2");
+        assert_eq!(
+            ALERT_DESCRIPTION_CLASS_NAME,
+            "flex flex-col gap-2.5 text-muted-foreground [svg~&]:col-start-2"
+        );
+        assert_eq!(
+            ALERT_ACTION_CLASS_NAME,
+            "flex gap-1 max-sm:col-start-2 max-sm:mt-2 sm:row-start-1 sm:row-end-3 sm:self-center sm:[[data-slot=alert-description]~&]:col-start-2 sm:[[data-slot=alert-title]~&]:col-start-2 sm:[svg~&]:col-start-2 sm:[svg~[data-slot=alert-description]~&]:col-start-3 sm:[svg~[data-slot=alert-title]~&]:col-start-3"
+        );
+
+        assert_eq!(COLLAPSIBLE_SLOT, "collapsible");
+        assert_eq!(COLLAPSIBLE_TRIGGER_SLOT, "collapsible-trigger");
+        assert_eq!(COLLAPSIBLE_PANEL_SLOT, "collapsible-panel");
+        assert_eq!(COLLAPSIBLE_TRIGGER_CLASS_NAME, "cursor-pointer");
+        assert_eq!(
+            COLLAPSIBLE_PANEL_CLASS_NAME,
+            "h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-200 data-ending-style:h-0 data-starting-style:h-0 data-open:data-ending-style:[height:var(--collapsible-panel-height)]"
+        );
+        assert_eq!(COLLAPSIBLE_CONTENT_EXPORT_ALIAS, "CollapsiblePanel");
+
+        assert_eq!(DRAFT_INPUT_VALUE_PROP, "value");
+        assert_eq!(DRAFT_INPUT_ON_COMMIT_PROP, "onCommit");
+        assert_eq!(
+            DRAFT_INPUT_OMITTED_INPUT_PROPS,
+            ["value", "onChange", "defaultValue"]
+        );
+        assert_eq!(DRAFT_INPUT_HOOK, "useCommitOnBlur");
+        assert_eq!(DRAFT_INPUT_RENDERED_COMPONENT, "Input");
+        assert_eq!(DRAFT_INPUT_SPREAD_ORDER, ["rest", "bag"]);
+        assert_eq!(
+            DRAFT_INPUT_DESCRIPTION,
+            "Text `<Input>` that buffers keystrokes locally and invokes `onCommit` only when the user finishes editing (blur or Enter). Prevents each keystroke from triggering a settings-wide re-render or a server RPC round-trip, which otherwise makes fields backed by a server-hydrated value feel laggy."
+        );
     }
 
     #[test]
