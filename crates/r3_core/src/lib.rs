@@ -1043,6 +1043,50 @@ pub const DRAFT_INPUT_RENDERED_COMPONENT: &str = "Input";
 pub const DRAFT_INPUT_SPREAD_ORDER: [&str; 2] = ["rest", "bag"];
 pub const DRAFT_INPUT_DESCRIPTION: &str = "Text `<Input>` that buffers keystrokes locally and invokes `onCommit` only when the user finishes editing (blur or Enter). Prevents each keystroke from triggering a settings-wide re-render or a server RPC round-trip, which otherwise makes fields backed by a server-hydrated value feel laggy.";
 
+pub const CARD_DEFAULT_TAG: &str = "div";
+pub const CARD_SLOT: &str = "card";
+pub const CARD_CLASS_NAME: &str = "relative flex flex-col rounded-2xl border bg-card not-dark:bg-clip-padding text-card-foreground shadow-xs/5 before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-2xl)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)]";
+pub const CARD_FRAME_SLOT: &str = "card-frame";
+pub const CARD_FRAME_CLASS_NAME: &str = "[--clip-top:-1rem] [--clip-bottom:-1rem] *:data-[slot=card]:first:[--clip-top:1px] *:data-[slot=card]:last:[--clip-bottom:1px] flex flex-col relative rounded-2xl border bg-card before:bg-muted/72 not-dark:bg-clip-padding text-card-foreground shadow-xs/5 before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-2xl)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)] *:data-[slot=card]:-m-px *:not-last:data-[slot=card]:rounded-b-xl *:not-last:data-[slot=card]:before:rounded-b-[calc(var(--radius-xl)-1px)] *:not-first:data-[slot=card]:rounded-t-xl *:not-first:data-[slot=card]:before:rounded-t-[calc(var(--radius-xl)-1px)] *:data-[slot=card]:[clip-path:inset(var(--clip-top)_1px_var(--clip-bottom)_1px_round_calc(var(--radius-2xl)-1px))] *:data-[slot=card]:shadow-none *:data-[slot=card]:before:hidden *:data-[slot=card]:bg-clip-padding";
+pub const CARD_FRAME_HEADER_SLOT: &str = "card-frame-header";
+pub const CARD_FRAME_HEADER_CLASS_NAME: &str = "relative flex flex-col px-6 py-4";
+pub const CARD_FRAME_TITLE_SLOT: &str = "card-frame-title";
+pub const CARD_FRAME_TITLE_CLASS_NAME: &str = "font-semibold text-sm";
+pub const CARD_FRAME_DESCRIPTION_SLOT: &str = "card-frame-description";
+pub const CARD_FRAME_DESCRIPTION_CLASS_NAME: &str = "text-muted-foreground text-sm";
+pub const CARD_FRAME_FOOTER_SLOT: &str = "card-frame-footer";
+pub const CARD_FRAME_FOOTER_CLASS_NAME: &str = "px-6 py-4";
+pub const CARD_HEADER_SLOT: &str = "card-header";
+pub const CARD_HEADER_CLASS_NAME: &str = "grid auto-rows-min grid-rows-[auto_auto] items-start gap-1.5 p-6 in-[[data-slot=card]:has(>[data-slot=card-panel])]:pb-4 has-data-[slot=card-action]:grid-cols-[1fr_auto]";
+pub const CARD_TITLE_SLOT: &str = "card-title";
+pub const CARD_TITLE_CLASS_NAME: &str = "font-semibold text-lg leading-none";
+pub const CARD_DESCRIPTION_SLOT: &str = "card-description";
+pub const CARD_DESCRIPTION_CLASS_NAME: &str = "text-muted-foreground text-sm";
+pub const CARD_ACTION_SLOT: &str = "card-action";
+pub const CARD_ACTION_CLASS_NAME: &str =
+    "col-start-2 row-span-2 row-start-1 self-start justify-self-end inline-flex";
+pub const CARD_PANEL_SLOT: &str = "card-panel";
+pub const CARD_PANEL_CLASS_NAME: &str = "flex-1 p-6 in-[[data-slot=card]:has(>[data-slot=card-header]:not(.border-b))]:pt-0 in-[[data-slot=card]:has(>[data-slot=card-footer]:not(.border-t))]:pb-0";
+pub const CARD_FOOTER_SLOT: &str = "card-footer";
+pub const CARD_FOOTER_CLASS_NAME: &str =
+    "flex items-center p-6 in-[[data-slot=card]:has(>[data-slot=card-panel])]:pt-4";
+pub const CARD_CONTENT_EXPORT_ALIAS: &str = "CardPanel";
+pub const CARD_EXPORT_ORDER: [&str; 13] = [
+    "Card",
+    "CardFrame",
+    "CardFrameHeader",
+    "CardFrameTitle",
+    "CardFrameDescription",
+    "CardFrameFooter",
+    "CardAction",
+    "CardDescription",
+    "CardFooter",
+    "CardHeader",
+    "CardPanel",
+    "CardContent",
+    "CardTitle",
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmptyMediaVariant {
     Default,
@@ -37318,6 +37362,78 @@ mod tests {
         assert_eq!(
             DRAFT_INPUT_DESCRIPTION,
             "Text `<Input>` that buffers keystrokes locally and invokes `onCommit` only when the user finishes editing (blur or Enter). Prevents each keystroke from triggering a settings-wide re-render or a server RPC round-trip, which otherwise makes fields backed by a server-hydrated value feel laggy."
+        );
+    }
+
+    #[test]
+    fn card_primitive_contract_matches_upstream_component() {
+        assert_eq!(CARD_DEFAULT_TAG, "div");
+        assert_eq!(CARD_SLOT, "card");
+        assert_eq!(
+            CARD_CLASS_NAME,
+            "relative flex flex-col rounded-2xl border bg-card not-dark:bg-clip-padding text-card-foreground shadow-xs/5 before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-2xl)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)]"
+        );
+        assert_eq!(CARD_FRAME_SLOT, "card-frame");
+        assert_eq!(
+            CARD_FRAME_CLASS_NAME,
+            "[--clip-top:-1rem] [--clip-bottom:-1rem] *:data-[slot=card]:first:[--clip-top:1px] *:data-[slot=card]:last:[--clip-bottom:1px] flex flex-col relative rounded-2xl border bg-card before:bg-muted/72 not-dark:bg-clip-padding text-card-foreground shadow-xs/5 before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-2xl)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)] *:data-[slot=card]:-m-px *:not-last:data-[slot=card]:rounded-b-xl *:not-last:data-[slot=card]:before:rounded-b-[calc(var(--radius-xl)-1px)] *:not-first:data-[slot=card]:rounded-t-xl *:not-first:data-[slot=card]:before:rounded-t-[calc(var(--radius-xl)-1px)] *:data-[slot=card]:[clip-path:inset(var(--clip-top)_1px_var(--clip-bottom)_1px_round_calc(var(--radius-2xl)-1px))] *:data-[slot=card]:shadow-none *:data-[slot=card]:before:hidden *:data-[slot=card]:bg-clip-padding"
+        );
+        assert_eq!(CARD_FRAME_HEADER_SLOT, "card-frame-header");
+        assert_eq!(
+            CARD_FRAME_HEADER_CLASS_NAME,
+            "relative flex flex-col px-6 py-4"
+        );
+        assert_eq!(CARD_FRAME_TITLE_SLOT, "card-frame-title");
+        assert_eq!(CARD_FRAME_TITLE_CLASS_NAME, "font-semibold text-sm");
+        assert_eq!(CARD_FRAME_DESCRIPTION_SLOT, "card-frame-description");
+        assert_eq!(
+            CARD_FRAME_DESCRIPTION_CLASS_NAME,
+            "text-muted-foreground text-sm"
+        );
+        assert_eq!(CARD_FRAME_FOOTER_SLOT, "card-frame-footer");
+        assert_eq!(CARD_FRAME_FOOTER_CLASS_NAME, "px-6 py-4");
+        assert_eq!(CARD_HEADER_SLOT, "card-header");
+        assert_eq!(
+            CARD_HEADER_CLASS_NAME,
+            "grid auto-rows-min grid-rows-[auto_auto] items-start gap-1.5 p-6 in-[[data-slot=card]:has(>[data-slot=card-panel])]:pb-4 has-data-[slot=card-action]:grid-cols-[1fr_auto]"
+        );
+        assert_eq!(CARD_TITLE_SLOT, "card-title");
+        assert_eq!(CARD_TITLE_CLASS_NAME, "font-semibold text-lg leading-none");
+        assert_eq!(CARD_DESCRIPTION_SLOT, "card-description");
+        assert_eq!(CARD_DESCRIPTION_CLASS_NAME, "text-muted-foreground text-sm");
+        assert_eq!(CARD_ACTION_SLOT, "card-action");
+        assert_eq!(
+            CARD_ACTION_CLASS_NAME,
+            "col-start-2 row-span-2 row-start-1 self-start justify-self-end inline-flex"
+        );
+        assert_eq!(CARD_PANEL_SLOT, "card-panel");
+        assert_eq!(
+            CARD_PANEL_CLASS_NAME,
+            "flex-1 p-6 in-[[data-slot=card]:has(>[data-slot=card-header]:not(.border-b))]:pt-0 in-[[data-slot=card]:has(>[data-slot=card-footer]:not(.border-t))]:pb-0"
+        );
+        assert_eq!(CARD_FOOTER_SLOT, "card-footer");
+        assert_eq!(
+            CARD_FOOTER_CLASS_NAME,
+            "flex items-center p-6 in-[[data-slot=card]:has(>[data-slot=card-panel])]:pt-4"
+        );
+        assert_eq!(CARD_CONTENT_EXPORT_ALIAS, "CardPanel");
+        assert_eq!(
+            CARD_EXPORT_ORDER,
+            [
+                "Card",
+                "CardFrame",
+                "CardFrameHeader",
+                "CardFrameTitle",
+                "CardFrameDescription",
+                "CardFrameFooter",
+                "CardAction",
+                "CardDescription",
+                "CardFooter",
+                "CardHeader",
+                "CardPanel",
+                "CardContent",
+                "CardTitle",
+            ]
         );
     }
 

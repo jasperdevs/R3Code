@@ -2783,6 +2783,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace alert_collapsible_and_draft_input_contracts_match_upstream_components`; current screenshot gates where captured",
             "Maintain these component contracts if upstream changes Alert variants, Collapsible panel behavior, or DraftInput commit-on-blur behavior.",
         )
+    } else if path == "apps/web/src/components/ui/card.tsx" {
+        (
+            "Card primitive default tag, slot/class contracts for Card, CardFrame, frame header/title/description/footer, header/title/description/action/panel/footer, and CardPanel/CardContent export alias/order in crates/r3_core/src/lib.rs",
+            "covered",
+            "`cargo test --workspace card_primitive_contract_matches_upstream_component`; current screenshot gates where captured",
+            "Maintain this primitive contract if upstream changes Card slot names, wrapper/frame/panel styling, or export aliases.",
+        )
     } else if path == "apps/web/src/components/ui/kbd.tsx"
         || path == "apps/web/src/components/ui/label.tsx"
         || path == "apps/web/src/components/ui/separator.tsx"
