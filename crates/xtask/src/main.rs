@@ -1827,6 +1827,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core ws_rpc_protocol`",
             "Wire the pure protocol state transitions into the live GPUI websocket transport, request hooks, heartbeat hooks, and backend websocket constructor lifecycle.",
         )
+    } else if path == "apps/web/src/rpc/serverState.ts"
+        || path == "apps/web/src/rpc/serverState.test.ts"
+    {
+        (
+            "server config atom labels, default selectors, snapshot replay notifications, provider/settings/keybinding merge rules, welcome replay, fallback fetch suppression, cleanup subscription plan, and test reset ID behavior in crates/r3_core/src/rpc.rs",
+            "partial",
+            "`cargo test -p r3_core server_state_`",
+            "Wire pure server-state transitions into live GPUI/reactivity subscriptions, websocket RPC client sync, and hook selectors.",
+        )
     } else if path == "apps/web/src/markdown-links.ts"
         || path == "apps/web/src/markdown-links.test.ts"
     {

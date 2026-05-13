@@ -1,9 +1,11 @@
+use crate::server::ServerSettingsForClient;
 use crate::{
-    RpcAckLatencyState, WS_RECONNECT_MAX_RETRIES, WsConnectionMetadata, WsConnectionStatus,
-    acknowledge_rpc_request, clear_all_tracked_rpc_requests, get_ws_reconnect_delay_ms_for_retry,
-    initial_rpc_ack_latency_state, initial_ws_connection_status, record_ws_connection_attempt,
-    record_ws_connection_closed_at, record_ws_connection_errored_at,
-    record_ws_connection_opened_at, track_rpc_request_sent_at,
+    KeybindingsConfigIssue, ResolvedKeybindingRule, RpcAckLatencyState, ServerProvider,
+    WS_RECONNECT_MAX_RETRIES, WsConnectionMetadata, WsConnectionStatus, acknowledge_rpc_request,
+    clear_all_tracked_rpc_requests, default_resolved_keybindings,
+    get_ws_reconnect_delay_ms_for_retry, initial_rpc_ack_latency_state,
+    initial_ws_connection_status, record_ws_connection_attempt, record_ws_connection_closed_at,
+    record_ws_connection_errored_at, record_ws_connection_opened_at, track_rpc_request_sent_at,
 };
 use serde_json::{Value, json};
 
@@ -1014,6 +1016,314 @@ pub fn app_atom_registry_contract() -> AppAtomRegistryContract {
     }
 }
 
+pub const SERVER_WELCOME_ATOM_LABEL: &str = "server-welcome";
+pub const SERVER_CONFIG_ATOM_LABEL: &str = "server-config";
+pub const SERVER_CONFIG_UPDATED_ATOM_LABEL: &str = "server-config-updated";
+pub const SERVER_PROVIDERS_UPDATED_ATOM_LABEL: &str = "server-providers-updated";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServerConfigUpdateSource {
+    Snapshot,
+    KeybindingsUpdated,
+    ProviderStatuses,
+    SettingsUpdated,
+}
+
+impl ServerConfigUpdateSource {
+    pub fn upstream_name(self) -> &'static str {
+        match self {
+            Self::Snapshot => "snapshot",
+            Self::KeybindingsUpdated => "keybindingsUpdated",
+            Self::ProviderStatuses => "providerStatuses",
+            Self::SettingsUpdated => "settingsUpdated",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WebServerObservabilityConfig {
+    pub logs_directory_path: String,
+    pub local_tracing_enabled: bool,
+    pub otlp_traces_enabled: bool,
+    pub otlp_metrics_enabled: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct WebServerConfig {
+    pub available_editors: Vec<String>,
+    pub issues: Vec<KeybindingsConfigIssue>,
+    pub keybindings: Vec<ResolvedKeybindingRule>,
+    pub keybindings_config_path: Option<String>,
+    pub observability: Option<WebServerObservabilityConfig>,
+    pub providers: Vec<ServerProvider>,
+    pub settings: ServerSettingsForClient,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerConfigUpdatedPayload {
+    pub issues: Vec<KeybindingsConfigIssue>,
+    pub providers: Vec<ServerProvider>,
+    pub settings: ServerSettingsForClient,
+}
+
+pub fn to_server_config_updated_payload(config: &WebServerConfig) -> ServerConfigUpdatedPayload {
+    ServerConfigUpdatedPayload {
+        issues: config.issues.clone(),
+        providers: config.providers.clone(),
+        settings: config.settings.clone(),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerConfigUpdatedNotification {
+    pub id: usize,
+    pub payload: ServerConfigUpdatedPayload,
+    pub source: ServerConfigUpdateSource,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerProviderUpdatedPayload {
+    pub providers: Vec<ServerProvider>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerLifecycleWelcomePayload {
+    pub environment_id: String,
+    pub cwd: String,
+    pub project_name: String,
+    pub bootstrap_project_id: Option<String>,
+    pub bootstrap_thread_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServerConfigStreamEvent {
+    Snapshot {
+        config: WebServerConfig,
+    },
+    KeybindingsUpdated {
+        keybindings: Vec<ResolvedKeybindingRule>,
+        issues: Vec<KeybindingsConfigIssue>,
+    },
+    ProviderStatuses {
+        providers: Vec<ServerProvider>,
+    },
+    SettingsUpdated {
+        settings: ServerSettingsForClient,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServerLifecycleStreamEvent {
+    Welcome {
+        payload: ServerLifecycleWelcomePayload,
+    },
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerState {
+    pub welcome: Option<ServerLifecycleWelcomePayload>,
+    pub config: Option<WebServerConfig>,
+    pub config_updated: Option<ServerConfigUpdatedNotification>,
+    pub providers_updated: Option<ServerProviderUpdatedPayload>,
+    pub next_config_updated_notification_id: usize,
+}
+
+impl Default for ServerState {
+    fn default() -> Self {
+        Self {
+            welcome: None,
+            config: None,
+            config_updated: None,
+            providers_updated: None,
+            next_config_updated_notification_id: 1,
+        }
+    }
+}
+
+pub fn select_server_available_editors(config: Option<&WebServerConfig>) -> Vec<String> {
+    config
+        .map(|config| config.available_editors.clone())
+        .unwrap_or_default()
+}
+
+pub fn select_server_keybindings(config: Option<&WebServerConfig>) -> Vec<ResolvedKeybindingRule> {
+    config
+        .map(|config| config.keybindings.clone())
+        .unwrap_or_else(default_resolved_keybindings)
+}
+
+pub fn select_server_keybindings_config_path(config: Option<&WebServerConfig>) -> Option<String> {
+    config.and_then(|config| config.keybindings_config_path.clone())
+}
+
+pub fn select_server_observability(
+    config: Option<&WebServerConfig>,
+) -> Option<WebServerObservabilityConfig> {
+    config.and_then(|config| config.observability.clone())
+}
+
+pub fn select_server_providers(config: Option<&WebServerConfig>) -> Vec<ServerProvider> {
+    config
+        .map(|config| config.providers.clone())
+        .unwrap_or_default()
+}
+
+pub fn select_server_settings(config: Option<&WebServerConfig>) -> ServerSettingsForClient {
+    config
+        .map(|config| config.settings.clone())
+        .unwrap_or_default()
+}
+
+pub fn set_server_config_snapshot(state: &ServerState, config: WebServerConfig) -> ServerState {
+    let mut next = state.clone();
+    next.config = Some(config.clone());
+    emit_providers_updated(
+        &mut next,
+        ServerProviderUpdatedPayload {
+            providers: config.providers.clone(),
+        },
+    );
+    emit_server_config_updated(
+        &mut next,
+        to_server_config_updated_payload(&config),
+        ServerConfigUpdateSource::Snapshot,
+    );
+    next
+}
+
+pub fn apply_server_config_event(
+    state: &ServerState,
+    event: ServerConfigStreamEvent,
+) -> ServerState {
+    match event {
+        ServerConfigStreamEvent::Snapshot { config } => set_server_config_snapshot(state, config),
+        ServerConfigStreamEvent::KeybindingsUpdated {
+            keybindings,
+            issues,
+        } => {
+            let Some(current) = state.config.as_ref() else {
+                return state.clone();
+            };
+            let mut next_config = current.clone();
+            next_config.keybindings = keybindings;
+            next_config.issues = issues;
+            let mut next = state.clone();
+            next.config = Some(next_config.clone());
+            emit_server_config_updated(
+                &mut next,
+                to_server_config_updated_payload(&next_config),
+                ServerConfigUpdateSource::KeybindingsUpdated,
+            );
+            next
+        }
+        ServerConfigStreamEvent::ProviderStatuses { providers } => {
+            apply_providers_updated(state, ServerProviderUpdatedPayload { providers })
+        }
+        ServerConfigStreamEvent::SettingsUpdated { settings } => {
+            apply_settings_updated(state, settings)
+        }
+    }
+}
+
+pub fn apply_providers_updated(
+    state: &ServerState,
+    payload: ServerProviderUpdatedPayload,
+) -> ServerState {
+    let mut next = state.clone();
+    emit_providers_updated(&mut next, payload.clone());
+    let Some(current) = state.config.as_ref() else {
+        return next;
+    };
+    let mut next_config = current.clone();
+    next_config.providers = payload.providers;
+    next.config = Some(next_config.clone());
+    emit_server_config_updated(
+        &mut next,
+        to_server_config_updated_payload(&next_config),
+        ServerConfigUpdateSource::ProviderStatuses,
+    );
+    next
+}
+
+pub fn apply_settings_updated(
+    state: &ServerState,
+    settings: ServerSettingsForClient,
+) -> ServerState {
+    let Some(current) = state.config.as_ref() else {
+        return state.clone();
+    };
+    let mut next_config = current.clone();
+    next_config.settings = settings;
+    let mut next = state.clone();
+    next.config = Some(next_config.clone());
+    emit_server_config_updated(
+        &mut next,
+        to_server_config_updated_payload(&next_config),
+        ServerConfigUpdateSource::SettingsUpdated,
+    );
+    next
+}
+
+pub fn apply_server_lifecycle_event(
+    state: &ServerState,
+    event: ServerLifecycleStreamEvent,
+) -> ServerState {
+    match event {
+        ServerLifecycleStreamEvent::Welcome { payload } => {
+            let mut next = state.clone();
+            next.welcome = Some(payload);
+            next
+        }
+        ServerLifecycleStreamEvent::Other => state.clone(),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerStateSyncPlan {
+    pub subscribe_lifecycle: bool,
+    pub subscribe_config: bool,
+    pub fetch_config_snapshot: bool,
+    pub fallback_fetch_ignored_when_disposed_or_config_present: bool,
+    pub cleanup_order: Vec<&'static str>,
+}
+
+pub fn start_server_state_sync_plan(state: &ServerState) -> ServerStateSyncPlan {
+    ServerStateSyncPlan {
+        subscribe_lifecycle: true,
+        subscribe_config: true,
+        fetch_config_snapshot: state.config.is_none(),
+        fallback_fetch_ignored_when_disposed_or_config_present: true,
+        cleanup_order: vec!["subscribeLifecycle", "subscribeConfig"],
+    }
+}
+
+pub fn should_apply_server_config_fallback_fetch(disposed: bool, state: &ServerState) -> bool {
+    !disposed && state.config.is_none()
+}
+
+pub fn reset_server_state_for_tests() -> ServerState {
+    ServerState::default()
+}
+
+fn emit_providers_updated(state: &mut ServerState, payload: ServerProviderUpdatedPayload) {
+    state.providers_updated = Some(payload);
+}
+
+fn emit_server_config_updated(
+    state: &mut ServerState,
+    payload: ServerConfigUpdatedPayload,
+    source: ServerConfigUpdateSource,
+) {
+    let id = state.next_config_updated_notification_id;
+    state.config_updated = Some(ServerConfigUpdatedNotification {
+        id,
+        payload,
+        source,
+    });
+    state.next_config_updated_notification_id += 1;
+}
+
 pub const WS_RPC_PROTOCOL_SOCKET_PATH: &str = "/ws";
 pub const WS_RPC_PROTOCOL_SERIALIZATION_LAYER: &str = "RpcSerialization.layerJson";
 pub const WS_RPC_PROTOCOL_RETRY_TRANSIENT_ERRORS: bool = true;
@@ -1946,6 +2256,263 @@ mod tests {
                 reset_disposes_existing_registry: true,
                 reset_recreates_registry: true,
             }
+        );
+    }
+
+    fn rpc_test_provider(instance_id: &str, status: crate::ServerProviderState) -> ServerProvider {
+        ServerProvider {
+            instance_id: instance_id.to_string(),
+            driver: "codex".to_string(),
+            display_name: None,
+            accent_color: None,
+            badge_label: None,
+            continuation_group_key: None,
+            show_interaction_mode_toggle: false,
+            enabled: true,
+            installed: true,
+            version: Some("0.116.0".to_string()),
+            status,
+            auth: crate::ServerProviderAuth {
+                status: crate::ServerProviderAuthStatus::Authenticated,
+                kind: None,
+                label: None,
+                email: None,
+            },
+            checked_at: "2026-01-01T00:00:00.000Z".to_string(),
+            message: None,
+            availability: crate::ServerProviderAvailability::Available,
+            unavailable_reason: None,
+            models: Vec::new(),
+            version_advisory: None,
+            update_state: None,
+        }
+    }
+
+    fn rpc_test_server_config() -> WebServerConfig {
+        WebServerConfig {
+            available_editors: vec!["cursor".to_string()],
+            issues: Vec::new(),
+            keybindings: Vec::new(),
+            keybindings_config_path: Some("/tmp/workspace/.config/keybindings.json".to_string()),
+            observability: Some(WebServerObservabilityConfig {
+                logs_directory_path: "/tmp/workspace/.config/logs".to_string(),
+                local_tracing_enabled: true,
+                otlp_traces_enabled: false,
+                otlp_metrics_enabled: false,
+            }),
+            providers: vec![rpc_test_provider(
+                "codex",
+                crate::ServerProviderState::Ready,
+            )],
+            settings: ServerSettingsForClient::default(),
+        }
+    }
+
+    #[test]
+    fn server_state_defaults_and_sync_plan_match_upstream_contract() {
+        let state = reset_server_state_for_tests();
+
+        assert_eq!(
+            select_server_available_editors(state.config.as_ref()),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            select_server_keybindings(state.config.as_ref()),
+            default_resolved_keybindings()
+        );
+        assert_eq!(
+            select_server_keybindings_config_path(state.config.as_ref()),
+            None
+        );
+        assert_eq!(select_server_observability(state.config.as_ref()), None);
+        assert_eq!(
+            select_server_providers(state.config.as_ref()),
+            Vec::<ServerProvider>::new()
+        );
+        assert_eq!(
+            select_server_settings(state.config.as_ref()),
+            ServerSettingsForClient::default()
+        );
+
+        assert_eq!(
+            start_server_state_sync_plan(&state),
+            ServerStateSyncPlan {
+                subscribe_lifecycle: true,
+                subscribe_config: true,
+                fetch_config_snapshot: true,
+                fallback_fetch_ignored_when_disposed_or_config_present: true,
+                cleanup_order: vec!["subscribeLifecycle", "subscribeConfig"],
+            }
+        );
+        assert!(should_apply_server_config_fallback_fetch(false, &state));
+        assert!(!should_apply_server_config_fallback_fetch(true, &state));
+    }
+
+    #[test]
+    fn server_state_snapshot_notifications_replay_latest_values() {
+        let state = reset_server_state_for_tests();
+        let config = rpc_test_server_config();
+        let state = set_server_config_snapshot(&state, config.clone());
+
+        assert_eq!(state.config, Some(config.clone()));
+        assert_eq!(
+            state.providers_updated,
+            Some(ServerProviderUpdatedPayload {
+                providers: config.providers.clone(),
+            })
+        );
+        assert_eq!(
+            state.config_updated,
+            Some(ServerConfigUpdatedNotification {
+                id: 1,
+                payload: ServerConfigUpdatedPayload {
+                    issues: Vec::new(),
+                    providers: config.providers.clone(),
+                    settings: ServerSettingsForClient::default(),
+                },
+                source: ServerConfigUpdateSource::Snapshot,
+            })
+        );
+        assert_eq!(state.next_config_updated_notification_id, 2);
+        assert!(!should_apply_server_config_fallback_fetch(false, &state));
+        assert!(!start_server_state_sync_plan(&state).fetch_config_snapshot);
+        assert_eq!(
+            select_server_available_editors(state.config.as_ref()),
+            vec!["cursor".to_string()]
+        );
+        assert_eq!(
+            select_server_keybindings_config_path(state.config.as_ref()).as_deref(),
+            Some("/tmp/workspace/.config/keybindings.json")
+        );
+    }
+
+    #[test]
+    fn server_state_merges_keybinding_provider_and_settings_updates() {
+        let mut state =
+            set_server_config_snapshot(&ServerState::default(), rpc_test_server_config());
+        let next_keybindings = default_resolved_keybindings()
+            .into_iter()
+            .take(1)
+            .collect::<Vec<_>>();
+        let next_issue = KeybindingsConfigIssue {
+            kind: "keybindings.malformed-config".to_string(),
+            index: None,
+            message: "bad json".to_string(),
+        };
+
+        state = apply_server_config_event(
+            &state,
+            ServerConfigStreamEvent::KeybindingsUpdated {
+                keybindings: next_keybindings.clone(),
+                issues: vec![next_issue.clone()],
+            },
+        );
+        assert_eq!(state.config.as_ref().unwrap().keybindings, next_keybindings);
+        assert_eq!(
+            state.config.as_ref().unwrap().issues,
+            vec![next_issue.clone()]
+        );
+        assert_eq!(
+            state.config_updated.as_ref().unwrap().source,
+            ServerConfigUpdateSource::KeybindingsUpdated
+        );
+        assert_eq!(state.config_updated.as_ref().unwrap().id, 2);
+
+        let warning_provider = rpc_test_provider("codex", crate::ServerProviderState::Warning);
+        state = apply_server_config_event(
+            &state,
+            ServerConfigStreamEvent::ProviderStatuses {
+                providers: vec![warning_provider.clone()],
+            },
+        );
+        assert_eq!(
+            state.providers_updated,
+            Some(ServerProviderUpdatedPayload {
+                providers: vec![warning_provider.clone()],
+            })
+        );
+        assert_eq!(
+            state.config.as_ref().unwrap().providers,
+            vec![warning_provider.clone()]
+        );
+        assert_eq!(
+            state.config_updated.as_ref().unwrap().source,
+            ServerConfigUpdateSource::ProviderStatuses
+        );
+        assert_eq!(state.config_updated.as_ref().unwrap().id, 3);
+
+        let mut next_settings = ServerSettingsForClient::default();
+        next_settings.provider_instances.insert(
+            "codex".to_string(),
+            crate::server::ProviderInstanceConfig::default(),
+        );
+        state = apply_server_config_event(
+            &state,
+            ServerConfigStreamEvent::SettingsUpdated {
+                settings: next_settings.clone(),
+            },
+        );
+        assert_eq!(
+            state.config.as_ref().unwrap().settings,
+            next_settings.clone()
+        );
+        assert_eq!(
+            state.config_updated.as_ref().unwrap().payload,
+            ServerConfigUpdatedPayload {
+                issues: vec![next_issue],
+                providers: vec![warning_provider],
+                settings: next_settings,
+            }
+        );
+        assert_eq!(
+            state.config_updated.as_ref().unwrap().source,
+            ServerConfigUpdateSource::SettingsUpdated
+        );
+        assert_eq!(state.config_updated.as_ref().unwrap().id, 4);
+    }
+
+    #[test]
+    fn server_state_ignores_updates_without_snapshot_and_replays_welcome() {
+        let state = reset_server_state_for_tests();
+        let providers_only = apply_server_config_event(
+            &state,
+            ServerConfigStreamEvent::ProviderStatuses {
+                providers: vec![rpc_test_provider(
+                    "codex",
+                    crate::ServerProviderState::Ready,
+                )],
+            },
+        );
+        assert!(providers_only.config.is_none());
+        assert!(providers_only.providers_updated.is_some());
+        assert!(providers_only.config_updated.is_none());
+
+        let ignored_keybindings = apply_server_config_event(
+            &state,
+            ServerConfigStreamEvent::KeybindingsUpdated {
+                keybindings: Vec::new(),
+                issues: Vec::new(),
+            },
+        );
+        assert_eq!(ignored_keybindings, state);
+
+        let welcome = ServerLifecycleWelcomePayload {
+            environment_id: "environment-local".to_string(),
+            cwd: "/tmp/workspace".to_string(),
+            project_name: "r3-code".to_string(),
+            bootstrap_project_id: Some("project-1".to_string()),
+            bootstrap_thread_id: Some("thread-1".to_string()),
+        };
+        let welcomed = apply_server_lifecycle_event(
+            &state,
+            ServerLifecycleStreamEvent::Welcome {
+                payload: welcome.clone(),
+            },
+        );
+        assert_eq!(welcomed.welcome, Some(welcome));
+        assert_eq!(
+            apply_server_lifecycle_event(&welcomed, ServerLifecycleStreamEvent::Other),
+            welcomed
         );
     }
 
