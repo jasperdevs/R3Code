@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 
 use crate::rpc::WsRpcMethod;
+use serde_json::Value;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MetricAttributeInput {
@@ -419,6 +420,88 @@ pub fn normalize_otlp_span_kind(input: u8) -> &'static str {
     }
 }
 
+pub fn decode_otlp_trace_records(payload: &Value) -> Result<Vec<OtlpTraceRecord>, String> {
+    let resource_spans = payload
+        .get("resourceSpans")
+        .and_then(Value::as_array)
+        .ok_or_else(|| "resourceSpans must be an array".to_string())?;
+    let mut records = Vec::new();
+    for resource_span in resource_spans {
+        let resource_attributes = decode_otlp_attributes_json(
+            resource_span
+                .get("resource")
+                .and_then(|resource| resource.get("attributes"))
+                .and_then(Value::as_array),
+        );
+        let scope_spans = resource_span
+            .get("scopeSpans")
+            .and_then(Value::as_array)
+            .ok_or_else(|| "scopeSpans must be an array".to_string())?;
+        for scope_span in scope_spans {
+            let scope = scope_span.get("scope").unwrap_or(&Value::Null);
+            let scope_attributes =
+                decode_otlp_attributes_json(scope.get("attributes").and_then(Value::as_array));
+            let scope_name = scope
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            let scope_version = scope
+                .get("version")
+                .and_then(Value::as_str)
+                .filter(|value| !value.is_empty())
+                .map(str::to_string);
+            let spans = scope_span
+                .get("spans")
+                .and_then(Value::as_array)
+                .ok_or_else(|| "spans must be an array".to_string())?;
+            for span in spans {
+                records.push(otlp_span_to_trace_record(
+                    OtlpSpanInput {
+                        name: json_string_field(span, "name"),
+                        trace_id: json_string_field(span, "traceId"),
+                        span_id: json_string_field(span, "spanId"),
+                        parent_span_id: span
+                            .get("parentSpanId")
+                            .and_then(Value::as_str)
+                            .filter(|value| !value.is_empty())
+                            .map(str::to_string),
+                        kind: span
+                            .get("kind")
+                            .and_then(Value::as_u64)
+                            .and_then(|value| u8::try_from(value).ok())
+                            .unwrap_or(0),
+                        start_time_unix_nano: json_string_field(span, "startTimeUnixNano"),
+                        end_time_unix_nano: json_string_field(span, "endTimeUnixNano"),
+                        attributes: decode_otlp_attributes_json(
+                            span.get("attributes").and_then(Value::as_array),
+                        ),
+                        events: decode_otlp_events_json(
+                            span.get("events").and_then(Value::as_array),
+                        ),
+                        links: decode_otlp_links_json(span.get("links").and_then(Value::as_array)),
+                        status_code: span
+                            .get("status")
+                            .and_then(|status| status.get("code"))
+                            .map(json_scalar_to_string),
+                        status_message: span
+                            .get("status")
+                            .and_then(|status| status.get("message"))
+                            .and_then(Value::as_str)
+                            .filter(|value| !value.is_empty())
+                            .map(str::to_string),
+                    },
+                    resource_attributes.clone(),
+                    scope_name.clone(),
+                    scope_version.clone(),
+                    scope_attributes.clone(),
+                ));
+            }
+        }
+    }
+    Ok(records)
+}
+
 pub fn span_to_trace_record(span: SerializableSpanInput) -> EffectTraceRecord {
     let duration_ms = span
         .end_time_unix_nano
@@ -438,6 +521,108 @@ pub fn span_to_trace_record(span: SerializableSpanInput) -> EffectTraceRecord {
         events: span.events,
         links: span.links,
         exit: span.exit,
+    }
+}
+
+fn decode_otlp_events_json(input: Option<&Vec<Value>>) -> Vec<TraceRecordEvent> {
+    input
+        .into_iter()
+        .flatten()
+        .map(|event| TraceRecordEvent {
+            name: json_string_field(event, "name"),
+            time_unix_nano: json_string_field(event, "timeUnixNano"),
+            attributes: decode_otlp_attributes_json(
+                event.get("attributes").and_then(Value::as_array),
+            ),
+        })
+        .collect()
+}
+
+fn decode_otlp_links_json(input: Option<&Vec<Value>>) -> Vec<TraceRecordLink> {
+    input
+        .into_iter()
+        .flatten()
+        .map(|link| TraceRecordLink {
+            trace_id: json_string_field(link, "traceId"),
+            span_id: json_string_field(link, "spanId"),
+            attributes: decode_otlp_attributes_json(
+                link.get("attributes").and_then(Value::as_array),
+            ),
+        })
+        .collect()
+}
+
+fn decode_otlp_attributes_json(
+    input: Option<&Vec<Value>>,
+) -> BTreeMap<String, TraceAttributeValue> {
+    let mut attributes = BTreeMap::new();
+    for attribute in input.into_iter().flatten() {
+        let Some(key) = attribute.get("key").and_then(Value::as_str) else {
+            continue;
+        };
+        attributes.insert(
+            key.to_string(),
+            decode_otlp_value_json(attribute.get("value")),
+        );
+    }
+    attributes
+}
+
+fn decode_otlp_value_json(input: Option<&Value>) -> TraceAttributeValue {
+    let Some(input) = input else {
+        return TraceAttributeValue::Null;
+    };
+    if let Some(value) = input.get("stringValue").and_then(Value::as_str) {
+        return TraceAttributeValue::String(value.to_string());
+    }
+    if let Some(value) = input.get("boolValue").and_then(Value::as_bool) {
+        return TraceAttributeValue::Boolean(value);
+    }
+    if let Some(value) = input.get("intValue") {
+        return TraceAttributeValue::Int(json_scalar_to_string(value));
+    }
+    if let Some(value) = input.get("doubleValue").and_then(Value::as_f64) {
+        return TraceAttributeValue::Double(value);
+    }
+    if let Some(value) = input.get("bytesValue").and_then(Value::as_str) {
+        return TraceAttributeValue::Bytes(value.to_string());
+    }
+    if let Some(values) = input
+        .get("arrayValue")
+        .and_then(|array| array.get("values"))
+        .and_then(Value::as_array)
+    {
+        return TraceAttributeValue::Array(
+            values
+                .iter()
+                .map(|value| decode_otlp_value_json(Some(value)))
+                .collect(),
+        );
+    }
+    if let Some(values) = input
+        .get("kvlistValue")
+        .and_then(|kvlist| kvlist.get("values"))
+        .and_then(Value::as_array)
+    {
+        return TraceAttributeValue::Object(decode_otlp_attributes_json(Some(values)));
+    }
+    TraceAttributeValue::Null
+}
+
+fn json_string_field(input: &Value, key: &str) -> String {
+    input
+        .get(key)
+        .map(json_scalar_to_string)
+        .unwrap_or_default()
+}
+
+fn json_scalar_to_string(input: &Value) -> String {
+    match input {
+        Value::String(value) => value.clone(),
+        Value::Number(value) => value.to_string(),
+        Value::Bool(value) => value.to_string(),
+        Value::Null => String::new(),
+        Value::Array(_) | Value::Object(_) => input.to_string(),
     }
 }
 
@@ -849,6 +1034,88 @@ mod tests {
             otlp_record.resource_attributes["service.name"],
             TraceAttributeValue::String("t3-server".to_string())
         );
+
+        let decoded = decode_otlp_trace_records(&serde_json::json!({
+            "resourceSpans": [{
+                "resource": {
+                    "attributes": [
+                        {"key": "service.name", "value": {"stringValue": "t3-web"}},
+                        {"key": "debug", "value": {"boolValue": true}}
+                    ]
+                },
+                "scopeSpans": [{
+                    "scope": {
+                        "name": "browser",
+                        "version": "1.2.3",
+                        "attributes": [
+                            {"key": "scope.enabled", "value": {"boolValue": true}}
+                        ]
+                    },
+                    "spans": [{
+                        "name": "render",
+                        "traceId": "trace-browser",
+                        "spanId": "span-browser",
+                        "parentSpanId": "parent-browser",
+                        "kind": 3,
+                        "startTimeUnixNano": "1000000",
+                        "endTimeUnixNano": "2500000",
+                        "attributes": [
+                            {"key": "http.method", "value": {"stringValue": "GET"}},
+                            {"key": "attempt", "value": {"intValue": "2"}},
+                            {"key": "nested", "value": {"kvlistValue": {"values": [
+                                {"key": "ok", "value": {"boolValue": true}}
+                            ]}}},
+                            {"key": "items", "value": {"arrayValue": {"values": [
+                                {"stringValue": "a"},
+                                {"doubleValue": 1.5}
+                            ]}}}
+                        ],
+                        "events": [{
+                            "name": "paint",
+                            "timeUnixNano": "2000000",
+                            "attributes": [
+                                {"key": "frame", "value": {"intValue": "1"}}
+                            ]
+                        }],
+                        "links": [{
+                            "traceId": "trace-linked",
+                            "spanId": "span-linked",
+                            "attributes": [
+                                {"key": "link.kind", "value": {"stringValue": "follows"}}
+                            ]
+                        }],
+                        "status": {"code": 1, "message": "ok"}
+                    }]
+                }]
+            }]
+        }))
+        .unwrap();
+        assert_eq!(decoded.len(), 1);
+        assert_eq!(decoded[0].name, "render");
+        assert_eq!(decoded[0].kind, "client");
+        assert_eq!(decoded[0].duration_ms, 1.5);
+        assert_eq!(
+            decoded[0].resource_attributes["service.name"],
+            TraceAttributeValue::String("t3-web".to_string())
+        );
+        assert_eq!(decoded[0].scope_name.as_deref(), Some("browser"));
+        assert_eq!(decoded[0].scope_version.as_deref(), Some("1.2.3"));
+        assert_eq!(
+            decoded[0].scope_attributes["scope.enabled"],
+            TraceAttributeValue::Boolean(true)
+        );
+        assert_eq!(
+            decoded[0].attributes["items"],
+            TraceAttributeValue::Array(vec![
+                TraceAttributeValue::String("a".to_string()),
+                TraceAttributeValue::Double(1.5),
+            ])
+        );
+        assert_eq!(decoded[0].events[0].name, "paint");
+        assert_eq!(decoded[0].links[0].span_id, "span-linked");
+        assert_eq!(decoded[0].status_code.as_deref(), Some("1"));
+        assert_eq!(decoded[0].status_message.as_deref(), Some("ok"));
+        assert!(decode_otlp_trace_records(&serde_json::json!({})).is_err());
         assert_eq!(
             outcome_from_exit(EffectExitKind::Success).as_str(),
             "success"

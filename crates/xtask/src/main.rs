@@ -2114,7 +2114,7 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
         || path == "apps/server/src/observability/Services/BrowserTraceCollector.ts"
     {
         (
-            "observability metric attribute/outcome/model-label, metric spec/update, RPC instrumentation, layer assembly, and browser trace collector contracts in crates/r3_core/src/observability.rs",
+            "observability metric attribute/outcome/model-label, metric spec/update, RPC instrumentation, layer assembly, OTLP trace JSON decode, and browser trace collector contracts in crates/r3_core/src/observability.rs",
             "partial",
             "`cargo test -p r3_core observability`",
             "Wire live Effect Metric snapshots, Clock/TestClock durations, span/tracer runtime, Stream onExit instrumentation, disabled-tracer service behavior, local trace sink rotation, OTLP exporters, and Effect service layers.",
@@ -2193,7 +2193,7 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "transport-agnostic HTTP route plus attachment route decisions, static/dev redirect/path-guard/fallback/content-type helpers with real static file/index read response helper, browser API CORS constants and preflight/header decision contracts, project favicon route decisions plus file/fallback response helper, OTLP traces proxy route decisions, and WebSocket RPC method/group/schema/handler/dispatch contracts in crates/r3_core/src/rpc.rs plus crates/r3_core/src/server.rs",
             "partial",
             "`cargo test -p r3_core rpc`",
-            "Port live HTTP server, WebSocket upgrade/auth handling, concrete handler execution, runtime schema decoding, subscriptions, attachment filesystem response execution, OTLP decode/record/export execution, and actual CORS middleware integration.",
+            "Port live HTTP server, WebSocket upgrade/auth handling, concrete handler execution, runtime schema decoding, subscriptions, OTLP collector record/export execution, and actual CORS middleware integration.",
         )
     } else if path.starts_with("apps/server/") {
         (
@@ -2345,7 +2345,7 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
         )
     } else if path.starts_with("packages/shared/") {
         (
-            "shared-package string, CLI args, path, semver, git remote/branch/status, source-control terminology/provider detection, search ranking, TCP port helper, Struct deep-merge, schemaJson object/strict/unknown/lenient/pretty transformation contracts, server settings patch helpers, deterministic worker state/runtime-plan contracts, rotating-log write/rotation/prune plans, trace sink buffering plus Effect/OTLP trace record conversion contracts, shell command-availability, process, model, project-script, Nayuki QR text/binary/segment/advanced-codeword/module contracts, and keybinding contracts in crates/r3_core",
+            "shared-package string, CLI args, path, semver, git remote/branch/status, source-control terminology/provider detection, search ranking, TCP port helper, Struct deep-merge, schemaJson object/strict/unknown/lenient/pretty transformation contracts, server settings patch helpers, deterministic worker state/runtime-plan contracts, rotating-log write/rotation/prune plans, trace sink buffering plus Effect/OTLP trace record conversion and OTLP trace JSON decode contracts, shell command-availability, process, model, project-script, Nayuki QR text/binary/segment/advanced-codeword/module contracts, and keybinding contracts in crates/r3_core",
             "partial",
             "`cargo test -p r3_core shared`; `cargo test -p r3_core process`; selected r3_core model/search/keybinding tests",
             "Wire actual Effect queue fibers, Effect Schema runtime integration, logging/observability runtime layers with filesystem append/rename IO, generated package exports, and live network/service integration.",
