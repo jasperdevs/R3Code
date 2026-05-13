@@ -1982,7 +1982,7 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
         || path == "packages/shared/src/shell.test.ts"
     {
         (
-            "process runner, command availability, browser launch, and external editor launch contracts in crates/r3_core/src/process.rs",
+            "process runner output limits, timeout synthetic-result behavior, command availability, browser launch, and external editor launch contracts in crates/r3_core/src/process.rs",
             "partial",
             "`cargo test -p r3_core process`",
             "Wire live RPC shell.openInEditor, browser opener process spawning, process-tree kill behavior, and every shell environment probe into the Rust runtime.",

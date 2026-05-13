@@ -30,6 +30,12 @@ pub enum ProcessOutputMode {
     Truncate,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProcessTimeoutBehavior {
+    Error,
+    TimedOutResult,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProcessRunOptions {
     pub cwd: Option<PathBuf>,
@@ -39,6 +45,7 @@ pub struct ProcessRunOptions {
     pub allow_non_zero_exit: bool,
     pub max_buffer_bytes: usize,
     pub output_mode: ProcessOutputMode,
+    pub timeout_behavior: ProcessTimeoutBehavior,
 }
 
 impl Default for ProcessRunOptions {
@@ -51,6 +58,7 @@ impl Default for ProcessRunOptions {
             allow_non_zero_exit: false,
             max_buffer_bytes: DEFAULT_MAX_BUFFER_BYTES,
             output_mode: ProcessOutputMode::Error,
+            timeout_behavior: ProcessTimeoutBehavior::Error,
         }
     }
 }
@@ -239,6 +247,19 @@ pub fn run_process(
 
     let stdout_bytes = stdout_reader.map(join_pipe_reader).unwrap_or_else(Vec::new);
     let stderr_bytes = stderr_reader.map(join_pipe_reader).unwrap_or_else(Vec::new);
+
+    if timed_out && options.timeout_behavior == ProcessTimeoutBehavior::TimedOutResult {
+        return Ok(ProcessRunResult {
+            stdout: String::new(),
+            stderr: String::new(),
+            code: None,
+            signal: None,
+            timed_out: true,
+            stdout_truncated: false,
+            stderr_truncated: false,
+        });
+    }
+
     let stdout = apply_output_limit(command, args, "stdout", stdout_bytes, &options)?;
     let stderr = apply_output_limit(command, args, "stderr", stderr_bytes, &options)?;
 
@@ -532,6 +553,7 @@ pub fn vcs_process_run_options(input: &VcsProcessInput) -> ProcessRunOptions {
             .max_output_bytes
             .unwrap_or(DEFAULT_VCS_MAX_OUTPUT_BYTES),
         output_mode: ProcessOutputMode::Truncate,
+        timeout_behavior: ProcessTimeoutBehavior::Error,
     }
 }
 
@@ -1187,6 +1209,45 @@ mod tests {
     }
 
     #[test]
+    fn returns_synthetic_timed_out_result_like_upstream_process_runner() {
+        #[cfg(windows)]
+        let (command, args): (&str, Vec<&str>) = (
+            "powershell",
+            vec![
+                "-NoProfile",
+                "-Command",
+                "Start-Sleep -Milliseconds 500; Write-Output late",
+            ],
+        );
+        #[cfg(not(windows))]
+        let (command, args): (&str, Vec<&str>) = ("sh", vec!["-c", "sleep 1; echo late"]);
+
+        let result = run_process(
+            command,
+            &args,
+            ProcessRunOptions {
+                timeout_ms: 10,
+                timeout_behavior: ProcessTimeoutBehavior::TimedOutResult,
+                ..ProcessRunOptions::default()
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            result,
+            ProcessRunResult {
+                stdout: String::new(),
+                stderr: String::new(),
+                code: None,
+                signal: None,
+                timed_out: true,
+                stdout_truncated: false,
+                stderr_truncated: false,
+            }
+        );
+    }
+
+    #[test]
     fn ports_vcs_process_defaults_and_error_mapping() {
         let mut input = vcs_input();
         input.spawn_cwd = Some("/spawn".to_string());
@@ -1218,6 +1279,7 @@ mod tests {
                 allow_non_zero_exit: true,
                 max_buffer_bytes: 128,
                 output_mode: ProcessOutputMode::Truncate,
+                timeout_behavior: ProcessTimeoutBehavior::Error,
             }
         );
 
