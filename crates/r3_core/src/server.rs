@@ -1274,6 +1274,13 @@ pub enum BrowserApiCorsRouteDecision {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrowserApiCorsLayerPlan {
+    pub allowed_methods: Vec<&'static str>,
+    pub allowed_headers: Vec<&'static str>,
+    pub max_age_seconds: u32,
+}
+
 pub const BROWSER_API_CORS_ALLOWED_METHODS: &[&str] = &["GET", "POST", "OPTIONS"];
 pub const BROWSER_API_CORS_ALLOWED_HEADERS: &[&str] =
     &["authorization", "b3", "traceparent", "content-type"];
@@ -1806,6 +1813,23 @@ pub fn browser_api_cors_headers() -> BTreeMap<&'static str, String> {
             BROWSER_API_CORS_ALLOWED_HEADERS.join(", "),
         ),
     ])
+}
+
+pub fn browser_api_cors_layer_plan() -> BrowserApiCorsLayerPlan {
+    BrowserApiCorsLayerPlan {
+        allowed_methods: BROWSER_API_CORS_ALLOWED_METHODS.to_vec(),
+        allowed_headers: BROWSER_API_CORS_ALLOWED_HEADERS.to_vec(),
+        max_age_seconds: BROWSER_API_CORS_MAX_AGE_SECONDS,
+    }
+}
+
+pub fn apply_browser_api_cors_headers(
+    mut headers: BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    for (key, value) in browser_api_cors_headers() {
+        headers.insert(key.to_string(), value);
+    }
+    headers
 }
 
 pub fn browser_api_cors_route_decision(method: &str) -> BrowserApiCorsRouteDecision {
@@ -3754,6 +3778,32 @@ mod tests {
                 (
                     "access-control-allow-headers",
                     "authorization, b3, traceparent, content-type".to_string(),
+                ),
+            ])
+        );
+        assert_eq!(
+            browser_api_cors_layer_plan(),
+            BrowserApiCorsLayerPlan {
+                allowed_methods: vec!["GET", "POST", "OPTIONS"],
+                allowed_headers: vec!["authorization", "b3", "traceparent", "content-type"],
+                max_age_seconds: 600,
+            }
+        );
+        assert_eq!(
+            apply_browser_api_cors_headers(BTreeMap::from([(
+                "content-type".to_string(),
+                "application/json".to_string()
+            )])),
+            BTreeMap::from([
+                ("content-type".to_string(), "application/json".to_string()),
+                ("access-control-allow-origin".to_string(), "*".to_string()),
+                (
+                    "access-control-allow-methods".to_string(),
+                    "GET, POST, OPTIONS".to_string()
+                ),
+                (
+                    "access-control-allow-headers".to_string(),
+                    "authorization, b3, traceparent, content-type".to_string()
                 ),
             ])
         );
