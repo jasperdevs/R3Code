@@ -2009,6 +2009,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core provider_react_query_checkpoint_diff_matches_upstream_contract`",
             "Wire live environment API query execution and query-client retry behavior into GPUI diff panel state.",
         )
+    } else if path == "apps/web/src/lib/projectReactQuery.ts" {
+        (
+            "project search-entries query keys, default limit/stale metadata, enabled/request-availability split, and empty placeholder contract in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core project_react_query_search_entries_matches_upstream_contract`",
+            "Wire live environment API project search execution and previous-data placeholder behavior into GPUI workspace entry search.",
+        )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
             "logical project path normalization, physical/grouping/order keys, repository-scoped keys, settings override resolution, ref fallback, and group-label helpers in crates/r3_core/src/lib.rs",

@@ -476,6 +476,30 @@ pub struct ProviderCheckpointDiffQueryOptionsPlan {
     pub stale_time_infinite: bool,
 }
 
+pub type ProjectReactQueryKeyPart = ProviderReactQueryKeyPart;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectSearchEntriesQueryInput {
+    pub environment_id: Option<String>,
+    pub cwd: Option<String>,
+    pub query: String,
+    pub enabled: Option<bool>,
+    pub limit: Option<u32>,
+    pub stale_time_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectSearchEntriesQueryOptionsPlan {
+    pub query_key: Vec<ProjectReactQueryKeyPart>,
+    pub limit: u32,
+    pub enabled: bool,
+    pub stale_time_ms: u64,
+    pub request_available: bool,
+    pub unavailable_error_message: Option<&'static str>,
+    pub placeholder_entries_empty: bool,
+    pub placeholder_truncated: bool,
+}
+
 pub const INLINE_TERMINAL_CONTEXT_PLACEHOLDER: char = '\u{FFFC}';
 pub const RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY: &str = "(max-width: 980px)";
 pub const WINDOW_CONTROLS_OVERLAY_CLASS_NAME: &str = "wco";
@@ -14868,6 +14892,65 @@ pub fn provider_checkpoint_diff_query_options_plan(
     }
 }
 
+pub const DEFAULT_PROJECT_SEARCH_ENTRIES_LIMIT: u32 = 80;
+pub const DEFAULT_PROJECT_SEARCH_ENTRIES_STALE_TIME_MS: u64 = 15_000;
+pub const PROJECT_SEARCH_ENTRIES_UNAVAILABLE_MESSAGE: &str =
+    "Workspace entry search is unavailable.";
+
+pub fn project_query_key_all() -> Vec<ProjectReactQueryKeyPart> {
+    vec![provider_query_key_string("projects")]
+}
+
+pub fn project_query_key_search_entries(
+    environment_id: Option<&str>,
+    cwd: Option<&str>,
+    query: &str,
+    limit: u32,
+) -> Vec<ProjectReactQueryKeyPart> {
+    vec![
+        provider_query_key_string("projects"),
+        provider_query_key_string("search-entries"),
+        provider_query_key_nullable_string(environment_id),
+        provider_query_key_nullable_string(cwd),
+        provider_query_key_string(query),
+        ProviderReactQueryKeyPart::Number(limit),
+    ]
+}
+
+pub fn project_search_entries_query_options_plan(
+    input: &ProjectSearchEntriesQueryInput,
+) -> ProjectSearchEntriesQueryOptionsPlan {
+    let limit = input.limit.unwrap_or(DEFAULT_PROJECT_SEARCH_ENTRIES_LIMIT);
+    let request_available = input
+        .cwd
+        .as_deref()
+        .map(|cwd| !cwd.is_empty())
+        .unwrap_or(false)
+        && input.environment_id.is_some();
+
+    ProjectSearchEntriesQueryOptionsPlan {
+        query_key: project_query_key_search_entries(
+            input.environment_id.as_deref(),
+            input.cwd.as_deref(),
+            &input.query,
+            limit,
+        ),
+        limit,
+        enabled: input.enabled.unwrap_or(true)
+            && input.environment_id.is_some()
+            && input.cwd.is_some()
+            && !input.query.is_empty(),
+        stale_time_ms: input
+            .stale_time_ms
+            .unwrap_or(DEFAULT_PROJECT_SEARCH_ENTRIES_STALE_TIME_MS),
+        request_available,
+        unavailable_error_message: (!request_available)
+            .then_some(PROJECT_SEARCH_ENTRIES_UNAVAILABLE_MESSAGE),
+        placeholder_entries_empty: true,
+        placeholder_truncated: false,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ProjectAbsolutePathParts {
     root: String,
@@ -22208,6 +22291,96 @@ mod tests {
                 4,
                 "Checkpoint turn count 2 exceeds current turn count 1."
             ) > provider_checkpoint_diff_retry_delay_ms(4, "Network failure")
+        );
+    }
+
+    #[test]
+    fn project_react_query_search_entries_matches_upstream_contract() {
+        let base_input = ProjectSearchEntriesQueryInput {
+            environment_id: Some("environment-local".to_string()),
+            cwd: Some("/repo".to_string()),
+            query: "src".to_string(),
+            enabled: None,
+            limit: None,
+            stale_time_ms: None,
+        };
+
+        let options = project_search_entries_query_options_plan(&base_input);
+        assert_eq!(
+            options.query_key,
+            vec![
+                ProjectReactQueryKeyPart::String("projects".to_string()),
+                ProjectReactQueryKeyPart::String("search-entries".to_string()),
+                ProjectReactQueryKeyPart::String("environment-local".to_string()),
+                ProjectReactQueryKeyPart::String("/repo".to_string()),
+                ProjectReactQueryKeyPart::String("src".to_string()),
+                ProjectReactQueryKeyPart::Number(80),
+            ]
+        );
+        assert_eq!(options.limit, 80);
+        assert!(options.enabled);
+        assert_eq!(options.stale_time_ms, 15_000);
+        assert!(options.request_available);
+        assert_eq!(options.unavailable_error_message, None);
+        assert!(options.placeholder_entries_empty);
+        assert!(!options.placeholder_truncated);
+
+        let custom = project_search_entries_query_options_plan(&ProjectSearchEntriesQueryInput {
+            limit: Some(12),
+            stale_time_ms: Some(7_500),
+            ..base_input.clone()
+        });
+        assert_eq!(
+            custom.query_key,
+            project_query_key_search_entries(Some("environment-local"), Some("/repo"), "src", 12)
+        );
+        assert_eq!(custom.limit, 12);
+        assert_eq!(custom.stale_time_ms, 7_500);
+
+        assert!(
+            !project_search_entries_query_options_plan(&ProjectSearchEntriesQueryInput {
+                query: "".to_string(),
+                ..base_input.clone()
+            })
+            .enabled
+        );
+        assert!(
+            !project_search_entries_query_options_plan(&ProjectSearchEntriesQueryInput {
+                cwd: None,
+                ..base_input.clone()
+            })
+            .enabled
+        );
+        assert!(
+            !project_search_entries_query_options_plan(&ProjectSearchEntriesQueryInput {
+                environment_id: None,
+                ..base_input.clone()
+            })
+            .enabled
+        );
+        assert!(
+            !project_search_entries_query_options_plan(&ProjectSearchEntriesQueryInput {
+                enabled: Some(false),
+                ..base_input.clone()
+            })
+            .enabled
+        );
+
+        let empty_cwd =
+            project_search_entries_query_options_plan(&ProjectSearchEntriesQueryInput {
+                cwd: Some(String::new()),
+                ..base_input.clone()
+            });
+        assert!(empty_cwd.enabled);
+        assert!(!empty_cwd.request_available);
+        assert_eq!(
+            empty_cwd.unavailable_error_message,
+            Some("Workspace entry search is unavailable.")
+        );
+
+        assert_eq!(
+            project_query_key_all(),
+            vec![ProjectReactQueryKeyPart::String("projects".to_string())]
         );
     }
 
