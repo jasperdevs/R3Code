@@ -1788,6 +1788,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core default_terminal_state_matches_upstream_contract`; `cargo test -p r3_core derives_thread_from_environment_state_in_id_order`",
             "Add remaining live modelSelection/project shape wiring and keep generated Rust DTOs aligned as upstream contract fields evolve.",
         )
+    } else if path == "apps/web/src/localApi.ts" || path == "apps/web/src/localApi.test.ts" {
+        (
+            "local API cached/native/primary/browser selection, ensureLocalApi error, unavailable backend rejection, desktop bridge versus browser fallbacks for dialogs/context menu/persistence/openExternal, openExternal error copy, and reset-test coverage in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core local_api_selection_and_fallback_contracts_match_upstream`",
+            "Wire exact async RPC forwarding, environment API composition, browser storage side effects, desktop bridge calls, and reset hooks into live GPUI runtime.",
+        )
     } else if path == "apps/web/src/markdown-links.ts"
         || path == "apps/web/src/markdown-links.test.ts"
     {

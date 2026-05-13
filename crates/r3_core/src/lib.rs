@@ -19262,6 +19262,49 @@ pub enum SourceControlDiscoveryClientPlan {
     Missing,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LocalApiReadPlan {
+    NoWindow,
+    Cached,
+    NativeApi,
+    PrimaryEnvironmentConnection,
+    BrowserFallback,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LocalApiBridgeFallbackPlan {
+    DesktopBridge,
+    BrowserFallback,
+    ReturnNull,
+    RejectUnavailableBackend,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LocalApiOpenExternalPlan {
+    DesktopBridge,
+    BrowserWindowOpen {
+        target: &'static str,
+        features: &'static str,
+    },
+    Error {
+        message: &'static str,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalApiResetPlan {
+    pub clear_cached_api: bool,
+    pub reset_client_settings_persistence: bool,
+    pub reset_environment_service: bool,
+    pub reset_git_status_state: bool,
+    pub reset_source_control_discovery_state: bool,
+    pub reset_request_latency_state: bool,
+    pub reset_saved_environment_registry_store: bool,
+    pub reset_saved_environment_runtime_store: bool,
+    pub reset_server_state: bool,
+    pub reset_ws_connection_state: bool,
+}
+
 pub const EMPTY_SOURCE_CONTROL_DISCOVERY_STATE_SNAPSHOT: SourceControlDiscoveryStateSnapshot =
     SourceControlDiscoveryStateSnapshot {
         has_data: false,
@@ -19279,6 +19322,117 @@ pub const INITIAL_SOURCE_CONTROL_DISCOVERY_STATE_SNAPSHOT: SourceControlDiscover
 pub const SOURCE_CONTROL_DISCOVERY_PRIMARY_TARGET_KEY: &str = "primary";
 pub const SOURCE_CONTROL_DISCOVERY_STALE_TIME_MS: u64 = 30_000;
 pub const SOURCE_CONTROL_DISCOVERY_IDLE_TTL_MS: u64 = 5 * 60_000;
+pub const LOCAL_BACKEND_UNAVAILABLE_ERROR: &str =
+    "Local backend API is unavailable before a backend is paired.";
+pub const LOCAL_API_NOT_FOUND_ERROR: &str = "Local API not found";
+pub const LOCAL_API_OPEN_EXTERNAL_ERROR: &str = "Unable to open link.";
+pub const LOCAL_API_BROWSER_OPEN_TARGET: &str = "_blank";
+pub const LOCAL_API_BROWSER_OPEN_FEATURES: &str = "noopener,noreferrer";
+
+pub fn read_local_api_plan(
+    has_window: bool,
+    cached_api_available: bool,
+    native_api_available: bool,
+    primary_environment_available: bool,
+) -> LocalApiReadPlan {
+    if !has_window {
+        return LocalApiReadPlan::NoWindow;
+    }
+    if cached_api_available {
+        return LocalApiReadPlan::Cached;
+    }
+    if native_api_available {
+        return LocalApiReadPlan::NativeApi;
+    }
+    if primary_environment_available {
+        LocalApiReadPlan::PrimaryEnvironmentConnection
+    } else {
+        LocalApiReadPlan::BrowserFallback
+    }
+}
+
+pub fn ensure_local_api_result(plan: LocalApiReadPlan) -> Result<LocalApiReadPlan, &'static str> {
+    if plan == LocalApiReadPlan::NoWindow {
+        Err(LOCAL_API_NOT_FOUND_ERROR)
+    } else {
+        Ok(plan)
+    }
+}
+
+pub fn local_api_pick_folder_plan(has_desktop_bridge: bool) -> LocalApiBridgeFallbackPlan {
+    if has_desktop_bridge {
+        LocalApiBridgeFallbackPlan::DesktopBridge
+    } else {
+        LocalApiBridgeFallbackPlan::ReturnNull
+    }
+}
+
+pub fn local_api_confirm_plan(has_desktop_bridge: bool) -> LocalApiBridgeFallbackPlan {
+    if has_desktop_bridge {
+        LocalApiBridgeFallbackPlan::DesktopBridge
+    } else {
+        LocalApiBridgeFallbackPlan::BrowserFallback
+    }
+}
+
+pub fn local_api_context_menu_plan(has_desktop_bridge: bool) -> LocalApiBridgeFallbackPlan {
+    if has_desktop_bridge {
+        LocalApiBridgeFallbackPlan::DesktopBridge
+    } else {
+        LocalApiBridgeFallbackPlan::BrowserFallback
+    }
+}
+
+pub fn local_api_persistence_plan(has_desktop_bridge: bool) -> LocalApiBridgeFallbackPlan {
+    if has_desktop_bridge {
+        LocalApiBridgeFallbackPlan::DesktopBridge
+    } else {
+        LocalApiBridgeFallbackPlan::BrowserFallback
+    }
+}
+
+pub fn local_api_rpc_backend_plan(rpc_client_available: bool) -> LocalApiBridgeFallbackPlan {
+    if rpc_client_available {
+        LocalApiBridgeFallbackPlan::DesktopBridge
+    } else {
+        LocalApiBridgeFallbackPlan::RejectUnavailableBackend
+    }
+}
+
+pub fn local_api_open_external_plan(
+    has_desktop_bridge: bool,
+    desktop_opened: Option<bool>,
+) -> LocalApiOpenExternalPlan {
+    if has_desktop_bridge {
+        if desktop_opened == Some(false) {
+            LocalApiOpenExternalPlan::Error {
+                message: LOCAL_API_OPEN_EXTERNAL_ERROR,
+            }
+        } else {
+            LocalApiOpenExternalPlan::DesktopBridge
+        }
+    } else {
+        LocalApiOpenExternalPlan::BrowserWindowOpen {
+            target: LOCAL_API_BROWSER_OPEN_TARGET,
+            features: LOCAL_API_BROWSER_OPEN_FEATURES,
+        }
+    }
+}
+
+pub fn reset_local_api_for_tests_plan() -> LocalApiResetPlan {
+    LocalApiResetPlan {
+        clear_cached_api: true,
+        reset_client_settings_persistence: true,
+        reset_environment_service: true,
+        reset_git_status_state: true,
+        reset_source_control_discovery_state: true,
+        reset_request_latency_state: true,
+        reset_saved_environment_registry_store: true,
+        reset_saved_environment_runtime_store: true,
+        reset_server_state: true,
+        reset_ws_connection_state: true,
+    }
+}
 
 pub fn get_source_control_discovery_target_key(key: Option<&str>) -> Option<String> {
     key.map(str::trim)
@@ -26133,6 +26287,102 @@ mod tests {
                 false,
             ),
             SourceControlDiscoveryClientPlan::Missing
+        );
+    }
+
+    #[test]
+    fn local_api_selection_and_fallback_contracts_match_upstream() {
+        assert_eq!(
+            LOCAL_BACKEND_UNAVAILABLE_ERROR,
+            "Local backend API is unavailable before a backend is paired."
+        );
+        assert_eq!(LOCAL_API_NOT_FOUND_ERROR, "Local API not found");
+        assert_eq!(LOCAL_API_OPEN_EXTERNAL_ERROR, "Unable to open link.");
+
+        assert_eq!(
+            read_local_api_plan(false, false, false, false),
+            LocalApiReadPlan::NoWindow
+        );
+        assert_eq!(
+            read_local_api_plan(true, true, true, true),
+            LocalApiReadPlan::Cached
+        );
+        assert_eq!(
+            read_local_api_plan(true, false, true, true),
+            LocalApiReadPlan::NativeApi
+        );
+        assert_eq!(
+            read_local_api_plan(true, false, false, true),
+            LocalApiReadPlan::PrimaryEnvironmentConnection
+        );
+        assert_eq!(
+            read_local_api_plan(true, false, false, false),
+            LocalApiReadPlan::BrowserFallback
+        );
+        assert_eq!(
+            ensure_local_api_result(LocalApiReadPlan::NoWindow),
+            Err(LOCAL_API_NOT_FOUND_ERROR)
+        );
+        assert_eq!(
+            ensure_local_api_result(LocalApiReadPlan::BrowserFallback),
+            Ok(LocalApiReadPlan::BrowserFallback)
+        );
+
+        assert_eq!(
+            local_api_pick_folder_plan(false),
+            LocalApiBridgeFallbackPlan::ReturnNull
+        );
+        assert_eq!(
+            local_api_pick_folder_plan(true),
+            LocalApiBridgeFallbackPlan::DesktopBridge
+        );
+        assert_eq!(
+            local_api_confirm_plan(false),
+            LocalApiBridgeFallbackPlan::BrowserFallback
+        );
+        assert_eq!(
+            local_api_context_menu_plan(false),
+            LocalApiBridgeFallbackPlan::BrowserFallback
+        );
+        assert_eq!(
+            local_api_persistence_plan(true),
+            LocalApiBridgeFallbackPlan::DesktopBridge
+        );
+        assert_eq!(
+            local_api_rpc_backend_plan(false),
+            LocalApiBridgeFallbackPlan::RejectUnavailableBackend
+        );
+        assert_eq!(
+            local_api_open_external_plan(false, None),
+            LocalApiOpenExternalPlan::BrowserWindowOpen {
+                target: "_blank",
+                features: "noopener,noreferrer",
+            }
+        );
+        assert_eq!(
+            local_api_open_external_plan(true, Some(true)),
+            LocalApiOpenExternalPlan::DesktopBridge
+        );
+        assert_eq!(
+            local_api_open_external_plan(true, Some(false)),
+            LocalApiOpenExternalPlan::Error {
+                message: LOCAL_API_OPEN_EXTERNAL_ERROR,
+            }
+        );
+        assert_eq!(
+            reset_local_api_for_tests_plan(),
+            LocalApiResetPlan {
+                clear_cached_api: true,
+                reset_client_settings_persistence: true,
+                reset_environment_service: true,
+                reset_git_status_state: true,
+                reset_source_control_discovery_state: true,
+                reset_request_latency_state: true,
+                reset_saved_environment_registry_store: true,
+                reset_saved_environment_runtime_store: true,
+                reset_server_state: true,
+                reset_ws_connection_state: true,
+            }
         );
     }
 
