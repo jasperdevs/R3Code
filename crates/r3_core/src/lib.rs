@@ -15713,6 +15713,23 @@ pub struct SourceControlDiscoveryResetPlan {
     pub next: SourceControlDiscoveryStateSnapshot,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlDiscoveryAutoRefreshPlan {
+    pub target_key: String,
+    pub stale_time_ms: u64,
+    pub revalidate_on_mount: bool,
+    pub idle_ttl_ms: u64,
+    pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SourceControlDiscoveryClientPlan {
+    PrimaryConnection { environment_id: String },
+    LocalApi,
+    EnvironmentConnection { environment_id: String },
+    Missing,
+}
+
 pub const EMPTY_SOURCE_CONTROL_DISCOVERY_STATE_SNAPSHOT: SourceControlDiscoveryStateSnapshot =
     SourceControlDiscoveryStateSnapshot {
         has_data: false,
@@ -15726,6 +15743,10 @@ pub const INITIAL_SOURCE_CONTROL_DISCOVERY_STATE_SNAPSHOT: SourceControlDiscover
         error: None,
         is_pending: true,
     };
+
+pub const SOURCE_CONTROL_DISCOVERY_PRIMARY_TARGET_KEY: &str = "primary";
+pub const SOURCE_CONTROL_DISCOVERY_STALE_TIME_MS: u64 = 30_000;
+pub const SOURCE_CONTROL_DISCOVERY_IDLE_TTL_MS: u64 = 5 * 60_000;
 
 pub fn get_source_control_discovery_target_key(key: Option<&str>) -> Option<String> {
     key.map(str::trim)
@@ -15821,6 +15842,73 @@ where
             .filter_map(|key| get_source_control_discovery_target_key(Some(key.as_ref())))
             .collect(),
         next: INITIAL_SOURCE_CONTROL_DISCOVERY_STATE_SNAPSHOT,
+    }
+}
+
+pub fn source_control_discovery_target_for_environment(
+    environment_id: Option<&str>,
+    primary_environment_id: Option<&str>,
+) -> String {
+    let Some(environment_id) = environment_id.filter(|value| !value.is_empty()) else {
+        return SOURCE_CONTROL_DISCOVERY_PRIMARY_TARGET_KEY.to_string();
+    };
+    if primary_environment_id == Some(environment_id) {
+        SOURCE_CONTROL_DISCOVERY_PRIMARY_TARGET_KEY.to_string()
+    } else {
+        environment_id.to_string()
+    }
+}
+
+pub fn source_control_discovery_auto_refresh_plan(
+    target_key: &str,
+) -> SourceControlDiscoveryAutoRefreshPlan {
+    SourceControlDiscoveryAutoRefreshPlan {
+        target_key: target_key.to_string(),
+        stale_time_ms: SOURCE_CONTROL_DISCOVERY_STALE_TIME_MS,
+        revalidate_on_mount: true,
+        idle_ttl_ms: SOURCE_CONTROL_DISCOVERY_IDLE_TTL_MS,
+        label: format!("source-control-discovery:auto-refresh:{target_key}"),
+    }
+}
+
+pub fn use_source_control_discovery_plan(
+    environment_id: Option<&str>,
+    primary_environment_id: Option<&str>,
+) -> SourceControlDiscoveryAutoRefreshPlan {
+    let target_key =
+        source_control_discovery_target_for_environment(environment_id, primary_environment_id);
+    let target_key = get_source_control_discovery_target_key(Some(&target_key))
+        .unwrap_or_else(|| SOURCE_CONTROL_DISCOVERY_PRIMARY_TARGET_KEY.to_string());
+    source_control_discovery_auto_refresh_plan(&target_key)
+}
+
+pub fn source_control_discovery_client_plan(
+    target_key: &str,
+    primary_environment_id: Option<&str>,
+    primary_connection_available: bool,
+    local_api_available: bool,
+    environment_connection_available: bool,
+) -> SourceControlDiscoveryClientPlan {
+    if target_key == SOURCE_CONTROL_DISCOVERY_PRIMARY_TARGET_KEY {
+        if let Some(environment_id) =
+            primary_environment_id.filter(|_| primary_connection_available)
+        {
+            return SourceControlDiscoveryClientPlan::PrimaryConnection {
+                environment_id: environment_id.to_string(),
+            };
+        }
+        if local_api_available {
+            return SourceControlDiscoveryClientPlan::LocalApi;
+        }
+        return SourceControlDiscoveryClientPlan::Missing;
+    }
+
+    if environment_connection_available {
+        SourceControlDiscoveryClientPlan::EnvironmentConnection {
+            environment_id: target_key.to_string(),
+        }
+    } else {
+        SourceControlDiscoveryClientPlan::Missing
     }
 }
 
@@ -21970,6 +22058,95 @@ mod tests {
                 reset_keys: vec!["primary".to_string(), "secondary".to_string()],
                 next: INITIAL_SOURCE_CONTROL_DISCOVERY_STATE_SNAPSHOT,
             }
+        );
+    }
+
+    #[test]
+    fn web_source_control_discovery_state_wrapper_matches_upstream_contract() {
+        assert_eq!(SOURCE_CONTROL_DISCOVERY_PRIMARY_TARGET_KEY, "primary");
+        assert_eq!(SOURCE_CONTROL_DISCOVERY_STALE_TIME_MS, 30_000);
+        assert_eq!(SOURCE_CONTROL_DISCOVERY_IDLE_TTL_MS, 300_000);
+        assert_eq!(
+            source_control_discovery_target_for_environment(None, Some("environment-local")),
+            "primary"
+        );
+        assert_eq!(
+            source_control_discovery_target_for_environment(
+                Some("environment-local"),
+                Some("environment-local")
+            ),
+            "primary"
+        );
+        assert_eq!(
+            source_control_discovery_target_for_environment(
+                Some("environment-remote"),
+                Some("environment-local")
+            ),
+            "environment-remote"
+        );
+
+        assert_eq!(
+            use_source_control_discovery_plan(
+                Some("environment-remote"),
+                Some("environment-local")
+            ),
+            SourceControlDiscoveryAutoRefreshPlan {
+                target_key: "environment-remote".to_string(),
+                stale_time_ms: 30_000,
+                revalidate_on_mount: true,
+                idle_ttl_ms: 300_000,
+                label: "source-control-discovery:auto-refresh:environment-remote".to_string(),
+            }
+        );
+        assert_eq!(
+            use_source_control_discovery_plan(Some("environment-local"), Some("environment-local"))
+                .label,
+            "source-control-discovery:auto-refresh:primary"
+        );
+
+        assert_eq!(
+            source_control_discovery_client_plan(
+                "primary",
+                Some("environment-local"),
+                true,
+                true,
+                false,
+            ),
+            SourceControlDiscoveryClientPlan::PrimaryConnection {
+                environment_id: "environment-local".to_string(),
+            }
+        );
+        assert_eq!(
+            source_control_discovery_client_plan(
+                "primary",
+                Some("environment-local"),
+                false,
+                true,
+                false,
+            ),
+            SourceControlDiscoveryClientPlan::LocalApi
+        );
+        assert_eq!(
+            source_control_discovery_client_plan(
+                "environment-remote",
+                Some("environment-local"),
+                true,
+                true,
+                true,
+            ),
+            SourceControlDiscoveryClientPlan::EnvironmentConnection {
+                environment_id: "environment-remote".to_string(),
+            }
+        );
+        assert_eq!(
+            source_control_discovery_client_plan(
+                "environment-remote",
+                Some("environment-local"),
+                true,
+                true,
+                false,
+            ),
+            SourceControlDiscoveryClientPlan::Missing
         );
     }
 

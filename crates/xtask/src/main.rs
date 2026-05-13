@@ -2041,6 +2041,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core thread_sort_helpers_match_upstream_contract`",
             "Wire input-level thread sort helpers into GPUI sidebar/project selection paths beyond summary-only sorting.",
         )
+    } else if path == "apps/web/src/lib/sourceControlDiscoveryState.ts" {
+        (
+            "web source-control discovery primary-target selection, stale/idle auto-refresh metadata, atom label, and primary/local/remote client fallback planning in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core web_source_control_discovery_state_wrapper_matches_upstream_contract`",
+            "Wire plans into live GPUI environment registry, local API fallback, atom/SWR refresh, and source-control UI state.",
+        )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
             "logical project path normalization, physical/grouping/order keys, repository-scoped keys, settings override resolution, ref fallback, and group-label helpers in crates/r3_core/src/lib.rs",
