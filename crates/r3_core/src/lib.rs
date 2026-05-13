@@ -23711,6 +23711,99 @@ pub struct EnvironmentState {
     pub turn_diff_summary_by_thread_id: BTreeMap<String, BTreeMap<String, TurnDiffSummary>>,
 }
 
+pub const WEB_STORE_MAX_THREAD_MESSAGES: usize = 2_000;
+pub const WEB_STORE_MAX_THREAD_CHECKPOINTS: usize = 500;
+pub const WEB_STORE_MAX_THREAD_PROPOSED_PLANS: usize = 200;
+pub const WEB_STORE_MAX_THREAD_ACTIVITIES: usize = 500;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebStoreContract {
+    pub initial_active_environment_id: Option<&'static str>,
+    pub initial_environment_state_by_id_len: usize,
+    pub project_fields: Vec<&'static str>,
+    pub thread_bookkeeping_fields: Vec<&'static str>,
+    pub shell_and_detail_stream_fields: Vec<&'static str>,
+    pub detail_stream_only_fields: Vec<&'static str>,
+    pub shell_stream_only_fields: Vec<&'static str>,
+    pub caps: BTreeMap<&'static str, usize>,
+    pub zustand_actions: Vec<&'static str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebStoreSelectorContract {
+    pub project_selector_returns_project_by_scoped_ref: bool,
+    pub thread_selector_memoizes_by_environment_state_identity_and_thread_id: bool,
+    pub across_environment_selector_scans_environment_state_entries: bool,
+    pub missing_ref_returns_none: bool,
+}
+
+pub fn web_store_contract() -> WebStoreContract {
+    WebStoreContract {
+        initial_active_environment_id: None,
+        initial_environment_state_by_id_len: 0,
+        project_fields: vec!["projectIds", "projectById"],
+        thread_bookkeeping_fields: vec!["threadIds", "threadIdsByProjectId"],
+        shell_and_detail_stream_fields: vec![
+            "threadShellById",
+            "threadSessionById",
+            "threadTurnStateById",
+        ],
+        detail_stream_only_fields: vec![
+            "messageIdsByThreadId",
+            "messageByThreadId",
+            "activityIdsByThreadId",
+            "activityByThreadId",
+            "proposedPlanIdsByThreadId",
+            "proposedPlanByThreadId",
+            "turnDiffIdsByThreadId",
+            "turnDiffSummaryByThreadId",
+        ],
+        shell_stream_only_fields: vec!["sidebarThreadSummaryById", "bootstrapComplete"],
+        caps: BTreeMap::from([
+            ("MAX_THREAD_MESSAGES", WEB_STORE_MAX_THREAD_MESSAGES),
+            ("MAX_THREAD_CHECKPOINTS", WEB_STORE_MAX_THREAD_CHECKPOINTS),
+            (
+                "MAX_THREAD_PROPOSED_PLANS",
+                WEB_STORE_MAX_THREAD_PROPOSED_PLANS,
+            ),
+            ("MAX_THREAD_ACTIVITIES", WEB_STORE_MAX_THREAD_ACTIVITIES),
+        ]),
+        zustand_actions: vec![
+            "setActiveEnvironmentId",
+            "removeEnvironmentState",
+            "syncServerShellSnapshot",
+            "syncServerThreadDetail",
+            "applyOrchestrationEvent",
+            "applyOrchestrationEvents",
+            "applyShellEvent",
+            "setError",
+            "setThreadBranch",
+        ],
+    }
+}
+
+pub fn web_store_selector_contract() -> WebStoreSelectorContract {
+    WebStoreSelectorContract {
+        project_selector_returns_project_by_scoped_ref: true,
+        thread_selector_memoizes_by_environment_state_identity_and_thread_id: true,
+        across_environment_selector_scans_environment_state_entries: true,
+        missing_ref_returns_none: true,
+    }
+}
+
+pub fn resolve_thread_ref_across_environment_states(
+    environment_state_by_id: &BTreeMap<String, EnvironmentState>,
+    thread_id: Option<&str>,
+) -> Option<ScopedThreadRef> {
+    let thread_id = thread_id?;
+    for (environment_id, environment_state) in environment_state_by_id {
+        if environment_state.thread_shell_by_id.contains_key(thread_id) {
+            return Some(ScopedThreadRef::new(environment_id, thread_id));
+        }
+    }
+    None
+}
+
 fn collect_by_ids<T: Clone>(
     ids_by_owner: &BTreeMap<String, Vec<String>>,
     records_by_owner: &BTreeMap<String, BTreeMap<String, T>>,
@@ -38979,6 +39072,134 @@ mod tests {
         assert_eq!(thread.activities.len(), 2);
         assert_eq!(thread.proposed_plans[0].id, "plan-1");
         assert_eq!(thread.turn_diff_summaries[0].files[0].additions, Some(4));
+    }
+
+    #[test]
+    fn web_store_contract_matches_upstream_zustand_shape() {
+        let contract = web_store_contract();
+        assert_eq!(contract.initial_active_environment_id, None);
+        assert_eq!(contract.initial_environment_state_by_id_len, 0);
+        assert_eq!(contract.project_fields, vec!["projectIds", "projectById"]);
+        assert_eq!(
+            contract.thread_bookkeeping_fields,
+            vec!["threadIds", "threadIdsByProjectId"]
+        );
+        assert_eq!(
+            contract.shell_and_detail_stream_fields,
+            vec![
+                "threadShellById",
+                "threadSessionById",
+                "threadTurnStateById"
+            ]
+        );
+        assert_eq!(
+            contract.detail_stream_only_fields,
+            vec![
+                "messageIdsByThreadId",
+                "messageByThreadId",
+                "activityIdsByThreadId",
+                "activityByThreadId",
+                "proposedPlanIdsByThreadId",
+                "proposedPlanByThreadId",
+                "turnDiffIdsByThreadId",
+                "turnDiffSummaryByThreadId"
+            ]
+        );
+        assert_eq!(
+            contract.shell_stream_only_fields,
+            vec!["sidebarThreadSummaryById", "bootstrapComplete"]
+        );
+        assert_eq!(contract.caps["MAX_THREAD_MESSAGES"], 2_000);
+        assert_eq!(contract.caps["MAX_THREAD_CHECKPOINTS"], 500);
+        assert_eq!(contract.caps["MAX_THREAD_PROPOSED_PLANS"], 200);
+        assert_eq!(contract.caps["MAX_THREAD_ACTIVITIES"], 500);
+        assert_eq!(
+            contract.zustand_actions,
+            vec![
+                "setActiveEnvironmentId",
+                "removeEnvironmentState",
+                "syncServerShellSnapshot",
+                "syncServerThreadDetail",
+                "applyOrchestrationEvent",
+                "applyOrchestrationEvents",
+                "applyShellEvent",
+                "setError",
+                "setThreadBranch"
+            ]
+        );
+    }
+
+    #[test]
+    fn web_store_selectors_match_upstream_ref_resolution_contract() {
+        assert_eq!(
+            web_store_selector_contract(),
+            WebStoreSelectorContract {
+                project_selector_returns_project_by_scoped_ref: true,
+                thread_selector_memoizes_by_environment_state_identity_and_thread_id: true,
+                across_environment_selector_scans_environment_state_entries: true,
+                missing_ref_returns_none: true,
+            }
+        );
+
+        let mut environment_a = EnvironmentState::default();
+        let mut environment_b = EnvironmentState::default();
+        environment_b.thread_shell_by_id.insert(
+            "thread-shared".to_string(),
+            ThreadShell {
+                id: "thread-shared".to_string(),
+                environment_id: "environment-b".to_string(),
+                codex_thread_id: None,
+                project_id: "project-b".to_string(),
+                title: "Remote thread".to_string(),
+                runtime_mode: RuntimeMode::FullAccess,
+                interaction_mode: ProviderInteractionMode::Default,
+                error: None,
+                created_at: "2026-03-04T12:00:00.000Z".to_string(),
+                archived_at: None,
+                updated_at: Some("2026-03-04T12:00:03.000Z".to_string()),
+                branch: None,
+                worktree_path: None,
+            },
+        );
+        environment_a.thread_shell_by_id.insert(
+            "thread-local".to_string(),
+            ThreadShell {
+                id: "thread-local".to_string(),
+                environment_id: "environment-a".to_string(),
+                codex_thread_id: None,
+                project_id: "project-a".to_string(),
+                title: "Local thread".to_string(),
+                runtime_mode: RuntimeMode::ApprovalRequired,
+                interaction_mode: ProviderInteractionMode::Default,
+                error: None,
+                created_at: "2026-03-04T12:00:00.000Z".to_string(),
+                archived_at: None,
+                updated_at: Some("2026-03-04T12:00:03.000Z".to_string()),
+                branch: None,
+                worktree_path: None,
+            },
+        );
+        let states = BTreeMap::from([
+            ("environment-a".to_string(), environment_a),
+            ("environment-b".to_string(), environment_b),
+        ]);
+
+        assert_eq!(
+            resolve_thread_ref_across_environment_states(&states, Some("thread-shared")),
+            Some(ScopedThreadRef::new("environment-b", "thread-shared"))
+        );
+        assert_eq!(
+            resolve_thread_ref_across_environment_states(&states, Some("thread-local")),
+            Some(ScopedThreadRef::new("environment-a", "thread-local"))
+        );
+        assert_eq!(
+            resolve_thread_ref_across_environment_states(&states, Some("missing")),
+            None
+        );
+        assert_eq!(
+            resolve_thread_ref_across_environment_states(&states, None),
+            None
+        );
     }
 
     #[test]

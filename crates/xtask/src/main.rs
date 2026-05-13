@@ -2399,6 +2399,16 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core logical_project`",
             "Wire helpers into live GPUI sidebar grouping, persisted settings, drag ordering, and project state updates.",
         )
+    } else if matches!(
+        path,
+        "apps/web/src/store.ts" | "apps/web/src/store.test.ts" | "apps/web/src/storeSelectors.ts"
+    ) {
+        (
+            "web store state ownership/cap constants, thread derivation, projection-backed environment state, scoped thread/project refs, and selector lookup contracts in crates/r3_core/src/lib.rs plus projection store behavior in crates/r3_core/src/persistence.rs",
+            "partial",
+            "`cargo test -p r3_core web_store`; `cargo test --workspace` projection store tests",
+            "Wire the native GPUI store runtime to the same environment-scoped mutation API, selector memoization boundary, shell/detail stream ownership split, and event replay semantics.",
+        )
     } else if path.starts_with("apps/web/src/components/")
         || path.starts_with("apps/web/src/composer")
         || path.starts_with("apps/web/src/diff")
