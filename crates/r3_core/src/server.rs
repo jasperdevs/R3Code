@@ -2082,11 +2082,52 @@ fn query_param(url: &str, key: &str) -> Option<String> {
     let query = url.split_once('?')?.1.split('#').next().unwrap_or("");
     for pair in query.split('&') {
         let (pair_key, value) = pair.split_once('=').unwrap_or((pair, ""));
-        if pair_key == key {
-            return Some(value.to_string());
+        if decode_url_query_component(pair_key) == key {
+            return Some(decode_url_query_component(value));
         }
     }
     None
+}
+
+fn decode_url_query_component(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+
+    while index < bytes.len() {
+        match bytes[index] {
+            b'+' => {
+                decoded.push(b' ');
+                index += 1;
+            }
+            b'%' if index + 2 < bytes.len() => {
+                if let (Some(high), Some(low)) =
+                    (hex_nibble(bytes[index + 1]), hex_nibble(bytes[index + 2]))
+                {
+                    decoded.push((high << 4) | low);
+                    index += 3;
+                } else {
+                    decoded.push(bytes[index]);
+                    index += 1;
+                }
+            }
+            byte => {
+                decoded.push(byte);
+                index += 1;
+            }
+        }
+    }
+
+    String::from_utf8_lossy(&decoded).into_owned()
+}
+
+fn hex_nibble(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
 }
 
 fn normalize_relative_url_path(path: &str) -> String {
@@ -3915,6 +3956,32 @@ mod tests {
         );
         assert_eq!(
             project_favicon_route_decision(
+                Some("http://localhost:3773/api/project-favicon?%63%77%64=C%3A%2Frepo+one"),
+                None,
+                false,
+            ),
+            ProjectFaviconRouteDecision::FallbackSvg {
+                body: FALLBACK_PROJECT_FAVICON_SVG,
+                status: 200,
+                content_type: "image/svg+xml",
+                cache_control: PROJECT_FAVICON_CACHE_CONTROL,
+            }
+        );
+        assert_eq!(
+            project_favicon_route_decision(
+                Some("http://localhost:3773/api/project-favicon?cwd=++"),
+                None,
+                false,
+            ),
+            ProjectFaviconRouteDecision::FallbackSvg {
+                body: FALLBACK_PROJECT_FAVICON_SVG,
+                status: 200,
+                content_type: "image/svg+xml",
+                cache_control: PROJECT_FAVICON_CACHE_CONTROL,
+            }
+        );
+        assert_eq!(
+            project_favicon_route_decision(
                 Some("http://localhost:3773/api/project-favicon?cwd=C:/repo"),
                 None,
                 false,
@@ -3975,6 +4042,18 @@ mod tests {
             }
         );
         let _ = std::fs::remove_dir_all(&favicon_dir);
+        assert_eq!(
+            project_favicon_route_file_response(
+                Some("http://localhost:3773/api/project-favicon?%63%77%64=C%3A%2Frepo+one"),
+                None,
+            ),
+            ProjectFaviconRouteFileResponse::FallbackSvg {
+                body: FALLBACK_PROJECT_FAVICON_SVG,
+                status: 200,
+                content_type: "image/svg+xml",
+                cache_control: PROJECT_FAVICON_CACHE_CONTROL,
+            }
+        );
         assert_eq!(
             project_favicon_route_file_response(
                 Some("http://localhost:3773/api/project-favicon?cwd=C:/repo"),
