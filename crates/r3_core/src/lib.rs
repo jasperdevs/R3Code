@@ -6286,6 +6286,209 @@ pub fn get_provider_model_capabilities(
         .unwrap_or_default()
 }
 
+fn provider_selection_value_by_id<'a>(
+    selections: Option<&'a [shared::ProviderOptionSelection]>,
+    id: &str,
+) -> Option<&'a shared::SharedProviderOptionValue> {
+    selections?
+        .iter()
+        .find(|selection| selection.id == id)
+        .map(|selection| &selection.value)
+}
+
+fn default_provider_option_choice_id(options: &[ProviderOptionChoice]) -> Option<String> {
+    options
+        .iter()
+        .find(|option| option.is_default)
+        .map(|option| option.id.clone())
+}
+
+fn resolve_select_descriptor_choice_value(
+    options: &[ProviderOptionChoice],
+    current_value: Option<&str>,
+    prompt_injected_values: &[String],
+    raw: Option<&str>,
+) -> Option<String> {
+    let trimmed = raw.unwrap_or_default().trim();
+    if trimmed.is_empty() {
+        return current_value
+            .map(str::to_string)
+            .or_else(|| default_provider_option_choice_id(options));
+    }
+    if options.is_empty() {
+        return Some(trimmed.to_string());
+    }
+    let has_option = options.iter().any(|option| option.id == trimmed);
+    if prompt_injected_values
+        .iter()
+        .any(|injected| injected == trimmed)
+        && has_option
+    {
+        return default_provider_option_choice_id(options);
+    }
+    if has_option {
+        return Some(trimmed.to_string());
+    }
+    current_value
+        .map(str::to_string)
+        .or_else(|| default_provider_option_choice_id(options))
+}
+
+pub fn get_provider_option_descriptors(
+    caps: &ModelCapabilities,
+    selections: Option<&[shared::ProviderOptionSelection]>,
+) -> Vec<ProviderOptionDescriptor> {
+    caps.option_descriptors
+        .iter()
+        .map(|descriptor| match descriptor {
+            ProviderOptionDescriptor::Boolean {
+                id,
+                label,
+                description,
+                current_value,
+            } => {
+                let next_value = match provider_selection_value_by_id(selections, id) {
+                    Some(shared::SharedProviderOptionValue::Boolean(value)) => Some(*value),
+                    _ => *current_value,
+                };
+                ProviderOptionDescriptor::Boolean {
+                    id: id.clone(),
+                    label: label.clone(),
+                    description: description.clone(),
+                    current_value: next_value,
+                }
+            }
+            ProviderOptionDescriptor::Select {
+                id,
+                label,
+                description,
+                options,
+                current_value,
+                prompt_injected_values,
+            } => {
+                let raw_value = match provider_selection_value_by_id(selections, id) {
+                    Some(shared::SharedProviderOptionValue::String(value)) => Some(value.as_str()),
+                    _ => current_value.as_deref(),
+                };
+                ProviderOptionDescriptor::Select {
+                    id: id.clone(),
+                    label: label.clone(),
+                    description: description.clone(),
+                    options: options.clone(),
+                    current_value: resolve_select_descriptor_choice_value(
+                        options,
+                        current_value.as_deref(),
+                        prompt_injected_values,
+                        raw_value,
+                    ),
+                    prompt_injected_values: prompt_injected_values.clone(),
+                }
+            }
+        })
+        .collect()
+}
+
+pub fn get_provider_option_current_value(
+    descriptor: Option<&ProviderOptionDescriptor>,
+) -> Option<shared::SharedProviderOptionValue> {
+    match descriptor? {
+        ProviderOptionDescriptor::Boolean { current_value, .. } => {
+            current_value.map(shared::SharedProviderOptionValue::Boolean)
+        }
+        ProviderOptionDescriptor::Select {
+            current_value,
+            options,
+            ..
+        } => current_value
+            .clone()
+            .or_else(|| default_provider_option_choice_id(options))
+            .map(shared::SharedProviderOptionValue::String),
+    }
+}
+
+pub fn build_provider_option_selections_from_descriptors(
+    descriptors: &[ProviderOptionDescriptor],
+) -> Option<Vec<shared::ProviderOptionSelection>> {
+    if descriptors.is_empty() {
+        return None;
+    }
+    let selections = descriptors
+        .iter()
+        .filter_map(|descriptor| {
+            get_provider_option_current_value(Some(descriptor)).map(|value| {
+                shared::ProviderOptionSelection {
+                    id: match descriptor {
+                        ProviderOptionDescriptor::Boolean { id, .. }
+                        | ProviderOptionDescriptor::Select { id, .. } => id.clone(),
+                    },
+                    value,
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+    (!selections.is_empty()).then_some(selections)
+}
+
+pub fn is_claude_ultrathink_prompt(text: Option<&str>) -> bool {
+    text.map(|text| {
+        text.split(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+            .any(|word| word.eq_ignore_ascii_case("ultrathink"))
+    })
+    .unwrap_or(false)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComposerProviderState {
+    pub provider: String,
+    pub prompt_effort: Option<String>,
+    pub model_options_for_dispatch: Option<Vec<shared::ProviderOptionSelection>>,
+    pub composer_frame_class_name: Option<&'static str>,
+    pub composer_surface_class_name: Option<&'static str>,
+    pub model_picker_icon_class_name: Option<&'static str>,
+}
+
+pub fn get_composer_provider_state(
+    provider: &str,
+    model: &str,
+    models: &[ServerProviderModel],
+    prompt: &str,
+    model_options: Option<&[shared::ProviderOptionSelection]>,
+) -> ComposerProviderState {
+    let caps = get_provider_model_capabilities(models, Some(model), provider);
+    let descriptors = get_provider_option_descriptors(&caps, model_options);
+    let primary_select_descriptor = descriptors
+        .iter()
+        .find(|descriptor| matches!(descriptor, ProviderOptionDescriptor::Select { .. }));
+    let prompt_effort = match get_provider_option_current_value(primary_select_descriptor) {
+        Some(shared::SharedProviderOptionValue::String(value)) => Some(value),
+        _ => None,
+    };
+    let ultrathink_active = match primary_select_descriptor {
+        Some(ProviderOptionDescriptor::Select {
+            prompt_injected_values,
+            ..
+        }) => !prompt_injected_values.is_empty() && is_claude_ultrathink_prompt(Some(prompt)),
+        _ => false,
+    };
+
+    ComposerProviderState {
+        provider: provider.to_string(),
+        prompt_effort,
+        model_options_for_dispatch: build_provider_option_selections_from_descriptors(&descriptors),
+        composer_frame_class_name: ultrathink_active.then_some("ultrathink-frame"),
+        composer_surface_class_name: ultrathink_active
+            .then_some("shadow-[0_0_0_1px_rgba(255,255,255,0.04)_inset]"),
+        model_picker_icon_class_name: ultrathink_active.then_some("ultrathink-chroma"),
+    }
+}
+
+pub fn should_render_provider_traits_controls(
+    has_thread_target: bool,
+    has_draft_target: bool,
+) -> bool {
+    has_thread_target || has_draft_target
+}
+
 pub fn resolve_selectable_provider_instance(
     providers: &[ServerProvider],
     instance_id: Option<&str>,
@@ -39184,6 +39387,244 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["server-model", "kept-custom"]
         );
+    }
+
+    #[test]
+    fn composer_provider_state_matches_upstream_descriptor_contracts() {
+        fn select_descriptor(
+            id: &str,
+            options: &[(&str, &str, bool)],
+            prompt_injected_values: &[&str],
+        ) -> ProviderOptionDescriptor {
+            ProviderOptionDescriptor::Select {
+                id: id.to_string(),
+                label: id.to_string(),
+                description: None,
+                options: options
+                    .iter()
+                    .map(|(id, label, is_default)| ProviderOptionChoice {
+                        id: (*id).to_string(),
+                        label: (*label).to_string(),
+                        description: None,
+                        is_default: *is_default,
+                    })
+                    .collect(),
+                current_value: options
+                    .iter()
+                    .find(|(_, _, is_default)| *is_default)
+                    .map(|(id, _, _)| (*id).to_string()),
+                prompt_injected_values: prompt_injected_values
+                    .iter()
+                    .map(|value| (*value).to_string())
+                    .collect(),
+            }
+        }
+
+        fn boolean_descriptor(id: &str) -> ProviderOptionDescriptor {
+            ProviderOptionDescriptor::Boolean {
+                id: id.to_string(),
+                label: id.to_string(),
+                description: None,
+                current_value: None,
+            }
+        }
+
+        fn model_with(descriptors: Vec<ProviderOptionDescriptor>) -> Vec<ServerProviderModel> {
+            vec![ServerProviderModel {
+                slug: "test-model".to_string(),
+                name: "test-model".to_string(),
+                short_name: None,
+                sub_provider: None,
+                is_custom: false,
+                capabilities: Some(ModelCapabilities {
+                    option_descriptors: descriptors,
+                }),
+            }]
+        }
+
+        fn string_selection(id: &str, value: &str) -> shared::ProviderOptionSelection {
+            shared::ProviderOptionSelection {
+                id: id.to_string(),
+                value: shared::SharedProviderOptionValue::String(value.to_string()),
+            }
+        }
+
+        fn bool_selection(id: &str, value: bool) -> shared::ProviderOptionSelection {
+            shared::ProviderOptionSelection {
+                id: id.to_string(),
+                value: shared::SharedProviderOptionValue::Boolean(value),
+            }
+        }
+
+        let defaults = get_composer_provider_state(
+            "codex",
+            "test-model",
+            &model_with(vec![select_descriptor(
+                "effort",
+                &[("low", "Low", false), ("high", "High", true)],
+                &[],
+            )]),
+            "",
+            None,
+        );
+        assert_eq!(defaults.provider, "codex");
+        assert_eq!(defaults.prompt_effort.as_deref(), Some("high"));
+        assert_eq!(
+            defaults.model_options_for_dispatch,
+            Some(vec![string_selection("effort", "high")])
+        );
+
+        let override_state = get_composer_provider_state(
+            "codex",
+            "test-model",
+            &model_with(vec![
+                select_descriptor(
+                    "effort",
+                    &[("low", "Low", false), ("high", "High", true)],
+                    &[],
+                ),
+                boolean_descriptor("fastMode"),
+            ]),
+            "",
+            Some(&[
+                string_selection("effort", "low"),
+                bool_selection("fastMode", true),
+            ]),
+        );
+        assert_eq!(override_state.prompt_effort.as_deref(), Some("low"));
+        assert_eq!(
+            override_state.model_options_for_dispatch,
+            Some(vec![
+                string_selection("effort", "low"),
+                bool_selection("fastMode", true)
+            ])
+        );
+
+        let preserved_default = get_composer_provider_state(
+            "codex",
+            "test-model",
+            &model_with(vec![
+                select_descriptor("effort", &[("high", "High", true)], &[]),
+                boolean_descriptor("fastMode"),
+            ]),
+            "",
+            Some(&[
+                string_selection("effort", "high"),
+                bool_selection("fastMode", false),
+            ]),
+        );
+        assert_eq!(
+            preserved_default.model_options_for_dispatch,
+            Some(vec![
+                string_selection("effort", "high"),
+                bool_selection("fastMode", false)
+            ])
+        );
+
+        let dropped = get_composer_provider_state(
+            "codex",
+            "test-model",
+            &model_with(vec![boolean_descriptor("thinking")]),
+            "",
+            Some(&[
+                string_selection("effort", "max"),
+                bool_selection("thinking", false),
+            ]),
+        );
+        assert_eq!(dropped.prompt_effort, None);
+        assert_eq!(
+            dropped.model_options_for_dispatch,
+            Some(vec![bool_selection("thinking", false)])
+        );
+
+        let multi_select = get_composer_provider_state(
+            "codex",
+            "test-model",
+            &model_with(vec![
+                select_descriptor("effort", &[("high", "High", true)], &[]),
+                select_descriptor(
+                    "contextWindow",
+                    &[("200k", "200k", true), ("1m", "1M", false)],
+                    &[],
+                ),
+                select_descriptor(
+                    "agent",
+                    &[("build", "Build", true), ("plan", "Plan", false)],
+                    &[],
+                ),
+            ]),
+            "",
+            Some(&[string_selection("agent", "plan")]),
+        );
+        assert_eq!(multi_select.prompt_effort.as_deref(), Some("high"));
+        assert_eq!(
+            multi_select.model_options_for_dispatch,
+            Some(vec![
+                string_selection("effort", "high"),
+                string_selection("contextWindow", "200k"),
+                string_selection("agent", "plan"),
+            ])
+        );
+
+        let no_descriptors = get_composer_provider_state(
+            "codex",
+            "test-model",
+            &model_with(vec![]),
+            "",
+            Some(&[string_selection("anything", "value")]),
+        );
+        assert_eq!(no_descriptors.prompt_effort, None);
+        assert_eq!(no_descriptors.model_options_for_dispatch, None);
+
+        let ultrathink = get_composer_provider_state(
+            "codex",
+            "test-model",
+            &model_with(vec![select_descriptor(
+                "effort",
+                &[
+                    ("medium", "Medium", false),
+                    ("high", "High", true),
+                    ("ultrathink", "Ultrathink", false),
+                ],
+                &["ultrathink"],
+            )]),
+            "Ultrathink:\nInvestigate this failure",
+            Some(&[string_selection("effort", "medium")]),
+        );
+        assert_eq!(ultrathink.prompt_effort.as_deref(), Some("medium"));
+        assert_eq!(
+            ultrathink.model_options_for_dispatch,
+            Some(vec![string_selection("effort", "medium")])
+        );
+        assert_eq!(
+            ultrathink.composer_frame_class_name,
+            Some("ultrathink-frame")
+        );
+        assert_eq!(
+            ultrathink.composer_surface_class_name,
+            Some("shadow-[0_0_0_1px_rgba(255,255,255,0.04)_inset]")
+        );
+        assert_eq!(
+            ultrathink.model_picker_icon_class_name,
+            Some("ultrathink-chroma")
+        );
+
+        let no_ultrathink_class = get_composer_provider_state(
+            "codex",
+            "test-model",
+            &model_with(vec![select_descriptor(
+                "effort",
+                &[("high", "High", true)],
+                &[],
+            )]),
+            "Ultrathink:\nInvestigate this failure",
+            None,
+        );
+        assert_eq!(no_ultrathink_class.composer_frame_class_name, None);
+        assert_eq!(no_ultrathink_class.composer_surface_class_name, None);
+        assert_eq!(no_ultrathink_class.model_picker_icon_class_name, None);
+
+        assert!(!should_render_provider_traits_controls(false, false));
     }
 
     #[test]

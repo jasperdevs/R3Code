@@ -2468,6 +2468,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace changed_files_tree_initial_labels_match_upstream_expansion_contract`; `cargo test --workspace turn_diff_tree_compacts_directory_chains_and_sorts_numerically`",
             "Wire directory toggle state, per-directory overrides, diff-open callbacks, file icons, and exact GPUI tree rendering.",
         )
+    } else if path == "apps/web/src/components/chat/composerProviderState.test.tsx"
+        || path == "apps/web/src/components/chat/composerProviderState.tsx"
+    {
+        (
+            "composerProviderState descriptor defaulting, selection overrides, stale selection dropping, dispatch option rebuilding, ultrathink class activation, and no-target traits render guard in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace composer_provider_state_matches_upstream_descriptor_contracts`",
+            "Wire traits picker/menu controls into live GPUI composer targets, prompt mutation, draft/thread routing, and exact traits UI rendering.",
+        )
     } else if path == "apps/web/src/components/settings/SettingsPanels.logic.test.ts"
         || path == "apps/web/src/components/settings/SettingsPanels.logic.ts"
     {
