@@ -2440,6 +2440,34 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace saved_environment_registry`",
             "Wire saved-environment registry/runtime state to live GPUI stores, local persistence IO, auth token lifecycle, and runtime connection side effects.",
         )
+    } else if path == "apps/web/src/environments/runtime/service.addSavedEnvironment.test.ts" {
+        (
+            "addSavedEnvironment saved-record label/timestamp/desktop-SSH fallback, credential persistence rollback/restore, stale desktop-SSH record removal, SSH 401 bearer reissue, pending cancellation, disconnect/remove credential behavior, desktop bridge bootstrap inputs, pairing-token failure rollback, runtime error patching, and metadata rename contracts in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace environment_runtime_service_saved_connection_flows_match_upstream_contract`; `cargo test --workspace environment_runtime_service_record_metadata_flows_match_upstream_contract`; `cargo test --workspace client_persistence_storage_preserves_saved_environment_secrets`",
+            "Wire these pure plans into live GPUI/WebSocket connection creation, desktop bridge calls, persisted token IO, pending-promise cancellation, and metadata refresh side effects.",
+        )
+    } else if path == "apps/web/src/environments/runtime/service.savedEnvironments.test.ts" {
+        (
+            "saved environment startup service ref-count lifecycle, hydration/saved-registry sync coalescing, initial config snapshot preference, saved credential loading, remote session validation, and saved connection start planning in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace environment_runtime_service_lifecycle_matches_upstream_contract`; `cargo test --workspace environment_runtime_service_saved_connection_flows_match_upstream_contract`",
+            "Wire hydration promises, registry subscriptions, initial config snapshots, WsRpcClient creation, and saved-environment startup into the live GPUI runtime service.",
+        )
+    } else if path == "apps/web/src/environments/runtime/service.test.ts" {
+        (
+            "terminal-event draft/server-thread archive filtering plus projection snapshot/event sequence and updatedAt gating contracts in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace environment_runtime_service_helpers_match_upstream_contract`; `cargo test --workspace terminal_activity_and_event_filters_match_upstream_helpers`",
+            "Wire these gates into live environment connection event application and GPUI terminal/projection stores.",
+        )
+    } else if path == "apps/web/src/environments/runtime/service.threadSubscriptions.test.ts" {
+        (
+            "thread-detail subscription retain/release ref-counting, idle warm-cache eviction delay/capacity, non-idle retention, reset/disconnect disposal, browser-resume reconnect cooldown, primary environment-id start gate, and saved reconnect reattachment planning in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace environment_runtime_service_helpers_match_upstream_contract`; `cargo test --workspace environment_runtime_service_lifecycle_matches_upstream_contract`; `cargo test --workspace environment_runtime_service_record_metadata_flows_match_upstream_contract`",
+            "Wire retained thread subscriptions to actual live subscribeThread handles across saved reconnect replacement, service reset, and environment removal.",
+        )
     } else if path == "apps/web/src/environments/runtime/service.ts" {
         (
             "environment runtime service constants, projection snapshot/event version gating, thread-detail subscription key/ref-count/idle-capacity rules, SSH HTTP status parsing, saved runtime state transition patches, saved-environment sync scheduler queueing, service start/release ref-count lifecycle, browser resume reconnect cooldown, saved connection missing-credential/auth-recovery/disconnect/remove/sync plans, addSavedEnvironment record fallback/stale-removal rules, desktop SSH prepared-record/bootstrap error contracts, metadata refresh patch/rename behavior, register/remove connection plans, and selected pairing URL helpers in crates/r3_core/src/lib.rs",

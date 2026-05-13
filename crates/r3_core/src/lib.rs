@@ -16660,6 +16660,33 @@ pub fn write_browser_saved_environment_registry(
     }
 }
 
+pub fn rollback_browser_saved_environment_registry(
+    current_records: &[BrowserSavedEnvironmentRecord],
+    snapshot: &[(String, Option<BrowserSavedEnvironmentRecord>)],
+) -> Vec<BrowserSavedEnvironmentRecord> {
+    let mut records = current_records.to_vec();
+
+    for (environment_id, snapshot_record) in snapshot {
+        match snapshot_record {
+            Some(record) => {
+                if let Some(existing) = records
+                    .iter_mut()
+                    .find(|entry| entry.environment_id == *environment_id)
+                {
+                    *existing = record.clone();
+                } else {
+                    records.push(record.clone());
+                }
+            }
+            None => {
+                records.retain(|entry| entry.environment_id != *environment_id);
+            }
+        }
+    }
+
+    records
+}
+
 pub fn read_browser_saved_environment_secret(
     document: &BrowserSavedEnvironmentRegistryDocument,
     environment_id: &str,
@@ -17332,6 +17359,12 @@ pub fn start_environment_connection_service_plan(
         wait_for_saved_environment_registry_hydration: true,
         subscribe_browser_resume_reconnects: true,
     }
+}
+
+pub fn should_create_primary_environment_connection(primary_environment_id: Option<&str>) -> bool {
+    primary_environment_id
+        .map(|environment_id| !environment_id.is_empty())
+        .unwrap_or(false)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28034,8 +28067,39 @@ mod tests {
             remove_browser_saved_environment_secret(&document, "environment-1"),
             BrowserSavedEnvironmentRegistryDocument {
                 version: Some(1),
-                records: vec![saved_record],
+                records: vec![saved_record.clone()],
             }
+        );
+
+        let unrelated_record = BrowserSavedEnvironmentRecord {
+            environment_id: "environment-existing".to_string(),
+            label: "Existing environment".to_string(),
+            http_base_url: "https://existing.example.com/".to_string(),
+            ws_base_url: "wss://existing.example.com/".to_string(),
+            created_at: "2026-04-14T00:00:00.000Z".to_string(),
+            last_connected_at: None,
+            desktop_ssh: None,
+            bearer_token: None,
+        };
+        assert_eq!(
+            rollback_browser_saved_environment_registry(
+                &[saved_record.clone(), unrelated_record.clone()],
+                &[("environment-1".to_string(), None)]
+            ),
+            vec![unrelated_record.clone()]
+        );
+
+        let moved_ssh_record = BrowserSavedEnvironmentRecord {
+            http_base_url: "http://127.0.0.1:3774/".to_string(),
+            ws_base_url: "ws://127.0.0.1:3774/".to_string(),
+            ..saved_record.clone()
+        };
+        assert_eq!(
+            rollback_browser_saved_environment_registry(
+                &[moved_ssh_record],
+                &[("environment-1".to_string(), Some(saved_record.clone()))]
+            ),
+            vec![saved_record]
         );
     }
 
@@ -28307,6 +28371,17 @@ mod tests {
                 "environment-a:thread-3".to_string(),
             ]
         );
+        assert_eq!(
+            idle_thread_detail_subscription_keys_to_evict_to_capacity(
+                &entries
+                    .iter()
+                    .take(12)
+                    .map(|(key, value)| (key.clone(), value.clone()))
+                    .collect::<BTreeMap<_, _>>(),
+                MAX_CACHED_THREAD_DETAIL_SUBSCRIPTIONS
+            ),
+            Vec::<String>::new()
+        );
 
         assert_eq!(
             read_ssh_http_error_status("[ssh_http:401] unauthorized"),
@@ -28431,6 +28506,11 @@ mod tests {
         assert!(first.subscribe_saved_environment_registry);
         assert!(first.wait_for_saved_environment_registry_hydration);
         assert!(first.subscribe_browser_resume_reconnects);
+        assert!(should_create_primary_environment_connection(Some(
+            "environment-primary"
+        )));
+        assert!(!should_create_primary_environment_connection(None));
+        assert!(!should_create_primary_environment_connection(Some("")));
 
         let retained = start_environment_connection_service_plan(Some(&first.state), "client-a");
         assert_eq!(
