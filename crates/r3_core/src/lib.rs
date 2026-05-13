@@ -6031,6 +6031,20 @@ pub struct SourceControlProviderAuth {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlProviderInfo {
+    pub kind: SourceControlProviderKind,
+    pub name: String,
+    pub base_url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlProviderContext {
+    pub provider: SourceControlProviderInfo,
+    pub remote_name: String,
+    pub remote_url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceControlAuthProbeInput {
     pub stdout: String,
     pub stderr: String,
@@ -6121,6 +6135,8 @@ pub const SOURCE_CONTROL_DISCOVERY_TIMEOUT_MS: u64 = 5_000;
 pub const SOURCE_CONTROL_DISCOVERY_MAX_OUTPUT_BYTES: usize = 8_000;
 pub const SOURCE_CONTROL_MISSING_CLI_AUTH_DETAIL: &str =
     "Hosting integration command was not found on the server PATH.";
+pub const SOURCE_CONTROL_PROVIDER_DETECTION_CACHE_CAPACITY: usize = 2_048;
+pub const SOURCE_CONTROL_PROVIDER_DETECTION_CACHE_TTL_MS: u64 = 5_000;
 
 pub fn normalize_git_fetch_interval_seconds(value: Option<f64>) -> u32 {
     let Some(value) = value else {
@@ -6153,6 +6169,59 @@ pub fn source_control_provider_auth(
         host: trimmed_optional_string(host),
         detail: trimmed_optional_string(detail),
     }
+}
+
+fn source_control_provider_kind_from_shared(
+    kind: shared::SharedSourceControlProviderKind,
+) -> SourceControlProviderKind {
+    match kind {
+        shared::SharedSourceControlProviderKind::Github => SourceControlProviderKind::Github,
+        shared::SharedSourceControlProviderKind::Gitlab => SourceControlProviderKind::Gitlab,
+        shared::SharedSourceControlProviderKind::AzureDevops => {
+            SourceControlProviderKind::AzureDevops
+        }
+        shared::SharedSourceControlProviderKind::Bitbucket => SourceControlProviderKind::Bitbucket,
+        shared::SharedSourceControlProviderKind::Unknown => SourceControlProviderKind::Unknown,
+    }
+}
+
+pub fn detect_source_control_provider_info_from_remote_url(
+    remote_url: &str,
+) -> Option<SourceControlProviderInfo> {
+    let provider = shared::detect_source_control_provider_from_remote_url(remote_url)?;
+    Some(SourceControlProviderInfo {
+        kind: source_control_provider_kind_from_shared(provider.kind),
+        name: provider.name,
+        base_url: provider.base_url,
+    })
+}
+
+pub fn select_source_control_provider_context(
+    remotes: &[VcsRemote],
+) -> Option<SourceControlProviderContext> {
+    let candidates = remotes
+        .iter()
+        .filter_map(|remote| {
+            let provider = detect_source_control_provider_info_from_remote_url(&remote.url)?;
+            Some(SourceControlProviderContext {
+                provider,
+                remote_name: remote.name.clone(),
+                remote_url: remote.url.clone(),
+            })
+        })
+        .collect::<Vec<_>>();
+
+    candidates
+        .iter()
+        .find(|candidate| candidate.remote_name == "origin")
+        .cloned()
+        .or_else(|| {
+            candidates
+                .iter()
+                .find(|candidate| candidate.provider.kind != SourceControlProviderKind::Unknown)
+                .cloned()
+        })
+        .or_else(|| candidates.first().cloned())
 }
 
 pub fn source_control_unknown_auth(detail: Option<&str>) -> SourceControlProviderAuth {
@@ -17551,6 +17620,90 @@ mod tests {
                 host: None,
                 detail: Some(SOURCE_CONTROL_MISSING_CLI_AUTH_DETAIL.to_string()),
             }
+        );
+        assert_eq!(SOURCE_CONTROL_PROVIDER_DETECTION_CACHE_CAPACITY, 2_048);
+        assert_eq!(SOURCE_CONTROL_PROVIDER_DETECTION_CACHE_TTL_MS, 5_000);
+
+        let provider_context = select_source_control_provider_context(&[VcsRemote {
+            name: "origin".to_string(),
+            url: "git@github.com:pingdotgg/t3code.git".to_string(),
+            push_url: None,
+            is_primary: true,
+        }])
+        .unwrap();
+        assert_eq!(
+            provider_context.provider.kind,
+            SourceControlProviderKind::Github
+        );
+        assert_eq!(provider_context.remote_name, "origin");
+
+        assert_eq!(
+            select_source_control_provider_context(&[VcsRemote {
+                name: "origin".to_string(),
+                url: "git@gitlab.com:group/project.git".to_string(),
+                push_url: None,
+                is_primary: true,
+            }])
+            .unwrap()
+            .provider
+            .kind,
+            SourceControlProviderKind::Gitlab
+        );
+        assert_eq!(
+            select_source_control_provider_context(&[VcsRemote {
+                name: "origin".to_string(),
+                url: "git@bitbucket.org:pingdotgg/t3code.git".to_string(),
+                push_url: None,
+                is_primary: true,
+            }])
+            .unwrap()
+            .provider
+            .kind,
+            SourceControlProviderKind::Bitbucket
+        );
+        assert_eq!(
+            select_source_control_provider_context(&[VcsRemote {
+                name: "origin".to_string(),
+                url: "https://dev.azure.com/acme/project/_git/repo".to_string(),
+                push_url: None,
+                is_primary: true,
+            }])
+            .unwrap()
+            .provider
+            .kind,
+            SourceControlProviderKind::AzureDevops
+        );
+        assert_eq!(
+            select_source_control_provider_context(&[
+                VcsRemote {
+                    name: "origin".to_string(),
+                    url: "ssh://git@unknown.example.com/team/repo.git".to_string(),
+                    push_url: None,
+                    is_primary: true,
+                },
+                VcsRemote {
+                    name: "upstream".to_string(),
+                    url: "git@github.com:pingdotgg/t3code.git".to_string(),
+                    push_url: None,
+                    is_primary: false,
+                },
+            ])
+            .unwrap()
+            .provider
+            .kind,
+            SourceControlProviderKind::Unknown
+        );
+        assert_eq!(
+            select_source_control_provider_context(&[VcsRemote {
+                name: "upstream".to_string(),
+                url: "https://dev.azure.com/acme/project/_git/repo".to_string(),
+                push_url: None,
+                is_primary: false,
+            }])
+            .unwrap()
+            .provider
+            .kind,
+            SourceControlProviderKind::AzureDevops
         );
 
         let github_cli = SourceControlCliDiscoverySpec {
