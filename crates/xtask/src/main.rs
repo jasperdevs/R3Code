@@ -1847,6 +1847,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core thread_routes_helpers_match_upstream_contract`",
             "Wire helpers into live GPUI route parsing, navigation, history, and draft/server thread selection.",
         )
+    } else if path == "apps/web/src/threadSelectionStore.ts"
+        || path == "apps/web/src/threadSelectionStore.test.ts"
+    {
+        (
+            "sidebar thread multi-selection state transitions for toggle, anchor-only click, shift-range selection, missing-anchor/target fallback, stable anchor extension, clear, removal, and has-selection checks in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core thread_selection_store_matches_upstream_contract`",
+            "Wire state helper into the live GPUI sidebar thread multi-select interactions and bulk actions.",
+        )
     } else if path == "apps/web/src/versionSkew.ts" || path == "apps/web/src/versionSkew.test.ts" {
         (
             "version mismatch normalization, R3Code-branded mismatch hint, environment/client/server dismissal keys, duplicate-safe dismissal insertion, dismissed checks, and error-message hint append behavior in crates/r3_core/src/lib.rs",

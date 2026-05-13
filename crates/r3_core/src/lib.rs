@@ -257,6 +257,83 @@ pub fn resolve_thread_route_target(
         })
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ThreadSelectionState {
+    pub selected_thread_keys: BTreeSet<String>,
+    pub anchor_thread_key: Option<String>,
+}
+
+impl ThreadSelectionState {
+    pub fn toggle_thread(&mut self, thread_key: &str) {
+        if self.selected_thread_keys.contains(thread_key) {
+            self.selected_thread_keys.remove(thread_key);
+        } else {
+            self.selected_thread_keys.insert(thread_key.to_string());
+        }
+        if self.selected_thread_keys.contains(thread_key) {
+            self.anchor_thread_key = Some(thread_key.to_string());
+        }
+    }
+
+    pub fn range_select_to(&mut self, thread_key: &str, ordered_thread_keys: &[String]) {
+        let Some(anchor) = self.anchor_thread_key.clone() else {
+            self.selected_thread_keys.insert(thread_key.to_string());
+            self.anchor_thread_key = Some(thread_key.to_string());
+            return;
+        };
+
+        let anchor_index = ordered_thread_keys.iter().position(|key| key == &anchor);
+        let target_index = ordered_thread_keys.iter().position(|key| key == thread_key);
+        let (Some(anchor_index), Some(target_index)) = (anchor_index, target_index) else {
+            self.selected_thread_keys.insert(thread_key.to_string());
+            self.anchor_thread_key = Some(thread_key.to_string());
+            return;
+        };
+
+        let start = anchor_index.min(target_index);
+        let end = anchor_index.max(target_index);
+        for key in &ordered_thread_keys[start..=end] {
+            self.selected_thread_keys.insert(key.clone());
+        }
+    }
+
+    pub fn clear_selection(&mut self) {
+        if self.selected_thread_keys.is_empty() && self.anchor_thread_key.is_none() {
+            return;
+        }
+        self.selected_thread_keys.clear();
+        self.anchor_thread_key = None;
+    }
+
+    pub fn remove_from_selection(&mut self, thread_keys: &[String]) {
+        let to_remove = thread_keys.iter().collect::<BTreeSet<_>>();
+        let before_len = self.selected_thread_keys.len();
+        self.selected_thread_keys
+            .retain(|key| !to_remove.contains(key));
+        if self.selected_thread_keys.len() == before_len {
+            return;
+        }
+        if self
+            .anchor_thread_key
+            .as_ref()
+            .is_some_and(|anchor| to_remove.contains(anchor))
+        {
+            self.anchor_thread_key = None;
+        }
+    }
+
+    pub fn set_anchor(&mut self, thread_key: &str) {
+        if self.anchor_thread_key.as_deref() == Some(thread_key) {
+            return;
+        }
+        self.anchor_thread_key = Some(thread_key.to_string());
+    }
+
+    pub fn has_selection(&self) -> bool {
+        !self.selected_thread_keys.is_empty()
+    }
+}
+
 pub fn normalize_hosted_app_channel(channel: Option<&str>) -> Option<HostedAppChannel> {
     match channel
         .map(str::trim)
@@ -25162,6 +25239,121 @@ mod tests {
             })
         );
         assert_eq!(resolve_thread_route_target(None, None, None), None);
+    }
+
+    #[test]
+    fn thread_selection_store_matches_upstream_contract() {
+        let thread_a = "thread-a".to_string();
+        let thread_b = "thread-b".to_string();
+        let thread_c = "thread-c".to_string();
+        let thread_d = "thread-d".to_string();
+        let thread_e = "thread-e".to_string();
+        let ordered = vec![
+            thread_a.clone(),
+            thread_b.clone(),
+            thread_c.clone(),
+            thread_d.clone(),
+            thread_e.clone(),
+        ];
+
+        let mut state = ThreadSelectionState::default();
+        assert!(!state.has_selection());
+        state.toggle_thread(&thread_a);
+        assert!(state.selected_thread_keys.contains(&thread_a));
+        assert_eq!(state.selected_thread_keys.len(), 1);
+        assert_eq!(state.anchor_thread_key.as_deref(), Some("thread-a"));
+        assert!(state.has_selection());
+
+        state.toggle_thread(&thread_b);
+        assert!(state.selected_thread_keys.contains(&thread_a));
+        assert!(state.selected_thread_keys.contains(&thread_b));
+        assert_eq!(state.anchor_thread_key.as_deref(), Some("thread-b"));
+        state.toggle_thread(&thread_a);
+        assert!(!state.selected_thread_keys.contains(&thread_a));
+        assert_eq!(state.anchor_thread_key.as_deref(), Some("thread-b"));
+
+        state.clear_selection();
+        assert!(state.selected_thread_keys.is_empty());
+        assert_eq!(state.anchor_thread_key, None);
+        state.set_anchor(&thread_b);
+        assert_eq!(state.anchor_thread_key.as_deref(), Some("thread-b"));
+        assert!(state.selected_thread_keys.is_empty());
+        state.range_select_to(&thread_d, &ordered);
+        assert!(state.selected_thread_keys.contains(&thread_b));
+        assert!(state.selected_thread_keys.contains(&thread_c));
+        assert!(state.selected_thread_keys.contains(&thread_d));
+        assert_eq!(state.selected_thread_keys.len(), 3);
+
+        let mut no_anchor = ThreadSelectionState::default();
+        no_anchor.range_select_to(&thread_c, &ordered);
+        assert!(no_anchor.selected_thread_keys.contains(&thread_c));
+        assert_eq!(no_anchor.selected_thread_keys.len(), 1);
+        assert_eq!(no_anchor.anchor_thread_key.as_deref(), Some("thread-c"));
+
+        let mut forward = ThreadSelectionState::default();
+        forward.toggle_thread(&thread_b);
+        forward.range_select_to(&thread_d, &ordered);
+        assert_eq!(forward.anchor_thread_key.as_deref(), Some("thread-b"));
+        assert!(forward.selected_thread_keys.contains(&thread_b));
+        assert!(forward.selected_thread_keys.contains(&thread_c));
+        assert!(forward.selected_thread_keys.contains(&thread_d));
+
+        let mut backward = ThreadSelectionState::default();
+        backward.toggle_thread(&thread_d);
+        backward.range_select_to(&thread_b, &ordered);
+        assert!(backward.selected_thread_keys.contains(&thread_b));
+        assert!(backward.selected_thread_keys.contains(&thread_c));
+        assert!(backward.selected_thread_keys.contains(&thread_d));
+        assert_eq!(backward.selected_thread_keys.len(), 3);
+
+        forward.range_select_to(&thread_e, &ordered);
+        assert_eq!(forward.anchor_thread_key.as_deref(), Some("thread-b"));
+        assert!(forward.selected_thread_keys.contains(&thread_e));
+
+        let mut missing_anchor = ThreadSelectionState::default();
+        missing_anchor.toggle_thread(&thread_a);
+        missing_anchor.range_select_to(
+            &thread_c,
+            &[thread_b.clone(), thread_c.clone(), thread_d.clone()],
+        );
+        assert!(missing_anchor.selected_thread_keys.contains(&thread_c));
+        assert_eq!(
+            missing_anchor.anchor_thread_key.as_deref(),
+            Some("thread-c")
+        );
+
+        let mut missing_target = ThreadSelectionState::default();
+        missing_target.toggle_thread(&thread_b);
+        missing_target.range_select_to("thread-unknown", &ordered);
+        assert!(
+            missing_target
+                .selected_thread_keys
+                .contains("thread-unknown")
+        );
+        assert_eq!(
+            missing_target.anchor_thread_key.as_deref(),
+            Some("thread-unknown")
+        );
+
+        let mut preserve_outside = ThreadSelectionState::default();
+        preserve_outside.toggle_thread(&thread_a);
+        preserve_outside.toggle_thread(&thread_b);
+        preserve_outside.range_select_to(&thread_d, &ordered);
+        assert!(preserve_outside.selected_thread_keys.contains(&thread_a));
+        assert!(preserve_outside.selected_thread_keys.contains(&thread_b));
+        assert!(preserve_outside.selected_thread_keys.contains(&thread_c));
+        assert!(preserve_outside.selected_thread_keys.contains(&thread_d));
+        assert_eq!(preserve_outside.selected_thread_keys.len(), 4);
+
+        preserve_outside.remove_from_selection(&[thread_a.clone(), thread_c.clone()]);
+        assert!(preserve_outside.selected_thread_keys.contains(&thread_b));
+        assert_eq!(preserve_outside.selected_thread_keys.len(), 2);
+        assert_eq!(
+            preserve_outside.anchor_thread_key.as_deref(),
+            Some("thread-b")
+        );
+        preserve_outside.remove_from_selection(std::slice::from_ref(&thread_b));
+        assert_eq!(preserve_outside.anchor_thread_key, None);
     }
 
     #[test]
