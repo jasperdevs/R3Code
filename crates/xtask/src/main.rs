@@ -1797,6 +1797,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core project_scripts_helpers_match_upstream_logic`; `cargo test -p r3_core project_script_runtime_context_matches_upstream_logic`",
             "Wire helpers into live GPUI project script creation, settings persistence, terminal launch, and worktree setup flows.",
         )
+    } else if path == "apps/web/src/timestampFormat.ts"
+        || path == "apps/web/src/timestampFormat.test.ts"
+    {
+        (
+            "timestamp format option contracts plus relative elapsed, relative-until, and expires-in labels for seconds/minutes/hours/days in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core timestamp_format_helpers_match_upstream_contract`",
+            "Wire helpers into all live GPUI timestamp labels, expiry countdowns, and user-configured time-format rendering.",
+        )
     } else if path == "apps/web/src/shortcutModifierState.ts"
         || path == "apps/web/src/shortcutModifierState.test.ts"
     {

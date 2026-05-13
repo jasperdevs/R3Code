@@ -13198,6 +13198,201 @@ pub fn format_relative_time_label_at(iso_date: &str, now_iso: &str) -> String {
     format!("{}d ago", hours / 24)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimestampFormatPreference {
+    Locale,
+    TwelveHour,
+    TwentyFourHour,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TimestampFormatOptions {
+    pub hour: &'static str,
+    pub minute: &'static str,
+    pub second: Option<&'static str>,
+    pub hour12: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelativeTimeParts {
+    pub value: String,
+    pub suffix: Option<&'static str>,
+}
+
+pub fn get_timestamp_format_options(
+    timestamp_format: TimestampFormatPreference,
+    include_seconds: bool,
+) -> TimestampFormatOptions {
+    TimestampFormatOptions {
+        hour: "numeric",
+        minute: "2-digit",
+        second: include_seconds.then_some("2-digit"),
+        hour12: match timestamp_format {
+            TimestampFormatPreference::Locale => None,
+            TimestampFormatPreference::TwelveHour => Some(true),
+            TimestampFormatPreference::TwentyFourHour => Some(false),
+        },
+    }
+}
+
+pub fn format_elapsed_duration_label_at(iso_date: &str, now_iso: &str) -> String {
+    let Some(now_seconds) = iso_utc_timestamp_seconds(now_iso) else {
+        return "just now".to_string();
+    };
+    let Some(date_seconds) = iso_utc_timestamp_seconds(iso_date) else {
+        return "just now".to_string();
+    };
+    if date_seconds >= now_seconds {
+        return "just now".to_string();
+    }
+
+    let seconds = now_seconds - date_seconds;
+    if seconds < 5 {
+        return "just now".to_string();
+    }
+    if seconds < 60 {
+        return format!("{seconds}s");
+    }
+    let minutes = seconds / 60;
+    if minutes < 60 {
+        return format!("{minutes}m");
+    }
+    let hours = minutes / 60;
+    if hours < 24 {
+        return format!("{hours}h");
+    }
+    format!("{}d", hours / 24)
+}
+
+pub fn format_relative_time_until_at(iso_date: &str, now_iso: &str) -> RelativeTimeParts {
+    let Some(now_seconds) = iso_utc_timestamp_seconds(now_iso) else {
+        return RelativeTimeParts {
+            value: "Expired".to_string(),
+            suffix: None,
+        };
+    };
+    let Some(date_seconds) = iso_utc_timestamp_seconds(iso_date) else {
+        return RelativeTimeParts {
+            value: "Expired".to_string(),
+            suffix: None,
+        };
+    };
+    if date_seconds <= now_seconds {
+        return RelativeTimeParts {
+            value: "Expired".to_string(),
+            suffix: None,
+        };
+    }
+
+    let seconds = date_seconds - now_seconds;
+    if seconds < 5 {
+        return RelativeTimeParts {
+            value: "Soon".to_string(),
+            suffix: None,
+        };
+    }
+    if seconds < 60 {
+        return RelativeTimeParts {
+            value: format!("{seconds}s"),
+            suffix: Some("left"),
+        };
+    }
+    let minutes = seconds / 60;
+    if minutes < 60 {
+        return RelativeTimeParts {
+            value: format!("{minutes}m"),
+            suffix: Some("left"),
+        };
+    }
+    let hours = minutes / 60;
+    if hours < 24 {
+        return RelativeTimeParts {
+            value: format!("{hours}h"),
+            suffix: Some("left"),
+        };
+    }
+    RelativeTimeParts {
+        value: format!("{}d", hours / 24),
+        suffix: Some("left"),
+    }
+}
+
+pub fn format_relative_time_until_label_at(iso_date: &str, now_iso: &str) -> String {
+    let relative = format_relative_time_until_at(iso_date, now_iso);
+    relative
+        .suffix
+        .map(|suffix| format!("{} {suffix}", relative.value))
+        .unwrap_or(relative.value)
+}
+
+pub fn format_expires_in_label_at(iso_date: &str, now_iso: &str) -> String {
+    let Some(now_seconds) = iso_utc_timestamp_seconds(now_iso) else {
+        return "Expired".to_string();
+    };
+    let Some(date_seconds) = iso_utc_timestamp_seconds(iso_date) else {
+        return "Expired".to_string();
+    };
+    if date_seconds <= now_seconds {
+        return "Expired".to_string();
+    }
+
+    let total_seconds = date_seconds - now_seconds;
+    if total_seconds < 5 {
+        return "Expires in a moment".to_string();
+    }
+    if total_seconds < 60 {
+        return format!("Expires in {total_seconds}s");
+    }
+    if total_seconds < 3_600 {
+        let minutes = total_seconds / 60;
+        let seconds = total_seconds % 60;
+        return if seconds == 0 {
+            format!("Expires in {minutes}m")
+        } else {
+            format!("Expires in {minutes}m {seconds}s")
+        };
+    }
+    if total_seconds < 86_400 {
+        let hours = total_seconds / 3_600;
+        let remainder = total_seconds % 3_600;
+        let minutes = remainder / 60;
+        let seconds = remainder % 60;
+        let mut parts = vec![format!("{hours}h")];
+        if minutes > 0 {
+            parts.push(format!("{minutes}m"));
+        }
+        if seconds > 0 {
+            parts.push(format!("{seconds}s"));
+        }
+        return format!("Expires in {}", parts.join(" "));
+    }
+
+    let days = total_seconds / 86_400;
+    let remainder_after_days = total_seconds % 86_400;
+    if remainder_after_days == 0 {
+        return format!("Expires in {days}d");
+    }
+    let hours = remainder_after_days / 3_600;
+    let remainder = remainder_after_days % 3_600;
+    let minutes = remainder / 60;
+    let seconds = remainder % 60;
+    let mut tail = Vec::new();
+    if hours > 0 {
+        tail.push(format!("{hours}h"));
+    }
+    if minutes > 0 {
+        tail.push(format!("{minutes}m"));
+    }
+    if seconds > 0 {
+        tail.push(format!("{seconds}s"));
+    }
+    if tail.is_empty() {
+        format!("Expires in {days}d")
+    } else {
+        format!("Expires in {days}d {}", tail.join(" "))
+    }
+}
+
 pub fn format_working_timer_at(start_iso: &str, end_iso: &str) -> Option<String> {
     let ended_at = iso_utc_timestamp_seconds(end_iso)?;
     format_working_timer_at_unix_seconds(start_iso, ended_at)
@@ -24360,6 +24555,105 @@ mod tests {
         assert_eq!(
             format_working_timer_at("2026-03-04T12:10:00.000Z", "2026-05-12T09:35:00.000Z"),
             Some("1653h 25m".to_string())
+        );
+    }
+
+    #[test]
+    fn timestamp_format_helpers_match_upstream_contract() {
+        assert_eq!(
+            get_timestamp_format_options(TimestampFormatPreference::Locale, true),
+            TimestampFormatOptions {
+                hour: "numeric",
+                minute: "2-digit",
+                second: Some("2-digit"),
+                hour12: None,
+            }
+        );
+        assert_eq!(
+            get_timestamp_format_options(TimestampFormatPreference::TwelveHour, true),
+            TimestampFormatOptions {
+                hour: "numeric",
+                minute: "2-digit",
+                second: Some("2-digit"),
+                hour12: Some(true),
+            }
+        );
+        assert_eq!(
+            get_timestamp_format_options(TimestampFormatPreference::TwentyFourHour, false),
+            TimestampFormatOptions {
+                hour: "numeric",
+                minute: "2-digit",
+                second: None,
+                hour12: Some(false),
+            }
+        );
+
+        let now = "2026-04-07T12:00:00.000Z";
+        assert_eq!(
+            format_relative_time_until_label_at("2026-04-07T11:59:00.000Z", now),
+            "Expired"
+        );
+        assert_eq!(
+            format_relative_time_until_label_at("2026-04-07T12:00:45.000Z", now),
+            "45s left"
+        );
+        assert_eq!(
+            format_relative_time_until_label_at("2026-04-07T12:15:00.000Z", now),
+            "15m left"
+        );
+        assert_eq!(
+            format_relative_time_until_label_at("2026-04-07T18:00:00.000Z", now),
+            "6h left"
+        );
+
+        assert_eq!(
+            format_expires_in_label_at("2026-04-07T11:59:00.000Z", now),
+            "Expired"
+        );
+        assert_eq!(
+            format_expires_in_label_at("2026-04-07T12:00:45.000Z", now),
+            "Expires in 45s"
+        );
+        assert_eq!(
+            format_expires_in_label_at("2026-04-07T12:04:12.000Z", now),
+            "Expires in 4m 12s"
+        );
+        assert_eq!(
+            format_expires_in_label_at("2026-04-07T12:15:00.000Z", now),
+            "Expires in 15m"
+        );
+        assert_eq!(
+            format_expires_in_label_at("2026-04-07T14:02:03.000Z", now),
+            "Expires in 2h 2m 3s"
+        );
+        assert_eq!(
+            format_expires_in_label_at("2026-04-07T18:00:00.000Z", now),
+            "Expires in 6h"
+        );
+
+        assert_eq!(
+            format_elapsed_duration_label_at("2026-04-07T12:00:00.000Z", now),
+            "just now"
+        );
+        assert_eq!(
+            format_elapsed_duration_label_at("2026-04-07T12:01:00.000Z", now),
+            "just now"
+        );
+        assert_eq!(
+            format_elapsed_duration_label_at("2026-04-07T11:59:45.000Z", now),
+            "15s"
+        );
+        assert_eq!(
+            format_elapsed_duration_label_at("2026-04-07T11:45:00.000Z", now),
+            "15m"
+        );
+        assert_eq!(
+            format_elapsed_duration_label_at("2026-04-07T06:00:00.000Z", now),
+            "6h"
+        );
+        assert_eq!(
+            format_elapsed_duration_label_at("2026-04-03T12:00:00.000Z", now),
+            "4d"
         );
     }
 
