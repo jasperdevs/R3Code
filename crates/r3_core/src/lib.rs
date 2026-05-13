@@ -6665,6 +6665,33 @@ pub fn source_control_repository_error_with_cause(
     }
 }
 
+pub fn source_control_repository_detail_from_unknown(
+    detail: Option<&str>,
+    message: Option<&str>,
+) -> String {
+    trimmed_optional_string(detail)
+        .or_else(|| trimmed_optional_string(message))
+        .unwrap_or_else(|| "An unexpected source control error occurred.".to_string())
+}
+
+pub fn source_control_map_repository_error(
+    existing: Option<SourceControlRepositoryErrorContract>,
+    operation: &str,
+    provider: SourceControlProviderKind,
+    detail: Option<&str>,
+    message: Option<&str>,
+    cause: Option<&str>,
+) -> SourceControlRepositoryErrorContract {
+    existing.unwrap_or_else(|| {
+        source_control_repository_error_with_cause(
+            provider,
+            operation,
+            &source_control_repository_detail_from_unknown(detail, message),
+            cause,
+        )
+    })
+}
+
 pub fn source_control_ensure_concrete_provider(
     provider: SourceControlProviderKind,
     operation: &str,
@@ -20616,6 +20643,53 @@ mod tests {
             )
             .cause,
             None
+        );
+        assert_eq!(
+            source_control_repository_detail_from_unknown(
+                Some(" provider detail "),
+                Some("fallback message")
+            ),
+            "provider detail"
+        );
+        assert_eq!(
+            source_control_repository_detail_from_unknown(Some(""), Some(" fallback message ")),
+            "fallback message"
+        );
+        assert_eq!(
+            source_control_repository_detail_from_unknown(None, None),
+            "An unexpected source control error occurred."
+        );
+        let existing_repository_error = source_control_repository_error(
+            SourceControlProviderKind::Gitlab,
+            "lookupRepository",
+            "Already mapped.",
+        );
+        assert_eq!(
+            source_control_map_repository_error(
+                Some(existing_repository_error.clone()),
+                "lookupRepository",
+                SourceControlProviderKind::Github,
+                Some("provider detail"),
+                Some("message"),
+                Some("cause"),
+            ),
+            existing_repository_error
+        );
+        assert_eq!(
+            source_control_map_repository_error(
+                None,
+                "lookupRepository",
+                SourceControlProviderKind::Github,
+                Some("provider detail"),
+                Some("message"),
+                Some("raw failure"),
+            ),
+            SourceControlRepositoryErrorContract {
+                provider: SourceControlProviderKind::Github,
+                operation: "lookupRepository".to_string(),
+                detail: "provider detail".to_string(),
+                cause: Some("raw failure".to_string()),
+            }
         );
 
         assert_eq!(
