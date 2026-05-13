@@ -16923,6 +16923,19 @@ pub const MAX_CACHED_THREAD_DETAIL_SUBSCRIPTIONS: usize = 32;
 pub const BROWSER_RESUME_RECONNECT_COOLDOWN_MS: u64 = 2_000;
 pub const INITIAL_SERVER_CONFIG_SNAPSHOT_WAIT_MS: u64 = 150;
 pub const ENVIRONMENT_QUERY_INVALIDATION_THROTTLE_WAIT_MS: u64 = 100;
+pub const SAVED_ENVIRONMENT_MISSING_CREDENTIAL_RUNTIME_ERROR: &str =
+    "Saved environment is missing its saved credential. Pair it again.";
+pub const SAVED_ENVIRONMENT_MISSING_CREDENTIAL_ERROR: &str =
+    "Saved environment is missing its saved credential.";
+pub const SAVED_ENVIRONMENT_CREDENTIAL_EXPIRED_ERROR: &str =
+    "Saved environment credential expired. Pair it again.";
+pub const SAVED_ENVIRONMENT_NOT_FOUND_ERROR: &str = "Saved environment not found.";
+pub const DESKTOP_SSH_MISSING_PAIRING_TOKEN_ERROR: &str =
+    "Desktop SSH launch did not return a pairing token.";
+pub const UNABLE_TO_PERSIST_SAVED_ENVIRONMENT_CREDENTIALS_ERROR: &str =
+    "Unable to persist saved environment credentials.";
+pub const UNABLE_TO_RESOLVE_PRIMARY_ENVIRONMENT_ERROR: &str =
+    "Unable to resolve the primary environment.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppliedProjectionVersion {
@@ -17428,6 +17441,164 @@ pub fn apply_browser_resume_event(
             browser_resume_reconnect_decision(state, now_ms, "pageshow")
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnsureSavedEnvironmentConnectionStartPlan {
+    ReturnExistingConnection,
+    ReturnPendingConnection,
+    IssueDesktopSshBearerSession,
+    MissingCredential,
+    PrepareRecordAndCreateClient,
+}
+
+pub fn ensure_saved_environment_connection_start_plan(
+    has_existing_connection: bool,
+    has_pending_connection: bool,
+    record_has_desktop_ssh: bool,
+    options_bearer_token: Option<&str>,
+    stored_bearer_token: Option<&str>,
+) -> EnsureSavedEnvironmentConnectionStartPlan {
+    if has_existing_connection {
+        return EnsureSavedEnvironmentConnectionStartPlan::ReturnExistingConnection;
+    }
+    if has_pending_connection {
+        return EnsureSavedEnvironmentConnectionStartPlan::ReturnPendingConnection;
+    }
+
+    let has_bearer_token = options_bearer_token
+        .or(stored_bearer_token)
+        .map(|token| !token.is_empty())
+        .unwrap_or(false);
+    if has_bearer_token {
+        return EnsureSavedEnvironmentConnectionStartPlan::PrepareRecordAndCreateClient;
+    }
+    if record_has_desktop_ssh {
+        return EnsureSavedEnvironmentConnectionStartPlan::IssueDesktopSshBearerSession;
+    }
+
+    EnsureSavedEnvironmentConnectionStartPlan::MissingCredential
+}
+
+pub fn saved_environment_missing_credential_patch(
+    error_at: &str,
+) -> SavedEnvironmentRuntimeStatePatch {
+    SavedEnvironmentRuntimeStatePatch {
+        auth_state: Some("requires-auth".to_string()),
+        role: Some(None),
+        connection_state: Some("disconnected".to_string()),
+        last_error: Some(Some(
+            SAVED_ENVIRONMENT_MISSING_CREDENTIAL_RUNTIME_ERROR.to_string(),
+        )),
+        last_error_at: Some(Some(error_at.to_string())),
+        ..SavedEnvironmentRuntimeStatePatch::default()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SavedEnvironmentAuthFailurePlan {
+    ThrowOriginalError,
+    RemoveBearerTokenAndFailExpiredCredential,
+    ReissueDesktopSshBearerSession,
+}
+
+pub fn saved_environment_metadata_auth_failure_plan(
+    record_has_desktop_ssh: bool,
+    is_remote_401: bool,
+    ssh_http_status: Option<u32>,
+) -> SavedEnvironmentAuthFailurePlan {
+    let is_auth_error = if record_has_desktop_ssh {
+        ssh_http_status == Some(401)
+    } else {
+        is_remote_401
+    };
+    if !is_auth_error {
+        return SavedEnvironmentAuthFailurePlan::ThrowOriginalError;
+    }
+    if record_has_desktop_ssh {
+        return SavedEnvironmentAuthFailurePlan::ReissueDesktopSshBearerSession;
+    }
+    SavedEnvironmentAuthFailurePlan::RemoveBearerTokenAndFailExpiredCredential
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DisconnectSavedEnvironmentPlan {
+    pub cancel_pending_connection: bool,
+    pub remove_saved_connection: bool,
+    pub set_runtime_disconnected: bool,
+    pub disconnect_desktop_ssh: bool,
+    pub remove_bearer_token: bool,
+}
+
+pub fn disconnect_saved_environment_plan(
+    has_pending_connection: bool,
+    connection_kind: Option<&str>,
+    record_has_desktop_ssh: bool,
+    has_window: bool,
+) -> DisconnectSavedEnvironmentPlan {
+    DisconnectSavedEnvironmentPlan {
+        cancel_pending_connection: has_pending_connection,
+        remove_saved_connection: connection_kind == Some("saved"),
+        set_runtime_disconnected: true,
+        disconnect_desktop_ssh: record_has_desktop_ssh && has_window,
+        remove_bearer_token: record_has_desktop_ssh && has_window,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoveSavedEnvironmentPlan {
+    pub disconnect_saved_environment: bool,
+    pub dispose_thread_detail_subscriptions: bool,
+    pub remove_registry_record: bool,
+    pub clear_runtime_state: bool,
+    pub remove_environment_state: bool,
+    pub remove_bearer_token: bool,
+}
+
+pub fn remove_saved_environment_plan() -> RemoveSavedEnvironmentPlan {
+    RemoveSavedEnvironmentPlan {
+        disconnect_saved_environment: true,
+        dispose_thread_detail_subscriptions: true,
+        remove_registry_record: true,
+        clear_runtime_state: true,
+        remove_environment_state: true,
+        remove_bearer_token: true,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncSavedEnvironmentConnectionsPlan {
+    pub stale_environment_ids_to_disconnect: Vec<String>,
+    pub environment_ids_to_ensure: Vec<String>,
+}
+
+pub fn sync_saved_environment_connections_plan(
+    active_saved_environment_ids: &[String],
+    record_environment_ids: &[String],
+) -> SyncSavedEnvironmentConnectionsPlan {
+    let expected = record_environment_ids
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    SyncSavedEnvironmentConnectionsPlan {
+        stale_environment_ids_to_disconnect: active_saved_environment_ids
+            .iter()
+            .filter(|environment_id| !expected.contains(*environment_id))
+            .cloned()
+            .collect(),
+        environment_ids_to_ensure: record_environment_ids.to_vec(),
+    }
+}
+
+pub fn format_no_websocket_client_registered_error(environment_id: &str) -> String {
+    format!("No websocket client registered for environment {environment_id}.")
+}
+
+pub fn should_register_saved_environment_connection_after_prepare(
+    pending_cancelled: bool,
+    pending_entry_still_current: bool,
+) -> bool {
+    !pending_cancelled && pending_entry_still_current
 }
 
 pub fn parse_ssh_resolve_output(alias: &str, stdout: &str) -> DesktopSshEnvironmentTarget {
@@ -27278,6 +27449,173 @@ mod tests {
             5_000,
         );
         assert_eq!(normal_page_show.reconnect_reason, None);
+    }
+
+    #[test]
+    fn environment_runtime_service_saved_connection_flows_match_upstream_contract() {
+        assert_eq!(
+            SAVED_ENVIRONMENT_MISSING_CREDENTIAL_RUNTIME_ERROR,
+            "Saved environment is missing its saved credential. Pair it again."
+        );
+        assert_eq!(
+            SAVED_ENVIRONMENT_MISSING_CREDENTIAL_ERROR,
+            "Saved environment is missing its saved credential."
+        );
+        assert_eq!(
+            SAVED_ENVIRONMENT_CREDENTIAL_EXPIRED_ERROR,
+            "Saved environment credential expired. Pair it again."
+        );
+        assert_eq!(
+            SAVED_ENVIRONMENT_NOT_FOUND_ERROR,
+            "Saved environment not found."
+        );
+        assert_eq!(
+            DESKTOP_SSH_MISSING_PAIRING_TOKEN_ERROR,
+            "Desktop SSH launch did not return a pairing token."
+        );
+        assert_eq!(
+            UNABLE_TO_PERSIST_SAVED_ENVIRONMENT_CREDENTIALS_ERROR,
+            "Unable to persist saved environment credentials."
+        );
+        assert_eq!(
+            UNABLE_TO_RESOLVE_PRIMARY_ENVIRONMENT_ERROR,
+            "Unable to resolve the primary environment."
+        );
+        assert_eq!(
+            format_no_websocket_client_registered_error("environment-a"),
+            "No websocket client registered for environment environment-a."
+        );
+
+        assert_eq!(
+            ensure_saved_environment_connection_start_plan(true, false, false, None, None),
+            EnsureSavedEnvironmentConnectionStartPlan::ReturnExistingConnection
+        );
+        assert_eq!(
+            ensure_saved_environment_connection_start_plan(false, true, false, None, None),
+            EnsureSavedEnvironmentConnectionStartPlan::ReturnPendingConnection
+        );
+        assert_eq!(
+            ensure_saved_environment_connection_start_plan(false, false, true, None, None),
+            EnsureSavedEnvironmentConnectionStartPlan::IssueDesktopSshBearerSession
+        );
+        assert_eq!(
+            ensure_saved_environment_connection_start_plan(false, false, false, None, None),
+            EnsureSavedEnvironmentConnectionStartPlan::MissingCredential
+        );
+        assert_eq!(
+            ensure_saved_environment_connection_start_plan(
+                false,
+                false,
+                false,
+                None,
+                Some("bearer")
+            ),
+            EnsureSavedEnvironmentConnectionStartPlan::PrepareRecordAndCreateClient
+        );
+        assert_eq!(
+            ensure_saved_environment_connection_start_plan(
+                false,
+                false,
+                false,
+                Some("provided"),
+                None
+            ),
+            EnsureSavedEnvironmentConnectionStartPlan::PrepareRecordAndCreateClient
+        );
+
+        let mut state = BTreeMap::new();
+        state = patch_saved_environment_runtime_state(
+            &state,
+            "environment-a",
+            saved_environment_missing_credential_patch("2026-03-04T12:13:00.000Z"),
+        );
+        assert_eq!(state["environment-a"].auth_state, "requires-auth");
+        assert_eq!(state["environment-a"].role, None);
+        assert_eq!(state["environment-a"].connection_state, "disconnected");
+        assert_eq!(
+            state["environment-a"].last_error.as_deref(),
+            Some(SAVED_ENVIRONMENT_MISSING_CREDENTIAL_RUNTIME_ERROR)
+        );
+
+        assert_eq!(
+            saved_environment_metadata_auth_failure_plan(false, false, None),
+            SavedEnvironmentAuthFailurePlan::ThrowOriginalError
+        );
+        assert_eq!(
+            saved_environment_metadata_auth_failure_plan(false, true, None),
+            SavedEnvironmentAuthFailurePlan::RemoveBearerTokenAndFailExpiredCredential
+        );
+        assert_eq!(
+            saved_environment_metadata_auth_failure_plan(true, false, Some(401)),
+            SavedEnvironmentAuthFailurePlan::ReissueDesktopSshBearerSession
+        );
+        assert_eq!(
+            saved_environment_metadata_auth_failure_plan(true, true, Some(403)),
+            SavedEnvironmentAuthFailurePlan::ThrowOriginalError
+        );
+
+        assert!(should_register_saved_environment_connection_after_prepare(
+            false, true
+        ));
+        assert!(!should_register_saved_environment_connection_after_prepare(
+            true, true
+        ));
+        assert!(!should_register_saved_environment_connection_after_prepare(
+            false, false
+        ));
+
+        assert_eq!(
+            disconnect_saved_environment_plan(true, Some("saved"), true, true),
+            DisconnectSavedEnvironmentPlan {
+                cancel_pending_connection: true,
+                remove_saved_connection: true,
+                set_runtime_disconnected: true,
+                disconnect_desktop_ssh: true,
+                remove_bearer_token: true,
+            }
+        );
+        assert_eq!(
+            disconnect_saved_environment_plan(false, Some("primary"), true, false),
+            DisconnectSavedEnvironmentPlan {
+                cancel_pending_connection: false,
+                remove_saved_connection: false,
+                set_runtime_disconnected: true,
+                disconnect_desktop_ssh: false,
+                remove_bearer_token: false,
+            }
+        );
+
+        assert_eq!(
+            remove_saved_environment_plan(),
+            RemoveSavedEnvironmentPlan {
+                disconnect_saved_environment: true,
+                dispose_thread_detail_subscriptions: true,
+                remove_registry_record: true,
+                clear_runtime_state: true,
+                remove_environment_state: true,
+                remove_bearer_token: true,
+            }
+        );
+        assert_eq!(
+            sync_saved_environment_connections_plan(
+                &[
+                    "environment-a".to_string(),
+                    "environment-b".to_string(),
+                    "environment-c".to_string(),
+                ],
+                &["environment-b".to_string(), "environment-d".to_string()],
+            ),
+            SyncSavedEnvironmentConnectionsPlan {
+                stale_environment_ids_to_disconnect: vec![
+                    "environment-a".to_string(),
+                    "environment-c".to_string()
+                ],
+                environment_ids_to_ensure: vec![
+                    "environment-b".to_string(),
+                    "environment-d".to_string()
+                ],
+            }
+        );
     }
 
     #[test]
