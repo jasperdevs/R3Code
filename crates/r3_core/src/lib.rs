@@ -6346,6 +6346,13 @@ pub struct SourceControlCliDiscoverySpec {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlApiDiscoverySpec {
+    pub kind: SourceControlProviderKind,
+    pub label: &'static str,
+    pub install_hint: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceControlVcsProbeSpec {
     pub kind: VcsDriverKind,
     pub label: &'static str,
@@ -8356,6 +8363,85 @@ pub fn source_control_provider_cli_specs() -> Vec<SourceControlCliDiscoverySpec>
             install_hint: "Install the Azure command-line tools (`az`), then enable Azure DevOps support with `az extension add --name azure-devops`.",
         },
     ]
+}
+
+pub const BITBUCKET_DISCOVERY_INSTALL_HINT: &str = "Set T3CODE_BITBUCKET_EMAIL and T3CODE_BITBUCKET_API_TOKEN on the server (use a Bitbucket API token with pull request and repository scopes).";
+
+pub const BITBUCKET_AUTH_CONFIG_DETAIL: &str =
+    "Set T3CODE_BITBUCKET_EMAIL and T3CODE_BITBUCKET_API_TOKEN, or T3CODE_BITBUCKET_ACCESS_TOKEN.";
+
+pub fn bitbucket_api_discovery_spec() -> SourceControlApiDiscoverySpec {
+    SourceControlApiDiscoverySpec {
+        kind: SourceControlProviderKind::Bitbucket,
+        label: "Bitbucket",
+        install_hint: BITBUCKET_DISCOVERY_INSTALL_HINT,
+    }
+}
+
+pub fn bitbucket_user_auth(
+    username: Option<&str>,
+    display_name: Option<&str>,
+    account_id: Option<&str>,
+) -> SourceControlProviderAuth {
+    source_control_provider_auth(
+        SourceControlProviderAuthStatus::Authenticated,
+        trimmed_optional_string(username)
+            .or_else(|| trimmed_optional_string(display_name))
+            .or_else(|| trimmed_optional_string(account_id))
+            .as_deref(),
+        Some("bitbucket.org"),
+        None,
+    )
+}
+
+pub fn bitbucket_auth_from_config(
+    access_token: Option<&str>,
+    email: Option<&str>,
+    api_token: Option<&str>,
+) -> SourceControlProviderAuth {
+    if trimmed_optional_string(access_token).is_some() {
+        return source_control_provider_auth(
+            SourceControlProviderAuthStatus::Unknown,
+            None,
+            Some("bitbucket.org"),
+            Some("Bitbucket access token is configured."),
+        );
+    }
+
+    if let (Some(email), Some(_api_token)) = (
+        trimmed_optional_string(email),
+        trimmed_optional_string(api_token),
+    ) {
+        return source_control_provider_auth(
+            SourceControlProviderAuthStatus::Unknown,
+            Some(&email),
+            Some("bitbucket.org"),
+            Some("Bitbucket API token is configured."),
+        );
+    }
+
+    source_control_provider_auth(
+        SourceControlProviderAuthStatus::Unauthenticated,
+        None,
+        Some("bitbucket.org"),
+        Some(BITBUCKET_AUTH_CONFIG_DETAIL),
+    )
+}
+
+pub fn source_control_api_provider_discovery_item(
+    spec: &SourceControlApiDiscoverySpec,
+    auth: SourceControlProviderAuth,
+) -> SourceControlProviderDiscoveryItem {
+    SourceControlProviderDiscoveryItem {
+        kind: spec.kind,
+        label: spec.label.to_string(),
+        executable: None,
+        status: SourceControlDiscoveryStatus::Available,
+        version: None,
+        install_hint: spec.install_hint.to_string(),
+        detail: None,
+        auth,
+    }
 }
 
 fn source_control_account_after_marker(line: &str, marker: &str) -> Option<String> {
@@ -20574,6 +20660,81 @@ mod tests {
                 operation: SourceControlProviderOperation::CreateRepository,
                 context: Some(explicit_context),
             }
+        );
+    }
+
+    #[test]
+    fn source_control_bitbucket_api_discovery_matches_upstream_auth_contracts() {
+        let spec = bitbucket_api_discovery_spec();
+        assert_eq!(
+            spec,
+            SourceControlApiDiscoverySpec {
+                kind: SourceControlProviderKind::Bitbucket,
+                label: "Bitbucket",
+                install_hint: BITBUCKET_DISCOVERY_INSTALL_HINT,
+            }
+        );
+        assert_eq!(
+            bitbucket_user_auth(
+                Some(" bitbucket-user "),
+                Some("Display"),
+                Some("account-id")
+            ),
+            SourceControlProviderAuth {
+                status: SourceControlProviderAuthStatus::Authenticated,
+                account: Some("bitbucket-user".to_string()),
+                host: Some("bitbucket.org".to_string()),
+                detail: None,
+            }
+        );
+        assert_eq!(
+            bitbucket_user_auth(None, Some(" Display Name "), Some("account-id")).account,
+            Some("Display Name".to_string())
+        );
+        assert_eq!(
+            bitbucket_auth_from_config(Some("access-token"), None, None),
+            SourceControlProviderAuth {
+                status: SourceControlProviderAuthStatus::Unknown,
+                account: None,
+                host: Some("bitbucket.org".to_string()),
+                detail: Some("Bitbucket access token is configured.".to_string()),
+            }
+        );
+        assert_eq!(
+            bitbucket_auth_from_config(None, Some(" user@example.com "), Some(" token ")),
+            SourceControlProviderAuth {
+                status: SourceControlProviderAuthStatus::Unknown,
+                account: Some("user@example.com".to_string()),
+                host: Some("bitbucket.org".to_string()),
+                detail: Some("Bitbucket API token is configured.".to_string()),
+            }
+        );
+        assert_eq!(
+            bitbucket_auth_from_config(None, None, None),
+            SourceControlProviderAuth {
+                status: SourceControlProviderAuthStatus::Unauthenticated,
+                account: None,
+                host: Some("bitbucket.org".to_string()),
+                detail: Some(BITBUCKET_AUTH_CONFIG_DETAIL.to_string()),
+            }
+        );
+
+        let discovery_item = source_control_api_provider_discovery_item(
+            &spec,
+            bitbucket_auth_from_config(None, None, None),
+        );
+        assert_eq!(discovery_item.kind, SourceControlProviderKind::Bitbucket);
+        assert_eq!(discovery_item.label, "Bitbucket");
+        assert_eq!(discovery_item.executable, None);
+        assert_eq!(
+            discovery_item.status,
+            SourceControlDiscoveryStatus::Available
+        );
+        assert_eq!(discovery_item.version, None);
+        assert_eq!(discovery_item.detail, None);
+        assert_eq!(
+            discovery_item.auth.detail.as_deref(),
+            Some(BITBUCKET_AUTH_CONFIG_DETAIL)
         );
     }
 
