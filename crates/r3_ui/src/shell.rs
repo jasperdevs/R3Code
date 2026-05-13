@@ -15,24 +15,25 @@ use r3_core::{
     ModelPickerItem, ModelPickerSelectedInstance, ModelPickerState, PendingApproval,
     PendingUserInputProgress, ProcessDiagnosticsEntry, ProcessDiagnosticsResult, ProjectEntry,
     ProjectEntryKind, ProjectScript, ProjectScriptIcon, ProjectSummary, ProviderInstanceEntry,
-    RECENT_COMMAND_PALETTE_THREAD_LIMIT, ServerProviderModel, ServerProviderSkill,
-    ServerProviderSlashCommand, SidebarOptionsState, SidebarProjectGroupingMode,
-    SidebarProjectSortOrder, SidebarThreadSortOrder, TerminalEvent, ThreadStatus,
-    TraceDiagnosticsFailureSummary, TraceDiagnosticsLogEvent, TraceDiagnosticsRecentFailure,
-    TraceDiagnosticsResult, TraceDiagnosticsSpanOccurrence, TraceDiagnosticsSpanSummary,
-    TurnDiffFileChange, TurnDiffStat, TurnDiffSummary, TurnDiffTreeNode, WorkLogEntry,
-    build_composer_menu_items, build_git_action_menu_items, build_keybinding_rows,
-    build_project_action_items, build_root_command_palette_groups, build_thread_action_items,
-    build_turn_diff_tree, close_thread_terminal, composer_menu_search_key,
-    default_resolved_keybindings, default_sidebar_options_state, detect_composer_trigger,
-    filter_command_palette_groups, format_diagnostics_bytes, format_diagnostics_count,
-    format_diagnostics_description, format_diagnostics_duration_ms,
+    RECENT_COMMAND_PALETTE_THREAD_LIMIT, SOURCE_CONTROL_DEFAULT_FETCH_INTERVAL_SECONDS,
+    ServerProviderModel, ServerProviderSkill, ServerProviderSlashCommand, SidebarOptionsState,
+    SidebarProjectGroupingMode, SidebarProjectSortOrder, SidebarThreadSortOrder, TerminalEvent,
+    ThreadStatus, TraceDiagnosticsFailureSummary, TraceDiagnosticsLogEvent,
+    TraceDiagnosticsRecentFailure, TraceDiagnosticsResult, TraceDiagnosticsSpanOccurrence,
+    TraceDiagnosticsSpanSummary, TurnDiffFileChange, TurnDiffStat, TurnDiffSummary,
+    TurnDiffTreeNode, WorkLogEntry, build_composer_menu_items, build_git_action_menu_items,
+    build_keybinding_rows, build_project_action_items, build_root_command_palette_groups,
+    build_thread_action_items, build_turn_diff_tree, close_thread_terminal,
+    composer_menu_search_key, default_resolved_keybindings, default_sidebar_options_state,
+    detect_composer_trigger, filter_command_palette_groups, format_diagnostics_bytes,
+    format_diagnostics_count, format_diagnostics_description, format_diagnostics_duration_ms,
     format_provider_skill_display_name, format_working_timer_at, get_display_model_name,
     get_provider_summary, get_provider_version_advisory_presentation, get_provider_version_label,
-    group_composer_command_items, keybinding_command_label, new_thread_terminal,
-    nudge_composer_menu_highlight, ordered_turn_diff_files, parse_diff_route_search,
-    primary_project_script, provider_instance_initials, replace_text_range,
-    resolve_composer_command_selection, resolve_composer_menu_active_item_id,
+    group_composer_command_items, keybinding_command_label,
+    markdown::{ChatMarkdownBlock, ChatMarkdownInline, render_chat_markdown_blocks},
+    new_thread_terminal, nudge_composer_menu_highlight, ordered_turn_diff_files,
+    parse_diff_route_search, primary_project_script, provider_instance_initials,
+    replace_text_range, resolve_composer_command_selection, resolve_composer_menu_active_item_id,
     resolve_editor_options, resolve_model_picker_state, resolve_selectable_model,
     set_pending_user_input_custom_answer, set_thread_active_terminal, set_thread_terminal_open,
     shorten_trace_id, sidebar_project_grouping_label, sidebar_project_grouping_options,
@@ -464,7 +465,6 @@ const COMPOSER_RUNTIME_MODES: &[ComposerRuntimeMode] = &[
     },
 ];
 
-const SOURCE_CONTROL_DEFAULT_FETCH_INTERVAL_SECONDS: u32 = 30;
 const SOURCE_CONTROL_FETCH_INTERVAL_STEP_SECONDS: u32 = 5;
 
 impl Render for R3Shell {
@@ -996,7 +996,7 @@ impl R3Shell {
                 div()
                     .text_size(px(14.0))
                     .text_color(self.theme.foreground)
-                    .child(message.text.clone()),
+                    .child(self.chat_markdown(&message.text)),
             )
             .when_some(
                 self.turn_diff_summary_for_message(&message.id),
@@ -1013,6 +1013,297 @@ impl R3Shell {
                     .text_size(px(10.0))
                     .text_color(self.theme.muted_foreground.opacity(0.30))
                     .child("12:00 PM"),
+            )
+    }
+
+    fn chat_markdown(&self, text: &str) -> impl IntoElement {
+        let blocks = render_chat_markdown_blocks(
+            text,
+            self.snapshot
+                .active_project()
+                .map(|project| project.path.as_str()),
+        );
+        let mut container = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .w_full()
+            .min_w_0()
+            .text_size(px(14.0))
+            .line_height(px(20.0))
+            .text_color(self.theme.foreground.opacity(0.82));
+
+        for block in blocks {
+            container = match block {
+                ChatMarkdownBlock::Heading { level, inlines } => {
+                    container.child(self.chat_markdown_heading(level, inlines))
+                }
+                ChatMarkdownBlock::Paragraph(inlines) => {
+                    container.child(self.chat_markdown_inline_row(inlines, false))
+                }
+                ChatMarkdownBlock::ListItem(inlines) => container.child(
+                    div()
+                        .flex()
+                        .items_start()
+                        .gap_2()
+                        .child(
+                            div().pt(px(7.0)).child(
+                                div()
+                                    .w(px(4.0))
+                                    .h(px(4.0))
+                                    .rounded_full()
+                                    .bg(self.theme.foreground.opacity(0.46)),
+                            ),
+                        )
+                        .child(self.chat_markdown_inline_row(inlines, true)),
+                ),
+                ChatMarkdownBlock::OrderedListItem { number, inlines } => container.child(
+                    div()
+                        .flex()
+                        .items_start()
+                        .gap_2()
+                        .child(
+                            div()
+                                .w(px(20.0))
+                                .pt(px(1.0))
+                                .text_align(TextAlign::Right)
+                                .text_size(px(12.0))
+                                .text_color(self.theme.muted_foreground)
+                                .child(format!("{number}.")),
+                        )
+                        .child(self.chat_markdown_inline_row(inlines, true)),
+                ),
+                ChatMarkdownBlock::TaskListItem { checked, inlines } => container.child(
+                    div()
+                        .flex()
+                        .items_start()
+                        .gap_2()
+                        .child(
+                            div()
+                                .mt(px(3.0))
+                                .flex()
+                                .h(px(13.0))
+                                .w(px(13.0))
+                                .items_center()
+                                .justify_center()
+                                .rounded(px(3.0))
+                                .border_1()
+                                .border_color(self.theme.border)
+                                .bg(if checked {
+                                    self.theme.primary.opacity(0.18)
+                                } else {
+                                    self.theme.card
+                                })
+                                .when(checked, |box_node| {
+                                    box_node.child(
+                                        svg()
+                                            .path("icons/check.svg")
+                                            .size_3()
+                                            .text_color(self.theme.primary),
+                                    )
+                                }),
+                        )
+                        .child(self.chat_markdown_inline_row(inlines, true)),
+                ),
+                ChatMarkdownBlock::Blockquote(inlines) => container.child(
+                    div()
+                        .border_l_2()
+                        .border_color(self.theme.border)
+                        .pl_3()
+                        .text_color(self.theme.muted_foreground)
+                        .child(self.chat_markdown_inline_row(inlines, false)),
+                ),
+                ChatMarkdownBlock::Table { header, rows } => {
+                    container.child(self.chat_markdown_table(header, rows))
+                }
+                ChatMarkdownBlock::CodeBlock { language, code, .. } => {
+                    container.child(self.chat_markdown_code_block(&language, &code))
+                }
+            };
+        }
+
+        container
+    }
+
+    fn chat_markdown_heading(
+        &self,
+        level: u8,
+        inlines: Vec<ChatMarkdownInline>,
+    ) -> impl IntoElement {
+        let size = match level {
+            1 => 18.0,
+            2 => 16.0,
+            _ => 14.0,
+        };
+        div()
+            .mt_1()
+            .text_size(px(size))
+            .font_weight(FontWeight::SEMIBOLD)
+            .text_color(self.theme.foreground)
+            .child(self.chat_markdown_inline_row(inlines, false))
+    }
+
+    fn chat_markdown_inline_row(
+        &self,
+        inlines: Vec<ChatMarkdownInline>,
+        flex_grow: bool,
+    ) -> AnyElement {
+        let mut row = div().flex().flex_wrap().items_center().gap_1().min_w_0();
+        if flex_grow {
+            row = row.flex_1();
+        }
+
+        for inline in inlines {
+            row = row.child(match inline {
+                ChatMarkdownInline::Text(text) => div().child(text).into_any_element(),
+                ChatMarkdownInline::Code(code) => div()
+                    .rounded(px(4.0))
+                    .border_1()
+                    .border_color(self.theme.border)
+                    .bg(self.theme.accent.opacity(0.52))
+                    .px_1p5()
+                    .py_0p5()
+                    .font_family(SharedString::from(MONO_FONT_FAMILY))
+                    .text_size(px(12.0))
+                    .text_color(self.theme.foreground)
+                    .child(code)
+                    .into_any_element(),
+                ChatMarkdownInline::Strikethrough(text) => div()
+                    .line_through()
+                    .text_color(self.theme.foreground.opacity(0.58))
+                    .child(text)
+                    .into_any_element(),
+                ChatMarkdownInline::Link {
+                    label,
+                    href: _,
+                    file,
+                } => {
+                    let display = file
+                        .as_ref()
+                        .map(|file| file.label.clone())
+                        .unwrap_or(label);
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_1()
+                        .max_w(px(360.0))
+                        .rounded(px(5.0))
+                        .border_1()
+                        .border_color(self.theme.border)
+                        .bg(self.theme.accent.opacity(0.42))
+                        .px_1p5()
+                        .py_0p5()
+                        .text_size(px(12.0))
+                        .text_color(self.theme.foreground.opacity(0.86))
+                        .child(
+                            svg()
+                                .path(if file.is_some() {
+                                    "icons/file-json.svg"
+                                } else {
+                                    "icons/link-2.svg"
+                                })
+                                .size_3()
+                                .text_color(self.theme.muted_foreground.opacity(0.82)),
+                        )
+                        .child(div().overflow_hidden().text_ellipsis().child(display))
+                        .into_any_element()
+                }
+            });
+        }
+
+        row.into_any_element()
+    }
+
+    fn chat_markdown_table(
+        &self,
+        header: Vec<Vec<ChatMarkdownInline>>,
+        rows: Vec<Vec<Vec<ChatMarkdownInline>>>,
+    ) -> impl IntoElement {
+        let mut table = div()
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .overflow_hidden();
+
+        let mut header_row = div()
+            .grid()
+            .bg(self.theme.accent.opacity(0.60))
+            .border_b_1()
+            .border_color(self.theme.border);
+        let columns = header.len().max(1).min(u16::MAX as usize) as u16;
+        for cell in header {
+            header_row = header_row.child(
+                div()
+                    .min_w_0()
+                    .px_3()
+                    .py_2()
+                    .text_size(px(12.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(self.theme.foreground.opacity(0.84))
+                    .child(self.chat_markdown_inline_row(cell, false)),
+            );
+        }
+        table = table.child(header_row.grid_cols(columns));
+
+        for row_cells in rows {
+            let mut row = div()
+                .grid()
+                .border_b_1()
+                .border_color(self.theme.border.opacity(0.60));
+            for cell in row_cells {
+                row = row.child(
+                    div()
+                        .min_w_0()
+                        .px_3()
+                        .py_2()
+                        .text_size(px(12.0))
+                        .text_color(self.theme.foreground.opacity(0.78))
+                        .child(self.chat_markdown_inline_row(cell, false)),
+                );
+            }
+            table = table.child(row.grid_cols(columns));
+        }
+
+        table
+    }
+
+    fn chat_markdown_code_block(&self, language: &str, code: &str) -> impl IntoElement {
+        div()
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(self.theme.border)
+            .bg(self.theme.card)
+            .overflow_hidden()
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .border_b_1()
+                    .border_color(self.theme.border)
+                    .bg(self.theme.accent.opacity(0.50))
+                    .px_3()
+                    .py_1p5()
+                    .text_size(px(11.0))
+                    .text_color(self.theme.muted_foreground)
+                    .child(language.to_string())
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_1()
+                            .child(svg().path("icons/copy.svg").size_3())
+                            .child("Copy code"),
+                    ),
+            )
+            .child(
+                div()
+                    .p_3()
+                    .font_family(SharedString::from(MONO_FONT_FAMILY))
+                    .text_size(px(12.0))
+                    .line_height(px(18.0))
+                    .text_color(self.theme.foreground.opacity(0.88))
+                    .child(code.to_string()),
             )
     }
 

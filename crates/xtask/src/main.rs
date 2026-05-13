@@ -85,6 +85,12 @@ struct CaptureReferenceOptions {
     startup_timeout: Duration,
 }
 
+#[derive(Debug)]
+struct GenerateParityInventoryOptions {
+    repo: PathBuf,
+    output: PathBuf,
+}
+
 fn main() -> Result<()> {
     let mut args = env::args().skip(1);
     let Some(command) = args.next() else {
@@ -100,6 +106,9 @@ fn main() -> Result<()> {
         "capture-reference-browser" => {
             capture_reference_browser(parse_capture_reference_options(&args)?)
         }
+        "generate-parity-inventory" => {
+            generate_parity_inventory(parse_generate_parity_inventory_options(&args)?)
+        }
         _ => {
             print_usage();
             Err(format!("unknown xtask command: {command}").into())
@@ -113,7 +122,8 @@ fn print_usage() {
   cargo run -p xtask -- check-parity --allow-window-capture [--refresh-reference]
   cargo run -p xtask -- compare-screenshots --expected <png> --actual <png> [--channel-tolerance <n>] [--ignore-rect x,y,w,h] [--max-different-pixels-percent <n>]
   cargo run -p xtask -- capture-r3code-window --allow-window-capture [--screen draft|composer-focused|composer-menu|composer-inline-tokens|active-chat|project-scripts-menu|running-turn|pending-approval|pending-user-input|terminal-drawer|diff-panel|branch-toolbar|sidebar-options-menu|open-in-menu|git-actions-menu|provider-model-picker|settings|settings-diagnostics|command-palette|settings-theme-menu|settings-dark|settings-back|settings-keybindings|settings-keybindings-add|settings-providers|settings-source-control|settings-connections|settings-archive] [--theme light|dark|system] [--output <png>]
-  cargo run -p xtask -- capture-reference-browser"
+  cargo run -p xtask -- capture-reference-browser
+  cargo run -p xtask -- generate-parity-inventory [--repo .omx/upstream-t3code] [--output docs/reference/PARITY_FILE_INVENTORY.md]"
     );
 }
 
@@ -940,6 +950,30 @@ fn parse_capture_reference_options(args: &[String]) -> Result<CaptureReferenceOp
     Ok(options)
 }
 
+fn parse_generate_parity_inventory_options(
+    args: &[String],
+) -> Result<GenerateParityInventoryOptions> {
+    let mut options = GenerateParityInventoryOptions::default();
+    let mut index = 0;
+    while index < args.len() {
+        match args[index].as_str() {
+            "--repo" => {
+                index += 1;
+                options.repo = resolve_repo_path(required_arg(args, index, "--repo")?);
+            }
+            "--output" => {
+                index += 1;
+                options.output = resolve_repo_path(required_arg(args, index, "--output")?);
+            }
+            other => {
+                return Err(format!("unknown generate-parity-inventory option: {other}").into());
+            }
+        }
+        index += 1;
+    }
+    Ok(options)
+}
+
 impl Default for CaptureR3CodeOptions {
     fn default() -> Self {
         Self {
@@ -963,6 +997,15 @@ impl Default for CaptureReferenceOptions {
             home: temp.join("upstream-reference-home"),
             output_dir: resolve_repo_path("reference/screenshots"),
             startup_timeout: Duration::from_secs(90),
+        }
+    }
+}
+
+impl Default for GenerateParityInventoryOptions {
+    fn default() -> Self {
+        Self {
+            repo: resolve_repo_path(".omx/upstream-t3code"),
+            output: resolve_repo_path("docs/reference/PARITY_FILE_INVENTORY.md"),
         }
     }
 }
@@ -1519,6 +1562,867 @@ fn capture_client_area(hwnd: HWND) -> Result<ImageBuffer<Rgba<u8>, Vec<u8>>> {
         ImageBuffer::from_raw(width as u32, height as u32, rgba)
             .ok_or_else(|| "failed to create captured image".into())
     }
+}
+
+#[derive(Debug)]
+struct InventoryRow {
+    path: String,
+    rust_target: &'static str,
+    status: &'static str,
+    proof: &'static str,
+    remaining_gap: &'static str,
+}
+
+fn generate_parity_inventory(options: GenerateParityInventoryOptions) -> Result<()> {
+    if !options.repo.exists() {
+        return Err(format!(
+            "upstream checkout not found at {}; run capture-reference-browser or pass --repo",
+            options.repo.display()
+        )
+        .into());
+    }
+
+    let head = command_stdout(
+        Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&options.repo),
+    )?;
+    let mut source_files = Vec::new();
+    for child in ["apps", "packages"] {
+        let path = options.repo.join(child);
+        if path.exists() {
+            collect_inventory_source_files(&path, &options.repo, &mut source_files)?;
+        }
+    }
+    source_files.sort();
+
+    let rows = source_files
+        .into_iter()
+        .map(|path| classify_inventory_path(&path))
+        .collect::<Vec<_>>();
+
+    let mut status_counts = std::collections::BTreeMap::<&'static str, usize>::new();
+    for row in &rows {
+        *status_counts.entry(row.status).or_default() += 1;
+    }
+
+    let mut body = String::new();
+    body.push_str("# T3 Code File-Level Parity Inventory\n\n");
+    body.push_str("Generated by `cargo run -p xtask -- generate-parity-inventory`.\n\n");
+    body.push_str("Do not edit individual rows by hand; update `crates/xtask/src/main.rs` classification rules or regenerate from the pinned upstream checkout.\n\n");
+    body.push_str(&format!("- Upstream commit: `{}`\n", head.trim()));
+    body.push_str("- Inventory root: `apps/` and `packages/`\n");
+    body.push_str(&format!("- Tracked files: `{}`\n\n", rows.len()));
+    body.push_str("## Status Counts\n\n");
+    body.push_str("| Status | Files |\n| --- | ---: |\n");
+    for (status, count) in status_counts {
+        body.push_str(&format!("| `{status}` | {count} |\n"));
+    }
+    body.push_str("\n## Files\n\n");
+    body.push_str("| Upstream file | Rust target | Status | Current proof | Remaining gap |\n");
+    body.push_str("| --- | --- | --- | --- | --- |\n");
+    for row in rows {
+        body.push_str(&format!(
+            "| `{}` | {} | `{}` | {} | {} |\n",
+            escape_markdown_table_cell(&row.path),
+            escape_markdown_table_cell(row.rust_target),
+            row.status,
+            escape_markdown_table_cell(row.proof),
+            escape_markdown_table_cell(row.remaining_gap)
+        ));
+    }
+
+    if let Some(parent) = options.output.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&options.output, body)?;
+    println!("Wrote {}", options.output.display());
+    Ok(())
+}
+
+fn collect_inventory_source_files(dir: &Path, root: &Path, files: &mut Vec<String>) -> Result<()> {
+    let mut entries = fs::read_dir(dir)?.collect::<std::result::Result<Vec<_>, _>>()?;
+    entries.sort_by_key(|entry| entry.path());
+    for entry in entries {
+        let path = entry.path();
+        let file_name = entry.file_name();
+        let file_name = file_name.to_string_lossy();
+        if file_name == "node_modules" || file_name == "dist" || file_name == ".turbo" {
+            continue;
+        }
+        if path.is_dir() {
+            collect_inventory_source_files(&path, root, files)?;
+        } else if is_inventory_source_file(&path) {
+            let relative = path
+                .strip_prefix(root)?
+                .to_string_lossy()
+                .replace('\\', "/");
+            files.push(relative);
+        }
+    }
+    Ok(())
+}
+
+fn is_inventory_source_file(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some("ts" | "tsx" | "js" | "jsx" | "json" | "mjs" | "cjs" | "css" | "html" | "md")
+    )
+}
+
+fn classify_inventory_path(path: &str) -> InventoryRow {
+    let (rust_target, status, proof, remaining_gap) = if path
+        .starts_with("apps/web/src/components/ChatMarkdown")
+    {
+        (
+            "chat markdown file-link rewrite/label contracts and GPUI assistant markdown rendering in crates/r3_core/src/markdown.rs and crates/r3_ui/src/shell.rs",
+            "partial",
+            "`cargo test -p r3_core markdown`; `cargo check --workspace`",
+            "Port full ReactMarkdown/remark-gfm coverage, Shiki/diff highlighter cache, clipboard copy timers, preferred-editor open actions, context menu, tooltips, skill inline rendering, browser interaction tests, and exact CSS pixel styling.",
+        )
+    } else if path.starts_with("apps/web/src/components/")
+        || path.starts_with("apps/web/src/composer")
+        || path.starts_with("apps/web/src/diff")
+        || path.starts_with("apps/web/src/editor")
+        || path.starts_with("apps/web/src/filePath")
+        || path.starts_with("apps/web/src/history")
+        || path.starts_with("apps/web/src/logicalProject")
+        || path.starts_with("apps/web/src/session-logic")
+        || path.starts_with("apps/web/src/terminal")
+        || path.starts_with("apps/web/src/uiState")
+        || path.starts_with("apps/web/src/vscode-icons")
+    {
+        (
+            "crates/r3_core/src/lib.rs; crates/r3_ui/src/shell.rs",
+            "partial",
+            "`cargo test --workspace`; current screenshot gates where captured",
+            "Replace seeded/static state with live GPUI state and port remaining component behavior.",
+        )
+    } else if path.starts_with("apps/web/src/environments/")
+        || path.starts_with("apps/web/src/environment")
+        || path.starts_with("apps/web/src/auth")
+    {
+        (
+            "selected helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace` for selected pairing/environment helpers",
+            "Port runtime connection service, auth bootstrap, subscriptions, and saved environments.",
+        )
+    } else if path.starts_with("apps/web/src/routes/")
+        || path.starts_with("apps/web/src/main")
+        || path.starts_with("apps/web/src/router")
+    {
+        (
+            "screen selection and route structs in r3_core/r3_ui",
+            "partial",
+            "`cargo test --workspace` for selected route parsers",
+            "Port real routing, history, deep links, and route-driven state.",
+        )
+    } else if path.starts_with("apps/web/") {
+        (
+            "crates/r3_ui/src/shell.rs",
+            "partial",
+            "Current visual gates only cover selected states",
+            "Classify exact web app behavior and add missing GPUI/screenshots.",
+        )
+    } else if path.starts_with("apps/server/src/diagnostics/") {
+        (
+            "diagnostics helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace` diagnostics tests",
+            "Wire live process and trace diagnostics.",
+        )
+    } else if path.starts_with("apps/server/src/sourceControl/") {
+        (
+            "source-control presentation helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace` source-control tests",
+            "Port provider discovery, auth, PR/MR workflows, and mutations.",
+        )
+    } else if path.starts_with("apps/server/src/git/") || path.starts_with("apps/server/src/vcs/") {
+        (
+            "branch/git presentation helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace` branch/git menu tests",
+            "Port git status, refs, worktrees, commits, push, checkout, and VCS process wrappers.",
+        )
+    } else if path.starts_with("apps/server/src/terminal/") {
+        (
+            "terminal state contracts in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace` terminal state tests",
+            "Port PTY backend, history persistence, process activity, resize/write/kill/restart.",
+        )
+    } else if path.starts_with("apps/server/src/checkpointing/") {
+        (
+            "diff summary/tree helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace` diff tests",
+            "Port checkpoint store and diff blob query.",
+        )
+    } else if path.starts_with("apps/server/src/workspace/")
+        || path == "packages/contracts/src/project.ts"
+        || path == "packages/contracts/src/filesystem.ts"
+    {
+        (
+            "workspace path, search, browse, and write-file contracts in crates/r3_core/src/workspace.rs",
+            "partial",
+            "`cargo test -p r3_core workspace`",
+            "Port VCS-backed workspace indexing, cache invalidation, live RPC wiring, project registry add/list/remove, and full filesystem edge cases.",
+        )
+    } else if path.starts_with("apps/server/src/project/") {
+        (
+            "project summary/script helpers in crates/r3_core/src/lib.rs plus workspace file contracts in crates/r3_core/src/workspace.rs",
+            "partial",
+            "`cargo test --workspace` project script tests and `cargo test -p r3_core workspace`",
+            "Port repository identity, favicon resolver, setup runner, project registry add/list/remove, and live workspace discovery.",
+        )
+    } else if path.starts_with("apps/server/src/auth/") {
+        (
+            "auth descriptor, HTTP/websocket credential selection, owner access-control/error mapping, HTTP route plans, secret-store filesystem contracts plus filesystem get/set/get-or-create/remove helpers, cookie, client metadata, pairing-token, HMAC-signed session/websocket token issue/verify helpers with default TTLs and claim decode/expiry checks, persisted token-to-session repository verification decisions, verified-session credential assembly, session-claim, access-stream change fan-in/current-session marking, session-credential change, connected-session count, auth session/pairing-link persistence, and pairing helpers in crates/r3_core/src/auth.rs plus crates/r3_core/src/persistence.rs",
+            "partial",
+            "`cargo test -p r3_core auth`; `cargo test -p r3_core persistence`; `cargo test --workspace` pairing/auth helper tests",
+            "Wire full live secret-store service permissions/concurrency layer, live repository-backed auth service execution, HTTP auth exchange execution, websocket upgrade execution, live auth PubSub streams, and persisted runtime integration.",
+        )
+    } else if matches!(
+        path,
+        "apps/server/src/provider/Services/ProviderService.ts"
+            | "apps/server/src/provider/Layers/ProviderService.ts"
+    ) {
+        (
+            "provider service request/input/result contracts plus start-session resolution, start-session execution/completion planning, empty send-turn planning, routable-session recovery planning, session/send/stop binding payload planning, listSessions merge/mismatch rules, rollback no-op/recovery planning, stale-session stop planning, capabilities/instance-info reads, runtime event instance correlation/fan-out planning, adapter-call execution planning, and shutdown reconciliation planning in crates/r3_core/src/orchestration.rs",
+            "partial",
+            "`cargo test -p r3_core orchestration`",
+            "Port live adapter registry, session directory persistence execution, concrete adapter execution, and runtime event stream transport.",
+        )
+    } else if path.starts_with("apps/server/src/provider/") {
+        (
+            "provider display/model helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace` provider/model tests",
+            "Port provider drivers, registries, session runtimes, probes, maintenance, and adapters.",
+        )
+    } else if matches!(
+        path,
+        "apps/server/src/orchestration/decider.ts"
+            | "apps/server/src/orchestration/decider.delete.test.ts"
+            | "apps/server/src/orchestration/decider.projectScripts.test.ts"
+            | "apps/server/src/orchestration/commandInvariants.ts"
+            | "apps/server/src/orchestration/commandInvariants.test.ts"
+            | "apps/server/src/orchestration/Errors.ts"
+            | "apps/server/src/orchestration/Layers/OrchestrationEngine.ts"
+            | "apps/server/src/orchestration/Layers/OrchestrationEngine.test.ts"
+            | "apps/server/src/orchestration/Services/OrchestrationEngine.ts"
+            | "apps/server/src/orchestration/Layers/ProviderCommandReactor.ts"
+            | "apps/server/src/orchestration/Layers/ProviderCommandReactor.test.ts"
+            | "apps/server/src/orchestration/Services/ProviderCommandReactor.ts"
+            | "apps/server/src/orchestration/Layers/ThreadDeletionReactor.ts"
+            | "apps/server/src/orchestration/Layers/ThreadDeletionReactor.test.ts"
+            | "apps/server/src/orchestration/Services/ThreadDeletionReactor.ts"
+            | "apps/server/src/orchestration/Layers/OrchestrationReactor.ts"
+            | "apps/server/src/orchestration/Layers/OrchestrationReactor.test.ts"
+            | "apps/server/src/orchestration/Services/OrchestrationReactor.ts"
+            | "apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts"
+            | "apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.test.ts"
+            | "apps/server/src/orchestration/Services/ProviderRuntimeIngestion.ts"
+            | "apps/server/src/orchestration/Layers/CheckpointReactor.ts"
+            | "apps/server/src/orchestration/Layers/CheckpointReactor.test.ts"
+            | "apps/server/src/orchestration/Services/CheckpointReactor.ts"
+            | "apps/server/src/orchestration/Layers/RuntimeReceiptBus.ts"
+            | "apps/server/src/orchestration/Services/RuntimeReceiptBus.ts"
+            | "apps/server/src/orchestration/Normalizer.ts"
+            | "apps/server/src/orchestration/Schemas.ts"
+            | "apps/server/src/orchestration/http.ts"
+            | "apps/server/src/orchestration/runtimeLayer.ts"
+    ) {
+        (
+            "orchestration command decider, composite reactor order, provider runtime ingestion command planner plus queue/drain and ordered batch bridges, guarded helper/activity/session/assistant-delta/assistant-buffer-flush/assistant-complete/fallback/pause-finalize/turn-complete-finalize/proposed-plan/proposed-plan-finalize/diff/thread-metadata command mapping, store execution, persisted-event reactor intent bridge/batch API, provider service request mapping, runtime receipt bus, checkpoint reactor filters/status/cwd/revert plans, normalizer attachment plans, schema aliases, runtime layer composition, and orchestration HTTP route contracts in crates/r3_core",
+            "partial",
+            "`cargo test -p r3_core orchestration`; `cargo test -p r3_core persistence`",
+            "Port exact event IDs, full read-model projection during command sequences, live reactor workers, subscriptions, provider runtime wiring, real checkpoint git side effects, attachment file writes, and live HTTP dispatch/auth execution.",
+        )
+    } else if path.starts_with("apps/server/integration/") {
+        (
+            "integration harness provider runtime event normalization, provider-service request/fan-out, orchestration layer plan, fixture runtime event, and wait/retry contracts across crates/r3_core/src/orchestration.rs and crates/r3_core/src/persistence.rs",
+            "partial",
+            "`cargo test -p r3_core orchestration`; `cargo test -p r3_core persistence`",
+            "Port live temp git workspace setup, managed Effect runtime, SQLite-backed integration harness, real adapter registry, runtime receipt bus, provider stream collection, and full end-to-end integration tests.",
+        )
+    } else if matches!(
+        path,
+        "apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.ts"
+            | "apps/server/src/orchestration/Layers/ProjectionSnapshotQuery.test.ts"
+            | "apps/server/src/orchestration/Services/ProjectionSnapshotQuery.ts"
+            | "apps/server/src/orchestration/projector.ts"
+            | "apps/server/src/orchestration/projector.test.ts"
+            | "apps/server/src/orchestration/Layers/ProjectionPipeline.ts"
+            | "apps/server/src/orchestration/Layers/ProjectionPipeline.test.ts"
+            | "apps/server/src/orchestration/Services/ProjectionPipeline.ts"
+    ) {
+        (
+            "projection shell mapper and event projector in crates/r3_core",
+            "partial",
+            "`cargo test -p r3_core projection`; `cargo test -p r3_core persistence`",
+            "Port full command/detail snapshots, projector event coverage, attachment side effects, checkpoint/pending/session projectors, and repository wiring.",
+        )
+    } else if matches!(
+        path,
+        "apps/server/src/persistence/Migrations/001_OrchestrationEvents.ts"
+            | "apps/server/src/persistence/Migrations/002_OrchestrationCommandReceipts.ts"
+            | "apps/server/src/persistence/Migrations/003_CheckpointDiffBlobs.ts"
+            | "apps/server/src/persistence/Migrations/004_ProviderSessionRuntime.ts"
+            | "apps/server/src/persistence/Layers/OrchestrationEventStore.test.ts"
+            | "apps/server/src/persistence/Layers/OrchestrationEventStore.ts"
+            | "apps/server/src/persistence/Services/OrchestrationEventStore.ts"
+            | "apps/server/src/persistence/Layers/OrchestrationCommandReceipts.ts"
+            | "apps/server/src/persistence/Services/OrchestrationCommandReceipts.ts"
+            | "apps/server/src/persistence/Errors.ts"
+            | "apps/server/src/persistence/Layers/Sqlite.ts"
+            | "apps/server/src/persistence/Migrations.ts"
+            | "apps/server/src/persistence/Migrations/005_Projections.ts"
+            | "apps/server/src/persistence/Migrations/006_ProjectionThreadSessionRuntimeModeColumns.ts"
+            | "apps/server/src/persistence/Migrations/007_ProjectionThreadMessageAttachments.ts"
+            | "apps/server/src/persistence/Migrations/008_ProjectionThreadActivitySequence.ts"
+            | "apps/server/src/persistence/Migrations/009_ProviderSessionRuntimeMode.ts"
+            | "apps/server/src/persistence/Migrations/010_ProjectionThreadsRuntimeMode.ts"
+            | "apps/server/src/persistence/Migrations/011_OrchestrationThreadCreatedRuntimeMode.ts"
+            | "apps/server/src/persistence/Migrations/012_ProjectionThreadsInteractionMode.ts"
+            | "apps/server/src/persistence/Migrations/013_ProjectionThreadProposedPlans.ts"
+            | "apps/server/src/persistence/Migrations/014_ProjectionThreadProposedPlanImplementation.ts"
+            | "apps/server/src/persistence/Migrations/015_ProjectionTurnsSourceProposedPlan.ts"
+            | "apps/server/src/persistence/Migrations/016_CanonicalizeModelSelections.ts"
+            | "apps/server/src/persistence/Migrations/016_CanonicalizeModelSelections.test.ts"
+            | "apps/server/src/persistence/Migrations/017_ProjectionThreadsArchivedAt.ts"
+            | "apps/server/src/persistence/Migrations/018_ProjectionThreadsArchivedAtIndex.ts"
+            | "apps/server/src/persistence/Migrations/019_ProjectionSnapshotLookupIndexes.ts"
+            | "apps/server/src/persistence/Migrations/019_ProjectionSnapshotLookupIndexes.test.ts"
+            | "apps/server/src/persistence/Migrations/020_AuthAccessManagement.ts"
+            | "apps/server/src/persistence/Migrations/021_AuthSessionClientMetadata.ts"
+            | "apps/server/src/persistence/Migrations/022_AuthSessionLastConnectedAt.ts"
+            | "apps/server/src/persistence/Migrations/023_ProjectionThreadShellSummary.ts"
+            | "apps/server/src/persistence/Migrations/024_BackfillProjectionThreadShellSummary.ts"
+            | "apps/server/src/persistence/Migrations/024_BackfillProjectionThreadShellSummary.test.ts"
+            | "apps/server/src/persistence/Migrations/025_CleanupInvalidProjectionPendingApprovals.ts"
+            | "apps/server/src/persistence/Migrations/025_CleanupInvalidProjectionPendingApprovals.test.ts"
+            | "apps/server/src/persistence/Migrations/026_CanonicalizeModelSelectionOptions.ts"
+            | "apps/server/src/persistence/Migrations/026_CanonicalizeModelSelectionOptions.test.ts"
+            | "apps/server/src/persistence/Migrations/027_ProviderSessionRuntimeInstanceId.ts"
+            | "apps/server/src/persistence/Migrations/027_028_ProviderInstanceIdColumns.test.ts"
+            | "apps/server/src/persistence/Migrations/028_ProjectionThreadSessionInstanceId.ts"
+            | "apps/server/src/persistence/Migrations/029_ProjectionThreadDetailOrderingIndexes.ts"
+            | "apps/server/src/persistence/Migrations/029_ProjectionThreadDetailOrderingIndexes.test.ts"
+            | "apps/server/src/persistence/Migrations/030_ProjectionThreadShellArchiveIndexes.ts"
+            | "apps/server/src/persistence/NodeSqliteClient.ts"
+            | "apps/server/src/persistence/NodeSqliteClient.test.ts"
+            | "apps/server/src/persistence/Layers/AuthPairingLinks.ts"
+            | "apps/server/src/persistence/Layers/AuthSessions.ts"
+            | "apps/server/src/persistence/Layers/ProjectionPendingApprovals.ts"
+            | "apps/server/src/persistence/Layers/ProjectionCheckpoints.ts"
+            | "apps/server/src/persistence/Layers/ProjectionProjects.ts"
+            | "apps/server/src/persistence/Layers/ProjectionRepositories.test.ts"
+            | "apps/server/src/persistence/Layers/ProjectionThreads.ts"
+            | "apps/server/src/persistence/Layers/ProjectionThreadSessions.ts"
+            | "apps/server/src/persistence/Layers/ProviderSessionRuntime.ts"
+            | "apps/server/src/persistence/Layers/ProjectionTurns.ts"
+            | "apps/server/src/persistence/Layers/ProjectionThreadMessages.ts"
+            | "apps/server/src/persistence/Layers/ProjectionThreadMessages.test.ts"
+            | "apps/server/src/persistence/Layers/ProjectionThreadActivities.ts"
+            | "apps/server/src/persistence/Layers/ProjectionThreadProposedPlans.ts"
+            | "apps/server/src/persistence/Layers/ProjectionState.ts"
+            | "apps/server/src/persistence/Services/ProjectionPendingApprovals.ts"
+            | "apps/server/src/persistence/Services/ProjectionCheckpoints.ts"
+            | "apps/server/src/persistence/Services/ProjectionProjects.ts"
+            | "apps/server/src/persistence/Services/ProjectionThreads.ts"
+            | "apps/server/src/persistence/Services/ProjectionThreadSessions.ts"
+            | "apps/server/src/persistence/Services/ProviderSessionRuntime.ts"
+            | "apps/server/src/persistence/Services/ProjectionTurns.ts"
+            | "apps/server/src/persistence/Services/ProjectionThreadMessages.ts"
+            | "apps/server/src/persistence/Services/ProjectionThreadActivities.ts"
+            | "apps/server/src/persistence/Services/ProjectionThreadProposedPlans.ts"
+            | "apps/server/src/persistence/Services/ProjectionState.ts"
+            | "apps/server/src/persistence/Services/AuthPairingLinks.ts"
+            | "apps/server/src/persistence/Services/AuthSessions.ts"
+    ) {
+        (
+            "projection SQLite store plus provider_session_runtime table/repository, auth session/pairing-link tables, auth repository helpers, session-directory binding helpers, persistence error tags/messages, sqlite runtime/client config, setup pragmas, node sqlite compatibility gate, and 30-entry migration ordering/filtering in crates/r3_core/src/persistence.rs",
+            "partial",
+            "`cargo test -p r3_core persistence`",
+            "Port typed orchestration events, projector integration, live auth service integration, live provider runtime integration, live Effect SQL layer execution, and complete migration SQL/backfill semantics.",
+        )
+    } else if path == "packages/contracts/src/auth.ts" {
+        (
+            "auth descriptor, HTTP/websocket credential selection, owner access-control/error mapping, HTTP route plans, secret-store filesystem contracts plus filesystem get/set/get-or-create/remove helpers, cookie, client metadata, pairing-token, HMAC-signed session/websocket token issue/verify helpers with default TTLs and claim decode/expiry checks, persisted token-to-session repository verification decisions, verified-session credential assembly, session-claim, access-stream change fan-in/current-session marking, session-credential change, connected-session count, and auth persistence contracts in crates/r3_core/src/auth.rs plus crates/r3_core/src/persistence.rs",
+            "partial",
+            "`cargo test -p r3_core auth`; `cargo test -p r3_core persistence`",
+            "Wire full live secret-store service permissions/concurrency layer, live repository-backed auth service execution, HTTP auth exchange execution, websocket upgrade execution, live auth PubSub streams, and persisted runtime integration.",
+        )
+    } else if path == "apps/server/src/processRunner.ts"
+        || path == "apps/server/src/processRunner.test.ts"
+        || path == "apps/server/src/open.ts"
+        || path == "apps/server/src/open.test.ts"
+        || path == "packages/contracts/src/editor.ts"
+        || path == "packages/shared/src/shell.ts"
+        || path == "packages/shared/src/shell.test.ts"
+    {
+        (
+            "process runner, command availability, and open/editor launch contracts in crates/r3_core/src/process.rs",
+            "partial",
+            "`cargo test -p r3_core process`",
+            "Wire live RPC shell.openInEditor, browser opener, process-tree kill behavior, and every shell environment probe into the Rust runtime.",
+        )
+    } else if matches!(
+        path,
+        "apps/server/src/pathExpansion.ts"
+            | "apps/server/src/pathExpansion.test.ts"
+            | "apps/server/src/startupAccess.ts"
+            | "apps/server/src/startupAccess.test.ts"
+    ) {
+        (
+            "server path expansion and headless startup access contracts in crates/r3_core/src/server.rs",
+            "partial",
+            "`cargo test -p r3_core server`",
+            "Wire live ServerConfig/HttpServer/ServerAuth access issuance and runtime pairing credential issuance.",
+        )
+    } else if matches!(
+        path,
+        "apps/server/src/atomicWrite.ts"
+            | "apps/server/src/stream/collectUint8StreamText.ts"
+            | "apps/server/src/stream/collectUint8StreamText.test.ts"
+    ) {
+        (
+            "server stream text collection and atomic-write contracts in crates/r3_core/src/server.rs",
+            "partial",
+            "`cargo test -p r3_core server`",
+            "Wire live Effect Stream decoder flushing, filesystem temp-directory scope cleanup, fsync behavior if needed, and cross-device rename error handling.",
+        )
+    } else if matches!(
+        path,
+        "apps/server/src/cliAuthFormat.ts" | "apps/server/src/cliAuthFormat.test.ts"
+    ) {
+        (
+            "server CLI auth formatting contracts in crates/r3_core/src/server.rs",
+            "partial",
+            "`cargo test -p r3_core server`",
+            "Wire exact DateTime conversion types, CLI command integration, and JSON object field omission parity.",
+        )
+    } else if path == "apps/server/src/config.ts" {
+        (
+            "server runtime mode/defaults and derived-path contracts in crates/r3_core/src/server.rs",
+            "partial",
+            "`cargo test -p r3_core server`",
+            "Wire live Effect layers, directory creation, static-dir lookup, Config service, and test-layer construction.",
+        )
+    } else if path == "apps/server/package.json"
+        || path == "apps/server/tsconfig.json"
+        || path == "apps/server/tsdown.config.ts"
+        || path == "apps/server/vitest.config.ts"
+        || path == "apps/server/scripts/cli.ts"
+    {
+        (
+            "server package metadata, package scripts, dependency/package role lists, tsdown build config, vitest runtime config, and build/publish CLI plans in crates/r3_core/src/server.rs",
+            "partial",
+            "`cargo test -p r3_core server_package`",
+            "Wire real TypeScript compiler config, package publishing file rewrites, catalog dependency resolution, icon override file IO, npm publish execution, and binary/package release artifacts.",
+        )
+    } else if path == "apps/server/scripts/acp-mock-agent.ts"
+        || path == "apps/server/scripts/cursor-acp-model-mismatch-probe.ts"
+    {
+        (
+            "ACP mock-agent state/config/env contracts and Cursor ACP model-mismatch probe request plan in crates/r3_core/src/effect_acp.rs",
+            "partial",
+            "`cargo test -p r3_core acp_mock`",
+            "Wire live Bun/Node script execution, stdio JSON-RPC process control, request log/exit log file IO, permission/elicitation callback behavior, and real Cursor agent probing.",
+        )
+    } else if path == "apps/server/src/bootstrap.ts" || path == "apps/server/src/bootstrap.test.ts"
+    {
+        (
+            "server bootstrap fd path and envelope decode contracts in crates/r3_core/src/server.rs",
+            "partial",
+            "`cargo test -p r3_core server`",
+            "Wire live fd readiness probing, stream duplication/fallback, readline timeout cleanup, and schema-specific decoding.",
+        )
+    } else if path == "apps/server/src/server.ts" || path == "apps/server/src/server.test.ts" {
+        (
+            "server layer composition, route membership, WebSocket RPC route plan, Bun/Node HTTP/PTY/platform adapter selection, reactor/provider/runtime dependency groups, runtime-state/tailscale side-effect plan, and launch provider contracts in crates/r3_core/src/server.rs",
+            "partial",
+            "`cargo test -p r3_core server`",
+            "Wire live Effect layer graph, HTTP server launch, route handlers, real WebSocket execution, runtime state acquire/release, Tailscale Serve side effects, browser OTLP tests, and bootstrap worktree dispatch flow.",
+        )
+    } else if path == "apps/server/src/serverRuntimeStartup.ts"
+        || path == "apps/server/src/serverRuntimeStartup.test.ts"
+    {
+        (
+            "server runtime startup model/welcome/command-gate contracts in crates/r3_core/src/server.rs",
+            "partial",
+            "`cargo test -p r3_core server`",
+            "Wire live command queue workers, readiness Deferreds, lifecycle events, reactors, heartbeat telemetry, auto-bootstrap dispatch, auth pairing URL, and browser/headless side effects.",
+        )
+    } else if path == "apps/server/src/serverLifecycleEvents.ts"
+        || path == "apps/server/src/serverLifecycleEvents.test.ts"
+        || path == "apps/server/src/serverRuntimeState.ts"
+    {
+        (
+            "server lifecycle snapshot/sequence and persisted runtime-state contracts in crates/r3_core/src/server.rs",
+            "partial",
+            "`cargo test -p r3_core server`",
+            "Wire live PubSub streams, Ref state, runtime-state file persistence/read/clear, and DateTime/process pid integration.",
+        )
+    } else if path == "apps/server/src/serverSettings.ts"
+        || path == "apps/server/src/serverSettings.test.ts"
+    {
+        (
+            "server settings provider environment secret/redaction contracts in crates/r3_core/src/server.rs",
+            "partial",
+            "`cargo test -p r3_core server`",
+            "Wire live settings schema normalization, sparse default stripping, file watch/cache/pubsub runtime, atomic writes, secret-store materialization/persistence, deep patch merge, and text-generation provider fallback.",
+        )
+    } else if path == "apps/server/src/cli/config.ts"
+        || path == "apps/server/src/cli/config.test.ts"
+    {
+        (
+            "server CLI config precedence and duration shorthand contracts in crates/r3_core/src/server.rs",
+            "partial",
+            "`cargo test -p r3_core server`",
+            "Wire live Effect ConfigProvider/env reading, bootstrap fd fallback, filesystem directory creation, static-dir lookup, persisted observability loading, and full ServerConfig assembly.",
+        )
+    } else if path == "apps/server/src/serverLogger.ts" {
+        (
+            "server logger minimum-level and logger-list layer contracts in crates/r3_core/src/server.rs",
+            "partial",
+            "`cargo test -p r3_core server`",
+            "Wire live Effect Logger layer, References.MinimumLogLevel, consolePretty output, and tracer logger integration.",
+        )
+    } else if path == "apps/server/src/bin.ts"
+        || path == "apps/server/src/bin.test.ts"
+        || path == "apps/server/src/cli/server.ts"
+        || path == "apps/server/src/cli/auth.ts"
+        || path == "apps/server/src/cli/project.ts"
+    {
+        (
+            "CLI command topology, serve run-plan, auth/project command descriptors, and project dev-url rejection contracts in crates/r3_core/src/server.rs",
+            "partial",
+            "`cargo test -p r3_core server`",
+            "Wire live effect/unstable CLI parsing, Node runtime layer, auth/project command execution, TTL schema errors, live/offline project mutation dispatch, runtime-state probing, and versioned binary packaging.",
+        )
+    } else if path == "apps/server/src/observability/Attributes.ts"
+        || path == "apps/server/src/observability/Attributes.test.ts"
+        || path == "apps/server/src/observability/Metrics.ts"
+        || path == "apps/server/src/observability/Metrics.test.ts"
+        || path == "apps/server/src/observability/RpcInstrumentation.ts"
+        || path == "apps/server/src/observability/RpcInstrumentation.test.ts"
+        || path == "apps/server/src/observability/Layers/Observability.ts"
+        || path == "apps/server/src/observability/Services/BrowserTraceCollector.ts"
+    {
+        (
+            "observability metric attribute/outcome/model-label, metric spec/update, RPC instrumentation, layer assembly, and browser trace collector contracts in crates/r3_core/src/observability.rs",
+            "partial",
+            "`cargo test -p r3_core observability`",
+            "Wire live Effect Metric snapshots, Clock/TestClock durations, span/tracer runtime, Stream onExit instrumentation, disabled-tracer service behavior, local trace sink rotation, OTLP exporters, and Effect service layers.",
+        )
+    } else if path == "apps/server/src/telemetry/Identify.ts"
+        || path == "apps/server/src/telemetry/Layers/AnalyticsService.ts"
+        || path == "apps/server/src/telemetry/Layers/AnalyticsService.test.ts"
+        || path == "apps/server/src/telemetry/Services/AnalyticsService.ts"
+    {
+        (
+            "telemetry identifier priority, anonymous-id persistence plan, analytics buffer/flush/payload, and service-tag contracts in crates/r3_core/src/telemetry.rs",
+            "partial",
+            "`cargo test -p r3_core telemetry`",
+            "Wire live SHA-256 hashing, Codex/Claude file reads, filesystem writes, Effect ConfigProvider, Ref buffer, periodic scoped flush, HttpClient PostHog submission, and finalizer behavior.",
+        )
+    } else if path == "apps/server/src/os-jank.ts"
+        || path == "apps/server/src/environment/Layers/ServerEnvironmentLabel.ts"
+        || path == "apps/server/src/environment/Layers/ServerEnvironmentLabel.test.ts"
+        || path == "apps/server/src/environment/Layers/ServerEnvironment.ts"
+        || path == "apps/server/src/environment/Layers/ServerEnvironment.test.ts"
+        || path == "apps/server/src/environment/Services/ServerEnvironment.ts"
+    {
+        (
+            "server base-dir/path, environment-label, and environment-descriptor contracts in crates/r3_core/src/server.rs",
+            "partial",
+            "`cargo test -p r3_core server`",
+            "Wire live login-shell PATH hydration, Windows environment repair, launchctl fallback, macOS scutil, Linux /etc/machine-info reads, hostnamectl process execution, filesystem environment-id persistence, Effect service layer, and package metadata sourcing.",
+        )
+    } else if path == "apps/server/src/keybindings.ts"
+        || path == "apps/server/src/keybindings.test.ts"
+    {
+        (
+            "server keybindings parse/merge/default-sync/upsert/remove contracts in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core keybinding`",
+            "Wire file-backed keybindings.json IO, lenient JSON/schema diagnostics, atomic writes, cache invalidation, filesystem watch/debounce, PubSub streams, startup Deferreds, and RPC handlers.",
+        )
+    } else if path.starts_with("apps/server/src/orchestration/")
+        || path.starts_with("apps/server/src/persistence/")
+        || path.starts_with("apps/server/src/server")
+        || path.starts_with("apps/server/src/bootstrap")
+        || path.starts_with("apps/server/src/bin")
+        || path.starts_with("apps/server/src/cli/")
+        || path.starts_with("apps/server/src/config")
+        || path.starts_with("apps/server/src/process")
+        || path.starts_with("apps/server/src/open")
+        || path.starts_with("apps/server/src/observability/")
+    {
+        (
+            "none",
+            "missing",
+            "None",
+            "Port server runtime layer or create equivalent Rust module and tests.",
+        )
+    } else if path.starts_with("apps/server/src/textGeneration/") {
+        (
+            "text generation policy, preset, prompt, and sanitizer contracts in crates/r3_core/src/text_generation.rs",
+            "partial",
+            "`cargo test -p r3_core text_generation`",
+            "Port live provider-backed text generation for Codex, Claude, Cursor, and OpenCode plus registry dispatch.",
+        )
+    } else if path.starts_with("apps/server/src/attachment")
+        || path.starts_with("apps/server/src/imageMime")
+    {
+        (
+            "attachment path/store and image MIME contracts in crates/r3_core/src/attachments.rs",
+            "partial",
+            "`cargo test -p r3_core attachments`",
+            "Port live upload/write/read integration, HTTP attachment route wiring, and persisted attachment side effects.",
+        )
+    } else if path.starts_with("apps/server/src/http")
+        || path.starts_with("apps/server/src/ws")
+        || path == "packages/contracts/src/rpc.ts"
+    {
+        (
+            "transport-agnostic HTTP route plus static/dev redirect/path-guard helpers, browser API CORS constants, and WebSocket RPC method/group/schema/handler/dispatch contracts in crates/r3_core/src/rpc.rs plus crates/r3_core/src/server.rs",
+            "partial",
+            "`cargo test -p r3_core rpc`",
+            "Port live HTTP server, WebSocket upgrade/auth handling, concrete handler execution, runtime schema decoding, subscriptions, static file reads/fallbacks/content types, attachments, favicon, OTLP proxy, and CORS middleware execution.",
+        )
+    } else if path.starts_with("apps/server/") {
+        (
+            "none",
+            "missing",
+            "None",
+            "Classify and port server package/build/runtime surface.",
+        )
+    } else if path.starts_with("apps/desktop/src/ssh/") || path.starts_with("packages/ssh/src/") {
+        (
+            "selected SSH parsing helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace` SSH parse tests",
+            "Port SSH discovery, tunnels, password prompts, and remote API/session bootstrap.",
+        )
+    } else if path.starts_with("apps/desktop/src/backend/tailscale")
+        || path.starts_with("packages/tailscale/src/")
+    {
+        (
+            "Tailscale IPv4/MagicDNS parsing, HTTPS URL, serve command, and advertised endpoint contracts in crates/r3_core/src/desktop.rs plus pairing endpoint helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core desktop`; `cargo test --workspace` endpoint tests",
+            "Port live Tailscale CLI execution, status timeout handling, HTTPS probe, serve enable/disable effects, and server exposure wiring.",
+        )
+    } else if matches!(
+        path,
+        "apps/desktop/src/backend/DesktopServerExposure.ts"
+            | "apps/desktop/src/backend/DesktopServerExposure.test.ts"
+    ) {
+        (
+            "desktop server exposure runtime state, LAN host resolution, backend config, and advertised endpoint contracts in crates/r3_core/src/desktop.rs",
+            "partial",
+            "`cargo test -p r3_core desktop`",
+            "Port live settings persistence service, Effect layer wiring, Tailscale endpoint provider integration, and relaunch orchestration.",
+        )
+    } else if matches!(
+        path,
+        "apps/desktop/src/backend/DesktopBackendManager.ts"
+            | "apps/desktop/src/backend/DesktopBackendManager.test.ts"
+    ) {
+        (
+            "desktop backend manager constants, readiness URL, restart backoff, snapshot, and backend-start contracts in crates/r3_core/src/desktop.rs",
+            "partial",
+            "`cargo test -p r3_core desktop`",
+            "Port live process spawning, fd3 bootstrap streaming, HTTP readiness retry loop, scoped restart supervision, and output logging.",
+        )
+    } else if matches!(
+        path,
+        "apps/desktop/src/main.ts"
+            | "apps/desktop/src/app/DesktopApp.ts"
+            | "apps/desktop/src/app/DesktopLifecycle.ts"
+            | "apps/desktop/src/app/DesktopAppIdentity.ts"
+            | "apps/desktop/src/app/DesktopAppIdentity.test.ts"
+            | "apps/desktop/src/app/DesktopAssets.ts"
+            | "apps/desktop/src/app/DesktopConfig.ts"
+            | "apps/desktop/src/app/DesktopEnvironment.ts"
+            | "apps/desktop/src/app/DesktopEnvironment.test.ts"
+            | "apps/desktop/src/app/DesktopState.ts"
+            | "apps/desktop/src/app/DesktopObservability.ts"
+            | "apps/desktop/src/app/DesktopObservability.test.ts"
+            | "apps/desktop/src/backend/DesktopBackendConfiguration.ts"
+            | "apps/desktop/src/backend/DesktopBackendConfiguration.test.ts"
+            | "apps/desktop/src/updates/DesktopUpdates.ts"
+            | "apps/desktop/src/updates/DesktopUpdates.test.ts"
+            | "apps/desktop/src/updates/updateChannels.ts"
+            | "apps/desktop/src/updates/updateMachine.ts"
+            | "apps/desktop/src/updates/updateMachine.test.ts"
+    ) {
+        (
+            "desktop app bootstrap/lifecycle/assets/identity/config/environment/state/observability/update-channel/update-runtime/backend-start decision contracts in crates/r3_core/src/desktop.rs",
+            "partial",
+            "`cargo test -p r3_core desktop`",
+            "Port live Electron/GPUI app integration, Effect layers, filesystem-backed asset lookup, shutdown deferreds, event listeners, fatal-startup UI side effects, rotating log file IO, trace sink/tracer wiring, backend process supervision, settings IO, update runtime side effects, menus, protocols, and IPC.",
+        )
+    } else if matches!(
+        path,
+        "apps/desktop/src/electron/ElectronApp.ts"
+            | "apps/desktop/src/electron/ElectronApp.test.ts"
+            | "apps/desktop/src/electron/ElectronDialog.ts"
+            | "apps/desktop/src/electron/ElectronDialog.test.ts"
+            | "apps/desktop/src/electron/ElectronMenu.ts"
+            | "apps/desktop/src/electron/ElectronMenu.test.ts"
+            | "apps/desktop/src/electron/ElectronProtocol.ts"
+            | "apps/desktop/src/electron/ElectronProtocol.test.ts"
+            | "apps/desktop/src/electron/ElectronSafeStorage.ts"
+            | "apps/desktop/src/electron/ElectronShell.ts"
+            | "apps/desktop/src/electron/ElectronShell.test.ts"
+            | "apps/desktop/src/electron/ElectronTheme.ts"
+            | "apps/desktop/src/electron/ElectronTheme.test.ts"
+            | "apps/desktop/src/electron/ElectronUpdater.ts"
+            | "apps/desktop/src/electron/ElectronUpdater.test.ts"
+            | "apps/desktop/src/electron/ElectronWindow.ts"
+            | "apps/desktop/src/electron/ElectronWindow.test.ts"
+    ) {
+        (
+            "Electron app metadata/listener/switch, dialog confirm/pick-folder, menu normalization, protocol static-file routing, safe-storage errors, safe shell URL, native-theme, updater error/listener/property, and BrowserWindow ownership/reveal/send contracts in crates/r3_core/src/desktop.rs",
+            "partial",
+            "`cargo test -p r3_core desktop`",
+            "Port live Electron service wrappers, async rejection paths, clipboard side effects, native menu icons/popups, protocol registration/unregistration, safe-storage encryption/decryption, native theme state, scoped listener wiring, and GPUI BrowserWindow-equivalent lifecycle.",
+        )
+    } else if path.starts_with("apps/desktop/src/shell/") {
+        (
+            "desktop shell environment login-shell/PowerShell probe, marker extraction, PATH merge, and environment patch contracts in crates/r3_core/src/desktop.rs",
+            "partial",
+            "`cargo test -p r3_core desktop`",
+            "Port live process probing, timeout/termination behavior, process.env mutation, and platform-specific shell integration.",
+        )
+    } else if path == "apps/desktop/src/preload.ts" || path.starts_with("apps/desktop/src/ipc/") {
+        (
+            "desktop IPC channel list, handler registration order, preload bridge method table, listener guards, and SSH-cancel unwrap contracts in crates/r3_core/src/desktop.rs",
+            "partial",
+            "`cargo test -p r3_core desktop`",
+            "Port live GPUI/Electron IPC bridge, browser preload exposure, payload schemas, client settings IO, saved-environment secrets, server exposure controls, SSH runtime, update runtime, and window/menu handlers.",
+        )
+    } else if path.starts_with("apps/desktop/src/settings/") {
+        (
+            "desktop app settings, update-channel migration, sparse settings document, saved-environment registry, and secret-preservation contracts in crates/r3_core/src/desktop.rs",
+            "partial",
+            "`cargo test -p r3_core desktop`",
+            "Port live settings file IO, lenient JSONC decode/encode, full client settings schema, Electron safe-storage encryption/decryption, and IPC method wiring.",
+        )
+    } else if path.starts_with("apps/desktop/src/window/") {
+        (
+            "desktop native menu template, menu action labels, main-window option, titlebar, and background-color contracts in crates/r3_core/src/desktop.rs",
+            "partial",
+            "`cargo test -p r3_core desktop`",
+            "Port live GPUI/Electron window creation, context menu spellcheck/media/link behavior, window-open guard, reveal lifecycle, menu click effects, and update dialogs.",
+        )
+    } else if path.starts_with("apps/desktop/") {
+        (
+            "desktop package metadata, scripts, tsdown entries, Electron launcher/dev/smoke/wait-resource plans in crates/r3_core/src/package_surfaces.rs",
+            "partial",
+            "`cargo test -p r3_core package_surfaces`",
+            "Wire native GPUI packaging/release artifacts, live dev Electron restart loop equivalent, macOS bundle/icon patching, smoke-test process execution, and exact installer metadata.",
+        )
+    } else if path == "packages/shared/package.json" || path == "packages/shared/tsconfig.json" {
+        (
+            "shared package metadata, scripts, export map, dependency list, and tsconfig include/extends contracts in crates/r3_core/src/package_surfaces.rs",
+            "partial",
+            "`cargo test -p r3_core package_surfaces`",
+            "Generate native Rust package exports and align build/typecheck outputs with crate/package layout.",
+        )
+    } else if path == "packages/shared/src/keybindings.ts" {
+        (
+            "shared keybinding defaults, shortcut parser, when parser, resolved config compiler, and max-count contracts in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core keybinding`",
+            "Port generated shared-package exports and keep server/UI callers on one Rust source of truth.",
+        )
+    } else if path.starts_with("packages/shared/") {
+        (
+            "shared-package string, CLI args, path, semver, git remote/branch/status, source-control terminology/provider detection, search ranking, TCP port helper, Struct deep-merge, schemaJson object/strict/unknown/lenient/pretty transformation contracts, server settings patch helpers, deterministic worker state/runtime-plan contracts, rotating-log write/rotation/prune plans, trace sink buffering plus Effect/OTLP trace record conversion contracts, shell command-availability, process, model, project-script, Nayuki QR text/binary/segment/advanced-codeword/module contracts, and keybinding contracts in crates/r3_core",
+            "partial",
+            "`cargo test -p r3_core shared`; `cargo test -p r3_core process`; selected r3_core model/search/keybinding tests",
+            "Wire actual Effect queue fibers, Effect Schema runtime integration, logging/observability runtime layers with filesystem append/rename IO, generated package exports, and live network/service integration.",
+        )
+    } else if path.starts_with("packages/client-runtime/") {
+        (
+            "client-runtime advertised endpoint, known-environment, scoped-ref, and source-control discovery state helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace` client runtime helper tests",
+            "Wire browser AtomRegistry/reactivity runtime, async refresh deduplication with real RPC clients, package exports, and generated contract types.",
+        )
+    } else if path.starts_with("packages/contracts/src/") {
+        (
+            "selected structs/enums in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace` selected contract tests",
+            "Port every schema/contract or generate Rust equivalents.",
+        )
+    } else if path.starts_with("packages/effect-codex-app-server/")
+        || path.starts_with("packages/effect-acp/")
+    {
+        (
+            "protocol method tables, wire-message routing, ACP request-error mapping, terminal plan, and package export/build-entrypoint contracts in crates/r3_core/src/effect_acp.rs",
+            "partial",
+            "`cargo test -p r3_core effect_acp`",
+            "Port generated schemas/types, Effect RPC clients, stdio transport, agent/client lifecycle, mock peers, probe examples, and live package wiring.",
+        )
+    } else if path.starts_with("packages/tailscale/") || path.starts_with("packages/ssh/") {
+        (
+            "selected helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace` selected helper tests",
+            "Port full package behavior.",
+        )
+    } else if path == "packages/contracts/package.json"
+        || path == "packages/contracts/tsconfig.json"
+    {
+        (
+            "contracts package metadata, scripts, export map, dependency list, and tsconfig include/extends contracts in crates/r3_core/src/package_surfaces.rs",
+            "partial",
+            "`cargo test -p r3_core package_surfaces`",
+            "Generate or port complete Rust schema package exports and align build/typecheck outputs with the native crate layout.",
+        )
+    } else if path.starts_with("packages/") {
+        (
+            "none",
+            "missing",
+            "None",
+            "Classify package role and port or document intentional exclusion.",
+        )
+    } else if path.starts_with("apps/marketing/") {
+        (
+            "marketing package metadata, Astro scripts, and GitHub latest-release URL/cache contracts in crates/r3_core/src/package_surfaces.rs",
+            "partial",
+            "`cargo test -p r3_core package_surfaces`",
+            "Port or intentionally ship the marketing site in Rust/web release flow, including Astro pages, static assets, fetch/sessionStorage runtime, and public release URL ownership.",
+        )
+    } else {
+        (
+            "none",
+            "missing",
+            "None",
+            "Unclassified upstream file; assign owner before claiming exact parity.",
+        )
+    };
+
+    InventoryRow {
+        path: path.to_string(),
+        rust_target,
+        status,
+        proof,
+        remaining_gap,
+    }
+}
+
+fn escape_markdown_table_cell(value: &str) -> String {
+    value.replace('|', "\\|").replace('\n', " ")
 }
 
 fn capture_reference_browser(options: CaptureReferenceOptions) -> Result<()> {

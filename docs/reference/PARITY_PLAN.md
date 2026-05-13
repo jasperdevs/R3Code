@@ -535,6 +535,8 @@ cargo run -p xtask -- compare-screenshots --expected reference\screenshots\upstr
 
 Last measured result: `3.441%`.
 
+Current ported parity scope: Rust core now mirrors the upstream `SourceControlSettings.tsx` discovery helper contracts for fetch interval normalization, auth label/badge presentation, provider-vs-VCS readiness, status tones, enabled states, and row summary copy. The GPUI source-control panel uses the shared upstream default fetch interval constant while the live discovery backend and mutable provider actions remain incomplete.
+
 ## Current Settings Connections Baseline
 
 Reference: `reference/screenshots/upstream-settings-connections-reference.png`

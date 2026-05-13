@@ -1,5 +1,22 @@
 pub const APP_NAME: &str = "R3Code";
 
+pub mod attachments;
+pub mod auth;
+pub mod desktop;
+pub mod effect_acp;
+pub mod markdown;
+pub mod observability;
+pub mod orchestration;
+pub mod package_surfaces;
+pub mod persistence;
+pub mod process;
+pub mod rpc;
+pub mod server;
+pub mod shared;
+pub mod telemetry;
+pub mod text_generation;
+pub mod workspace;
+
 use std::{
     cmp::Ordering,
     collections::{BTreeMap, BTreeSet},
@@ -3073,6 +3090,43 @@ pub struct KeybindingUpsertInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerKeybindingRule {
+    pub command: String,
+    pub key: String,
+    pub when: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeybindingsConfigIssue {
+    pub kind: String,
+    pub index: Option<usize>,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeybindingsConfigState {
+    pub keybindings: Vec<ResolvedKeybindingRule>,
+    pub issues: Vec<KeybindingsConfigIssue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeybindingsDefaultSyncPlan {
+    pub next_config: Vec<ServerKeybindingRule>,
+    pub skipped_default_conflicts: Vec<KeybindingsDefaultConflict>,
+    pub skipped_due_to_issues: bool,
+    pub changed: bool,
+    pub truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeybindingsDefaultConflict {
+    pub default_command: String,
+    pub conflicting_command: String,
+    pub key: String,
+    pub when: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeybindingRowDraftState {
     pub key_draft: String,
     pub when_draft: Option<KeybindingWhenNode>,
@@ -3102,6 +3156,8 @@ pub struct KeybindingSettingsRow {
     pub key: &'static str,
     pub when: &'static str,
 }
+
+pub const MAX_KEYBINDINGS_COUNT: usize = 256;
 
 const DEFAULT_KEYBINDING_RULES: &[KeybindingRule] = &[
     KeybindingRule {
@@ -3434,6 +3490,229 @@ pub fn default_resolved_keybindings() -> Vec<ResolvedKeybindingRule> {
     DEFAULT_KEYBINDING_RULES
         .iter()
         .filter_map(compile_resolved_keybinding_rule)
+        .collect()
+}
+
+pub fn default_server_keybinding_rules() -> Vec<ServerKeybindingRule> {
+    DEFAULT_KEYBINDING_RULES
+        .iter()
+        .map(|rule| ServerKeybindingRule {
+            command: rule.command.to_string(),
+            key: rule.key.to_string(),
+            when: (!rule.when.is_empty()).then(|| rule.when.to_string()),
+        })
+        .collect()
+}
+
+fn normalized_keybinding_when(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+pub fn compile_server_keybinding_rule(
+    rule: &ServerKeybindingRule,
+) -> Option<ResolvedKeybindingRule> {
+    let shortcut = parse_keybinding_shortcut(&rule.key)?;
+    let when_ast = match normalized_keybinding_when(rule.when.as_deref()) {
+        Some(when) => Some(parse_keybinding_when_expression(&when)?),
+        None => None,
+    };
+    Some(ResolvedKeybindingRule {
+        command: rule.command.clone(),
+        shortcut,
+        when_ast,
+    })
+}
+
+pub fn compile_server_keybindings_config(
+    config: &[ServerKeybindingRule],
+) -> Vec<ResolvedKeybindingRule> {
+    let compiled = config
+        .iter()
+        .filter_map(compile_server_keybinding_rule)
+        .collect::<Vec<_>>();
+    if compiled.len() > MAX_KEYBINDINGS_COUNT {
+        compiled[compiled.len() - MAX_KEYBINDINGS_COUNT..].to_vec()
+    } else {
+        compiled
+    }
+}
+
+pub fn merge_with_default_keybindings(
+    custom: &[ResolvedKeybindingRule],
+) -> Vec<ResolvedKeybindingRule> {
+    if custom.is_empty() {
+        return default_resolved_keybindings();
+    }
+    let overridden_commands = custom
+        .iter()
+        .map(|binding| binding.command.as_str())
+        .collect::<BTreeSet<_>>();
+    let mut merged = default_resolved_keybindings()
+        .into_iter()
+        .filter(|binding| !overridden_commands.contains(binding.command.as_str()))
+        .collect::<Vec<_>>();
+    merged.extend(custom.iter().cloned());
+    if merged.len() > MAX_KEYBINDINGS_COUNT {
+        merged[merged.len() - MAX_KEYBINDINGS_COUNT..].to_vec()
+    } else {
+        merged
+    }
+}
+
+pub fn keybindings_config_state_from_custom_rules(
+    rules: &[ServerKeybindingRule],
+    issues: &[KeybindingsConfigIssue],
+) -> KeybindingsConfigState {
+    KeybindingsConfigState {
+        keybindings: merge_with_default_keybindings(&compile_server_keybindings_config(rules)),
+        issues: issues.to_vec(),
+    }
+}
+
+fn keybinding_rule_from_upsert_input(input: &KeybindingUpsertInput) -> ServerKeybindingRule {
+    ServerKeybindingRule {
+        command: input.command.clone(),
+        key: input.key.clone(),
+        when: normalized_keybinding_when(input.when.as_deref()),
+    }
+}
+
+fn keybinding_rule_from_target(target: &KeybindingTarget) -> ServerKeybindingRule {
+    ServerKeybindingRule {
+        command: target.command.clone(),
+        key: target.key.clone(),
+        when: normalized_keybinding_when(target.when.as_deref()),
+    }
+}
+
+fn is_same_server_keybinding_rule(
+    left: &ServerKeybindingRule,
+    right: &ServerKeybindingRule,
+) -> bool {
+    left.command == right.command
+        && left.key == right.key
+        && normalized_keybinding_when(left.when.as_deref())
+            == normalized_keybinding_when(right.when.as_deref())
+}
+
+fn keybinding_shortcut_context(rule: &ServerKeybindingRule) -> Option<String> {
+    let parsed = parse_keybinding_shortcut(&rule.key)?;
+    let encoded = shortcut_to_keybinding_input(&parsed);
+    Some(format!(
+        "{encoded}\u{0000}{}",
+        normalized_keybinding_when(rule.when.as_deref()).unwrap_or_default()
+    ))
+}
+
+fn has_same_keybinding_shortcut_context(
+    left: &ServerKeybindingRule,
+    right: &ServerKeybindingRule,
+) -> bool {
+    let Some(left_context) = keybinding_shortcut_context(left) else {
+        return false;
+    };
+    let Some(right_context) = keybinding_shortcut_context(right) else {
+        return false;
+    };
+    left_context == right_context
+}
+
+pub fn sync_default_keybindings_on_startup_plan(
+    custom_config: &[ServerKeybindingRule],
+    has_issues: bool,
+) -> KeybindingsDefaultSyncPlan {
+    if has_issues {
+        return KeybindingsDefaultSyncPlan {
+            next_config: custom_config.to_vec(),
+            skipped_default_conflicts: Vec::new(),
+            skipped_due_to_issues: true,
+            changed: false,
+            truncated: false,
+        };
+    }
+
+    let existing_commands = custom_config
+        .iter()
+        .map(|entry| entry.command.as_str())
+        .collect::<BTreeSet<_>>();
+    let defaults = default_server_keybinding_rules();
+    let mut missing_defaults = Vec::new();
+    let mut skipped_default_conflicts = Vec::new();
+    for default_rule in &defaults {
+        if existing_commands.contains(default_rule.command.as_str()) {
+            continue;
+        }
+        if let Some(conflicting_entry) = custom_config
+            .iter()
+            .find(|entry| has_same_keybinding_shortcut_context(entry, default_rule))
+        {
+            skipped_default_conflicts.push(KeybindingsDefaultConflict {
+                default_command: default_rule.command.clone(),
+                conflicting_command: conflicting_entry.command.clone(),
+                key: default_rule.key.clone(),
+                when: default_rule.when.clone(),
+            });
+            continue;
+        }
+        missing_defaults.push(default_rule.clone());
+    }
+
+    let next_config = custom_config
+        .iter()
+        .cloned()
+        .chain(missing_defaults)
+        .collect::<Vec<_>>();
+    let truncated = next_config.len() > MAX_KEYBINDINGS_COUNT;
+    let capped_config = if truncated {
+        next_config[next_config.len() - MAX_KEYBINDINGS_COUNT..].to_vec()
+    } else {
+        next_config
+    };
+    KeybindingsDefaultSyncPlan {
+        changed: capped_config != custom_config,
+        next_config: capped_config,
+        skipped_default_conflicts,
+        skipped_due_to_issues: false,
+        truncated,
+    }
+}
+
+pub fn upsert_keybinding_rule_in_config(
+    custom_config: &[ServerKeybindingRule],
+    input: &KeybindingUpsertInput,
+) -> Vec<ServerKeybindingRule> {
+    let rule = keybinding_rule_from_upsert_input(input);
+    let replace_target = input.replace.as_ref().map(keybinding_rule_from_target);
+    let mut next_config = custom_config
+        .iter()
+        .filter(|entry| {
+            if let Some(replace_target) = replace_target.as_ref() {
+                return !is_same_server_keybinding_rule(entry, replace_target);
+            }
+            !is_same_server_keybinding_rule(entry, &rule)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    next_config.push(rule);
+    if next_config.len() > MAX_KEYBINDINGS_COUNT {
+        next_config[next_config.len() - MAX_KEYBINDINGS_COUNT..].to_vec()
+    } else {
+        next_config
+    }
+}
+
+pub fn remove_keybinding_rule_from_config(
+    custom_config: &[ServerKeybindingRule],
+    target: &KeybindingTarget,
+) -> Vec<ServerKeybindingRule> {
+    let target = keybinding_rule_from_target(target);
+    custom_config
+        .iter()
+        .filter(|entry| !is_same_server_keybinding_rule(entry, &target))
+        .cloned()
         .collect()
 }
 
@@ -4638,6 +4917,240 @@ pub fn setup_project_script(scripts: &[ProjectScript]) -> Option<&ProjectScript>
     scripts.iter().find(|script| script.run_on_worktree_create)
 }
 
+pub const SOURCE_CONTROL_DEFAULT_FETCH_INTERVAL_SECONDS: u32 = 30;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceControlDiscoveryStatus {
+    Available,
+    Missing,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceControlProviderAuthStatus {
+    Authenticated,
+    Unauthenticated,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceControlProviderKind {
+    Github,
+    Gitlab,
+    AzureDevops,
+    Bitbucket,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VcsDriverKind {
+    Git,
+    Jj,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlProviderAuth {
+    pub status: SourceControlProviderAuthStatus,
+    pub account: Option<String>,
+    pub host: Option<String>,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VcsDiscoveryItem {
+    pub kind: VcsDriverKind,
+    pub label: String,
+    pub executable: Option<String>,
+    pub implemented: bool,
+    pub status: SourceControlDiscoveryStatus,
+    pub version: Option<String>,
+    pub install_hint: String,
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlProviderDiscoveryItem {
+    pub kind: SourceControlProviderKind,
+    pub label: String,
+    pub executable: Option<String>,
+    pub status: SourceControlDiscoveryStatus,
+    pub version: Option<String>,
+    pub install_hint: String,
+    pub detail: Option<String>,
+    pub auth: SourceControlProviderAuth,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SourceControlDiscoveryItem {
+    Vcs(VcsDiscoveryItem),
+    Provider(SourceControlProviderDiscoveryItem),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceControlBadge {
+    Warning,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlAuthPresentation {
+    pub label: String,
+    pub badge: Option<SourceControlBadge>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceControlStatusTone {
+    Muted,
+    Warning,
+    Success,
+}
+
+pub fn normalize_git_fetch_interval_seconds(value: Option<f64>) -> u32 {
+    let Some(value) = value else {
+        return 0;
+    };
+    if !value.is_finite() {
+        return 0;
+    }
+    value.round().max(0.0) as u32
+}
+
+pub fn git_fetch_interval_seconds_from_millis(milliseconds: i64) -> i64 {
+    ((milliseconds as f64) / 1_000.0).round() as i64
+}
+
+pub fn source_control_auth_presentation(
+    auth: &SourceControlProviderAuth,
+) -> SourceControlAuthPresentation {
+    match auth.status {
+        SourceControlProviderAuthStatus::Authenticated => SourceControlAuthPresentation {
+            label: "Authenticated".to_string(),
+            badge: None,
+        },
+        SourceControlProviderAuthStatus::Unauthenticated => SourceControlAuthPresentation {
+            label: "Not authenticated".to_string(),
+            badge: Some(SourceControlBadge::Warning),
+        },
+        SourceControlProviderAuthStatus::Unknown => SourceControlAuthPresentation {
+            label: "Status unknown".to_string(),
+            badge: None,
+        },
+    }
+}
+
+pub fn source_control_is_provider_item(item: &SourceControlDiscoveryItem) -> bool {
+    matches!(item, SourceControlDiscoveryItem::Provider(_))
+}
+
+pub fn source_control_is_vcs_not_ready(item: &SourceControlDiscoveryItem) -> bool {
+    matches!(
+        item,
+        SourceControlDiscoveryItem::Vcs(VcsDiscoveryItem {
+            implemented: false,
+            ..
+        })
+    )
+}
+
+pub fn source_control_item_enabled(item: &SourceControlDiscoveryItem) -> bool {
+    match item {
+        SourceControlDiscoveryItem::Vcs(item) => {
+            item.status == SourceControlDiscoveryStatus::Available && item.implemented
+        }
+        SourceControlDiscoveryItem::Provider(item) => {
+            item.status == SourceControlDiscoveryStatus::Available
+        }
+    }
+}
+
+pub fn source_control_item_status_tone(
+    item: &SourceControlDiscoveryItem,
+) -> SourceControlStatusTone {
+    if source_control_is_vcs_not_ready(item) {
+        return SourceControlStatusTone::Muted;
+    }
+
+    match item {
+        SourceControlDiscoveryItem::Vcs(item) => {
+            if item.status != SourceControlDiscoveryStatus::Available {
+                SourceControlStatusTone::Warning
+            } else {
+                SourceControlStatusTone::Success
+            }
+        }
+        SourceControlDiscoveryItem::Provider(item) => {
+            if item.status != SourceControlDiscoveryStatus::Available
+                || item.auth.status != SourceControlProviderAuthStatus::Authenticated
+            {
+                SourceControlStatusTone::Warning
+            } else {
+                SourceControlStatusTone::Success
+            }
+        }
+    }
+}
+
+pub fn source_control_item_summary(item: &SourceControlDiscoveryItem) -> String {
+    if source_control_is_vcs_not_ready(item) {
+        return format!(
+            "Support for {} is coming soon.",
+            source_control_item_label(item)
+        );
+    }
+
+    if source_control_item_status(item) != SourceControlDiscoveryStatus::Available {
+        return format!(
+            "Not available on this server: {}",
+            source_control_item_install_hint(item)
+        );
+    }
+
+    match item {
+        SourceControlDiscoveryItem::Provider(item) => match item.auth.status {
+            SourceControlProviderAuthStatus::Authenticated => item
+                .auth
+                .account
+                .as_ref()
+                .map(|account| format!("Authenticated as {account}"))
+                .unwrap_or_else(|| "Authenticated".to_string()),
+            SourceControlProviderAuthStatus::Unauthenticated => item
+                .executable
+                .as_ref()
+                .map(|executable| {
+                    format!(
+                        "{} is not authenticated on this server. Sign in or configure credentials using the {executable} tool on the server host to enable pull request features.",
+                        item.label
+                    )
+                })
+                .unwrap_or_else(|| item.install_hint.clone()),
+            SourceControlProviderAuthStatus::Unknown => {
+                format!("Could not verify {}. {}", item.label, item.install_hint)
+            }
+        },
+        SourceControlDiscoveryItem::Vcs(_) => "Available".to_string(),
+    }
+}
+
+fn source_control_item_label(item: &SourceControlDiscoveryItem) -> &str {
+    match item {
+        SourceControlDiscoveryItem::Vcs(item) => &item.label,
+        SourceControlDiscoveryItem::Provider(item) => &item.label,
+    }
+}
+
+fn source_control_item_status(item: &SourceControlDiscoveryItem) -> SourceControlDiscoveryStatus {
+    match item {
+        SourceControlDiscoveryItem::Vcs(item) => item.status,
+        SourceControlDiscoveryItem::Provider(item) => item.status,
+    }
+}
+
+fn source_control_item_install_hint(item: &SourceControlDiscoveryItem) -> &str {
+    match item {
+        SourceControlDiscoveryItem::Vcs(item) => &item.install_hint,
+        SourceControlDiscoveryItem::Provider(item) => &item.install_hint,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GitActionIconName {
     Commit,
@@ -5695,6 +6208,298 @@ pub struct AdvertisedEndpoint {
     pub status: AdvertisedEndpointStatus,
     pub is_default: bool,
     pub hosted_https_app: HostedHttpsAppCompatibility,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClientRuntimeHostedHttpsCompatibility {
+    Compatible,
+    MixedContentBlocked,
+    Unknown,
+}
+
+impl ClientRuntimeHostedHttpsCompatibility {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Compatible => "compatible",
+            Self::MixedContentBlocked => "mixed-content-blocked",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientRuntimeAdvertisedEndpointProvider {
+    pub id: String,
+    pub label: String,
+    pub kind: String,
+    pub is_addon: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientRuntimeAdvertisedEndpoint {
+    pub id: String,
+    pub label: String,
+    pub provider: ClientRuntimeAdvertisedEndpointProvider,
+    pub http_base_url: String,
+    pub ws_base_url: String,
+    pub reachability: String,
+    pub hosted_https_app: ClientRuntimeHostedHttpsCompatibility,
+    pub desktop_app_compatibility: String,
+    pub source: String,
+    pub status: String,
+    pub is_default: Option<bool>,
+    pub description: Option<String>,
+}
+
+pub fn normalize_client_runtime_http_base_url(raw_value: &str) -> Result<String, String> {
+    let trimmed = raw_value.trim();
+    let scheme_end = trimmed
+        .find("://")
+        .ok_or_else(|| "Endpoint must use HTTP or HTTPS. Received unknown:".to_string())?;
+    let raw_scheme = trimmed[..scheme_end].to_ascii_lowercase();
+    let scheme = match raw_scheme.as_str() {
+        "http" | "ws" => "http",
+        "https" | "wss" => "https",
+        _ => {
+            return Err(format!(
+                "Endpoint must use HTTP or HTTPS. Received {raw_scheme}:"
+            ));
+        }
+    };
+    let rest = &trimmed[scheme_end + 3..];
+    let authority_end = rest
+        .find(|character| matches!(character, '/' | '?' | '#'))
+        .unwrap_or(rest.len());
+    let authority = rest[..authority_end].trim();
+    if authority.is_empty() {
+        return Err("Endpoint must use HTTP or HTTPS. Received unknown:".to_string());
+    }
+    Ok(format!("{scheme}://{authority}/"))
+}
+
+pub fn derive_client_runtime_ws_base_url(http_base_url: &str) -> Result<String, String> {
+    let normalized = normalize_client_runtime_http_base_url(http_base_url)?;
+    if let Some(rest) = normalized.strip_prefix("https://") {
+        Ok(format!("wss://{rest}"))
+    } else if let Some(rest) = normalized.strip_prefix("http://") {
+        Ok(format!("ws://{rest}"))
+    } else {
+        Err("Endpoint must use HTTP or HTTPS. Received unknown:".to_string())
+    }
+}
+
+pub fn classify_client_runtime_hosted_https_compatibility(
+    http_base_url: &str,
+    fallback: ClientRuntimeHostedHttpsCompatibility,
+) -> Result<ClientRuntimeHostedHttpsCompatibility, String> {
+    let normalized = normalize_client_runtime_http_base_url(http_base_url)?;
+    if normalized.starts_with("http://") {
+        return Ok(ClientRuntimeHostedHttpsCompatibility::MixedContentBlocked);
+    }
+    Ok(
+        if fallback == ClientRuntimeHostedHttpsCompatibility::MixedContentBlocked {
+            ClientRuntimeHostedHttpsCompatibility::Unknown
+        } else {
+            fallback
+        },
+    )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CreateClientRuntimeAdvertisedEndpointInput {
+    pub id: String,
+    pub label: String,
+    pub provider: ClientRuntimeAdvertisedEndpointProvider,
+    pub http_base_url: String,
+    pub reachability: String,
+    pub hosted_https_compatibility: Option<ClientRuntimeHostedHttpsCompatibility>,
+    pub desktop_compatibility: Option<String>,
+    pub source: String,
+    pub status: Option<String>,
+    pub is_default: Option<bool>,
+    pub description: Option<String>,
+}
+
+pub fn create_client_runtime_advertised_endpoint(
+    input: CreateClientRuntimeAdvertisedEndpointInput,
+) -> Result<ClientRuntimeAdvertisedEndpoint, String> {
+    let http_base_url = normalize_client_runtime_http_base_url(&input.http_base_url)?;
+    let hosted_https_app = match input.hosted_https_compatibility {
+        Some(value) => value,
+        None => classify_client_runtime_hosted_https_compatibility(
+            &http_base_url,
+            ClientRuntimeHostedHttpsCompatibility::Unknown,
+        )?,
+    };
+    Ok(ClientRuntimeAdvertisedEndpoint {
+        id: input.id,
+        label: input.label,
+        provider: input.provider,
+        ws_base_url: derive_client_runtime_ws_base_url(&http_base_url)?,
+        http_base_url,
+        reachability: input.reachability,
+        hosted_https_app,
+        desktop_app_compatibility: input
+            .desktop_compatibility
+            .unwrap_or_else(|| "compatible".to_string()),
+        source: input.source,
+        status: input.status.unwrap_or_else(|| "available".to_string()),
+        is_default: input.is_default,
+        description: input.description,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KnownEnvironmentConnectionTarget {
+    pub http_base_url: String,
+    pub ws_base_url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KnownEnvironment {
+    pub id: String,
+    pub label: String,
+    pub source: String,
+    pub environment_id: Option<String>,
+    pub target: KnownEnvironmentConnectionTarget,
+}
+
+pub fn create_known_environment(
+    id: Option<&str>,
+    label: &str,
+    source: Option<&str>,
+    target: KnownEnvironmentConnectionTarget,
+) -> KnownEnvironment {
+    KnownEnvironment {
+        id: id
+            .map(str::to_string)
+            .unwrap_or_else(|| format!("ws:{label}")),
+        label: label.to_string(),
+        source: source.unwrap_or("manual").to_string(),
+        environment_id: None,
+        target,
+    }
+}
+
+pub fn get_known_environment_ws_base_url(environment: Option<&KnownEnvironment>) -> Option<String> {
+    environment.map(|environment| environment.target.ws_base_url.clone())
+}
+
+pub fn get_known_environment_http_base_url(
+    environment: Option<&KnownEnvironment>,
+) -> Option<String> {
+    environment.map(|environment| environment.target.http_base_url.clone())
+}
+
+pub fn attach_environment_descriptor_to_known_environment(
+    environment: &KnownEnvironment,
+    environment_id: &str,
+    label: &str,
+) -> KnownEnvironment {
+    KnownEnvironment {
+        environment_id: Some(environment_id.to_string()),
+        label: label.to_string(),
+        ..environment.clone()
+    }
+}
+
+pub fn scope_project_ref(environment_id: &str, project_id: &str) -> ScopedProjectRef {
+    ScopedProjectRef::new(environment_id, project_id)
+}
+
+pub fn scope_thread_ref(environment_id: &str, thread_id: &str) -> ScopedThreadRef {
+    ScopedThreadRef::new(environment_id, thread_id)
+}
+
+pub fn scoped_project_key(ref_: &ScopedProjectRef) -> String {
+    format!("{}:{}", ref_.environment_id, ref_.project_id)
+}
+
+pub fn scoped_thread_key(ref_: &ScopedThreadRef) -> String {
+    format!("{}:{}", ref_.environment_id, ref_.thread_id)
+}
+
+fn parse_scoped_key(key: &str) -> Option<(&str, &str)> {
+    let separator_index = key.find(':')?;
+    if separator_index == 0 || separator_index >= key.len().saturating_sub(1) {
+        return None;
+    }
+    Some((&key[..separator_index], &key[separator_index + 1..]))
+}
+
+pub fn parse_scoped_project_key(key: &str) -> Option<ScopedProjectRef> {
+    let (environment_id, project_id) = parse_scoped_key(key)?;
+    Some(scope_project_ref(environment_id, project_id))
+}
+
+pub fn parse_scoped_thread_key(key: &str) -> Option<ScopedThreadRef> {
+    let (environment_id, thread_id) = parse_scoped_key(key)?;
+    Some(scope_thread_ref(environment_id, thread_id))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlDiscoveryStateSnapshot {
+    pub has_data: bool,
+    pub error: Option<String>,
+    pub is_pending: bool,
+}
+
+pub const EMPTY_SOURCE_CONTROL_DISCOVERY_STATE_SNAPSHOT: SourceControlDiscoveryStateSnapshot =
+    SourceControlDiscoveryStateSnapshot {
+        has_data: false,
+        error: None,
+        is_pending: false,
+    };
+
+pub const INITIAL_SOURCE_CONTROL_DISCOVERY_STATE_SNAPSHOT: SourceControlDiscoveryStateSnapshot =
+    SourceControlDiscoveryStateSnapshot {
+        has_data: false,
+        error: None,
+        is_pending: true,
+    };
+
+pub fn get_source_control_discovery_target_key(key: Option<&str>) -> Option<String> {
+    key.map(str::trim)
+        .filter(|key| !key.is_empty())
+        .map(str::to_string)
+}
+
+pub fn source_control_discovery_mark_pending(
+    current: &SourceControlDiscoveryStateSnapshot,
+) -> SourceControlDiscoveryStateSnapshot {
+    if !current.has_data {
+        INITIAL_SOURCE_CONTROL_DISCOVERY_STATE_SNAPSHOT
+    } else {
+        SourceControlDiscoveryStateSnapshot {
+            has_data: true,
+            error: None,
+            is_pending: true,
+        }
+    }
+}
+
+pub fn source_control_discovery_set_data() -> SourceControlDiscoveryStateSnapshot {
+    SourceControlDiscoveryStateSnapshot {
+        has_data: true,
+        error: None,
+        is_pending: false,
+    }
+}
+
+pub fn source_control_discovery_set_error(
+    current: &SourceControlDiscoveryStateSnapshot,
+    error: Option<&str>,
+) -> SourceControlDiscoveryStateSnapshot {
+    SourceControlDiscoveryStateSnapshot {
+        has_data: current.has_data,
+        error: Some(
+            error
+                .filter(|message| !message.is_empty())
+                .unwrap_or("Failed to discover source control tools.")
+                .to_string(),
+        ),
+        is_pending: false,
+    }
 }
 
 pub fn is_tailscale_https_endpoint(endpoint: &AdvertisedEndpoint) -> bool {
@@ -8753,6 +9558,317 @@ pub fn get_thread_from_environment_state(
     })
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ProjectionShellSnapshotInput {
+    pub environment_id: String,
+    pub projects: Vec<ProjectionProjectRow>,
+    pub threads: Vec<ProjectionThreadRow>,
+    pub sessions: Vec<ProjectionThreadSessionRow>,
+    pub latest_turns: Vec<ProjectionLatestTurnRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectionProjectRow {
+    pub project_id: String,
+    pub title: String,
+    pub workspace_root: String,
+    pub scripts: Vec<ProjectScript>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub deleted_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectionThreadRow {
+    pub thread_id: String,
+    pub project_id: String,
+    pub title: String,
+    pub runtime_mode: RuntimeMode,
+    pub interaction_mode: ProviderInteractionMode,
+    pub branch: Option<String>,
+    pub worktree_path: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+    pub archived_at: Option<String>,
+    pub latest_user_message_at: Option<String>,
+    pub pending_approval_count: u32,
+    pub pending_user_input_count: u32,
+    pub has_actionable_proposed_plan: bool,
+    pub deleted_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectionThreadSessionRow {
+    pub thread_id: String,
+    pub status: String,
+    pub provider_name: String,
+    pub provider_instance_id: Option<String>,
+    pub active_turn_id: Option<String>,
+    pub last_error: Option<String>,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectionLatestTurnRow {
+    pub thread_id: String,
+    pub turn_id: String,
+    pub state: String,
+    pub requested_at: String,
+    pub started_at: Option<String>,
+    pub completed_at: Option<String>,
+    pub assistant_message_id: Option<String>,
+    pub source_proposed_plan_thread_id: Option<String>,
+    pub source_proposed_plan_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectionShellSnapshot {
+    pub projects: Vec<ProjectSummary>,
+    pub threads: Vec<ThreadSummary>,
+    pub environment_state: EnvironmentState,
+}
+
+pub fn build_projection_shell_snapshot(
+    input: ProjectionShellSnapshotInput,
+) -> ProjectionShellSnapshot {
+    let ProjectionShellSnapshotInput {
+        environment_id,
+        mut projects,
+        mut threads,
+        sessions,
+        latest_turns,
+    } = input;
+
+    projects.sort_by(|left, right| {
+        left.created_at
+            .cmp(&right.created_at)
+            .then_with(|| left.project_id.cmp(&right.project_id))
+    });
+    threads.sort_by(|left, right| {
+        left.created_at
+            .cmp(&right.created_at)
+            .then_with(|| left.thread_id.cmp(&right.thread_id))
+    });
+
+    let active_projects: Vec<ProjectionProjectRow> = projects
+        .into_iter()
+        .filter(|project| project.deleted_at.is_none())
+        .collect();
+    let project_names: BTreeMap<String, String> = active_projects
+        .iter()
+        .map(|project| (project.project_id.clone(), project.title.clone()))
+        .collect();
+    let sessions_by_thread: BTreeMap<String, ProjectionThreadSessionRow> = sessions
+        .into_iter()
+        .map(|session| (session.thread_id.clone(), session))
+        .collect();
+    let latest_turns_by_thread: BTreeMap<String, ProjectionLatestTurnRow> = latest_turns
+        .into_iter()
+        .map(|turn| (turn.thread_id.clone(), turn))
+        .collect();
+
+    let summaries = active_projects
+        .iter()
+        .map(|project| project_summary_from_projection(&environment_id, project))
+        .collect::<Vec<_>>();
+
+    let active_threads: Vec<ProjectionThreadRow> = threads
+        .into_iter()
+        .filter(|thread| thread.deleted_at.is_none())
+        .collect();
+    let thread_summaries = active_threads
+        .iter()
+        .map(|thread| {
+            let project_name = project_names
+                .get(&thread.project_id)
+                .map(String::as_str)
+                .unwrap_or(thread.project_id.as_str());
+            thread_summary_from_projection(
+                &environment_id,
+                thread,
+                project_name,
+                sessions_by_thread.get(&thread.thread_id),
+                latest_turns_by_thread.get(&thread.thread_id),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    let mut environment_state = EnvironmentState::default();
+    for thread in active_threads {
+        let latest_turn = latest_turns_by_thread
+            .get(&thread.thread_id)
+            .map(latest_turn_from_projection);
+        environment_state.thread_shell_by_id.insert(
+            thread.thread_id.clone(),
+            thread_shell_from_projection(&environment_id, &thread),
+        );
+        if let Some(session) = sessions_by_thread.get(&thread.thread_id) {
+            environment_state.thread_session_by_id.insert(
+                thread.thread_id.clone(),
+                thread_session_from_projection(session),
+            );
+        }
+        if latest_turn.is_some() {
+            let pending_source_proposed_plan = latest_turns_by_thread
+                .get(&thread.thread_id)
+                .and_then(source_proposed_plan_key);
+            environment_state.thread_turn_state_by_id.insert(
+                thread.thread_id.clone(),
+                ThreadTurnState {
+                    latest_turn,
+                    pending_source_proposed_plan,
+                },
+            );
+        }
+    }
+
+    ProjectionShellSnapshot {
+        projects: summaries,
+        threads: thread_summaries,
+        environment_state,
+    }
+}
+
+pub fn project_summary_from_projection(
+    environment_id: &str,
+    row: &ProjectionProjectRow,
+) -> ProjectSummary {
+    ProjectSummary {
+        id: row.project_id.clone(),
+        environment_id: environment_id.to_string(),
+        name: row.title.clone(),
+        path: row.workspace_root.clone(),
+        scripts: row.scripts.clone(),
+    }
+}
+
+pub fn thread_summary_from_projection(
+    environment_id: &str,
+    row: &ProjectionThreadRow,
+    project_name: &str,
+    session: Option<&ProjectionThreadSessionRow>,
+    latest_turn: Option<&ProjectionLatestTurnRow>,
+) -> ThreadSummary {
+    ThreadSummary {
+        id: row.thread_id.clone(),
+        environment_id: environment_id.to_string(),
+        project_id: row.project_id.clone(),
+        title: row.title.clone(),
+        project_name: project_name.to_string(),
+        status: projection_thread_status(row, session, latest_turn),
+        created_at: row.created_at.clone(),
+        updated_at: row.updated_at.clone(),
+        archived_at: row.archived_at.clone(),
+        latest_user_message_at: row.latest_user_message_at.clone(),
+        has_pending_approvals: row.pending_approval_count > 0,
+        has_pending_user_input: row.pending_user_input_count > 0,
+        has_actionable_proposed_plan: row.has_actionable_proposed_plan,
+        branch: row.branch.clone(),
+        worktree_path: row.worktree_path.clone(),
+    }
+}
+
+pub fn projection_thread_status(
+    row: &ProjectionThreadRow,
+    session: Option<&ProjectionThreadSessionRow>,
+    latest_turn: Option<&ProjectionLatestTurnRow>,
+) -> ThreadStatus {
+    if row.pending_approval_count > 0 || row.pending_user_input_count > 0 {
+        return ThreadStatus::NeedsInput;
+    }
+    if session
+        .map(|session| orchestration_status_phase(&session.status) == SessionPhase::Error)
+        .unwrap_or(false)
+        || latest_turn
+            .map(|turn| turn.state == "error")
+            .unwrap_or(false)
+    {
+        return ThreadStatus::Failed;
+    }
+    if session
+        .map(|session| {
+            matches!(
+                orchestration_status_phase(&session.status),
+                SessionPhase::Connecting | SessionPhase::Running
+            )
+        })
+        .unwrap_or(false)
+        || latest_turn
+            .map(|turn| latest_turn_state(&turn.state) == "running")
+            .unwrap_or(false)
+    {
+        return ThreadStatus::Running;
+    }
+    ThreadStatus::Idle
+}
+
+fn thread_shell_from_projection(environment_id: &str, row: &ProjectionThreadRow) -> ThreadShell {
+    ThreadShell {
+        id: row.thread_id.clone(),
+        environment_id: environment_id.to_string(),
+        codex_thread_id: None,
+        project_id: row.project_id.clone(),
+        title: row.title.clone(),
+        runtime_mode: row.runtime_mode,
+        interaction_mode: row.interaction_mode,
+        error: None,
+        created_at: row.created_at.clone(),
+        archived_at: row.archived_at.clone(),
+        updated_at: Some(row.updated_at.clone()),
+        branch: row.branch.clone(),
+        worktree_path: row.worktree_path.clone(),
+    }
+}
+
+fn thread_session_from_projection(row: &ProjectionThreadSessionRow) -> ThreadSession {
+    ThreadSession {
+        provider: row.provider_name.clone(),
+        provider_instance_id: row.provider_instance_id.clone(),
+        status: orchestration_status_phase(&row.status),
+        active_turn_id: row.active_turn_id.clone(),
+        created_at: row.updated_at.clone(),
+        updated_at: row.updated_at.clone(),
+        last_error: row.last_error.clone(),
+        orchestration_status: row.status.clone(),
+    }
+}
+
+fn latest_turn_from_projection(row: &ProjectionLatestTurnRow) -> LatestTurn {
+    LatestTurn {
+        turn_id: row.turn_id.clone(),
+        state: latest_turn_state(&row.state).to_string(),
+        requested_at: row.requested_at.clone(),
+        started_at: row.started_at.clone(),
+        completed_at: row.completed_at.clone(),
+        assistant_message_id: row.assistant_message_id.clone(),
+    }
+}
+
+fn latest_turn_state(state: &str) -> &'static str {
+    match state {
+        "error" => "error",
+        "interrupted" => "interrupted",
+        "completed" => "completed",
+        _ => "running",
+    }
+}
+
+fn orchestration_status_phase(status: &str) -> SessionPhase {
+    match status {
+        "connecting" | "starting" => SessionPhase::Connecting,
+        "running" => SessionPhase::Running,
+        "error" => SessionPhase::Error,
+        "closed" => SessionPhase::Closed,
+        "disconnected" => SessionPhase::Disconnected,
+        _ => SessionPhase::Ready,
+    }
+}
+
+fn source_proposed_plan_key(row: &ProjectionLatestTurnRow) -> Option<String> {
+    let _thread_id = row.source_proposed_plan_thread_id.as_ref()?;
+    row.source_proposed_plan_id.clone()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppSnapshot {
     pub route: ChatRoute,
@@ -9116,6 +10232,116 @@ impl AppSnapshot {
         ]
     }
 
+    pub fn from_projection_shell_snapshot(shell: ProjectionShellSnapshot) -> Self {
+        let primary_environment_id = shell
+            .projects
+            .first()
+            .map(|project| project.environment_id.clone());
+        let route = shell
+            .threads
+            .iter()
+            .find(|thread| thread.archived_at.is_none())
+            .map(|thread| {
+                ChatRoute::Thread(ThreadRouteTarget::Server {
+                    thread_ref: ScopedThreadRef::new(&thread.environment_id, &thread.id),
+                })
+            })
+            .unwrap_or(ChatRoute::Index);
+        let available_environments = shell
+            .projects
+            .iter()
+            .map(|project| {
+                let is_primary =
+                    primary_environment_id.as_deref() == Some(project.environment_id.as_str());
+                BranchToolbarEnvironmentOption {
+                    environment_id: project.environment_id.clone(),
+                    project_id: project.id.clone(),
+                    label: resolve_environment_option_label(
+                        is_primary,
+                        &project.environment_id,
+                        None,
+                        Some(&project.name),
+                    ),
+                    is_primary,
+                }
+            })
+            .collect();
+
+        let mut snapshot = Self::empty_reference_state();
+        snapshot.route = route;
+        snapshot.projects = shell.projects;
+        snapshot.threads = shell.threads;
+        snapshot.available_environments = available_environments;
+        snapshot.primary_environment_id = primary_environment_id;
+        snapshot
+    }
+
+    fn reference_projection_store() -> persistence::ProjectionSqliteStore {
+        let store = persistence::ProjectionSqliteStore::open_in_memory()
+            .expect("reference projection sqlite store should open");
+        store
+            .upsert_project(&ProjectionProjectRow {
+                project_id: "project-r3code".to_string(),
+                title: "r3code".to_string(),
+                workspace_root: "C:\\Users\\bunny\\Downloads\\r3code".to_string(),
+                scripts: Self::reference_project_scripts(),
+                created_at: "2026-03-04T11:58:00.000Z".to_string(),
+                updated_at: "2026-03-04T12:00:12.000Z".to_string(),
+                deleted_at: None,
+            })
+            .expect("reference projection project should upsert");
+        store
+            .upsert_thread(&ProjectionThreadRow {
+                thread_id: "thread-r3code-ui-shell".to_string(),
+                project_id: "project-r3code".to_string(),
+                title: "Port R3Code UI shell".to_string(),
+                runtime_mode: RuntimeMode::FullAccess,
+                interaction_mode: ProviderInteractionMode::Default,
+                branch: Some("main".to_string()),
+                worktree_path: None,
+                created_at: "2026-03-04T11:59:00.000Z".to_string(),
+                updated_at: "2026-03-04T12:00:12.000Z".to_string(),
+                archived_at: None,
+                latest_user_message_at: Some("2026-03-04T12:00:09.000Z".to_string()),
+                pending_approval_count: 0,
+                pending_user_input_count: 0,
+                has_actionable_proposed_plan: false,
+                deleted_at: None,
+            })
+            .expect("reference projection thread should upsert");
+        store
+            .upsert_message(
+                "thread-r3code-ui-shell",
+                &ChatMessage::user(
+                    "msg-user-r3code-ui-shell",
+                    "Make the Rust port match the original UI exactly.",
+                    "2026-03-04T12:00:09.000Z",
+                ),
+            )
+            .expect("reference projection user message should upsert");
+        store
+            .upsert_message(
+                "thread-r3code-ui-shell",
+                &ChatMessage::assistant(
+                    "msg-assistant-r3code-ui-shell",
+                    "Building a static GPUI shell first, then replacing mock data with Rust state.",
+                    "2026-03-04T12:00:12.000Z",
+                ),
+            )
+            .expect("reference projection assistant message should upsert");
+        store
+    }
+
+    fn reference_projection_shell_snapshot(
+        store: &persistence::ProjectionSqliteStore,
+    ) -> ProjectionShellSnapshot {
+        build_projection_shell_snapshot(
+            store
+                .load_shell_snapshot_input("local")
+                .expect("reference projection shell should load"),
+        )
+    }
+
     pub fn empty_reference_state() -> Self {
         Self {
             route: ChatRoute::Index,
@@ -9207,6 +10433,29 @@ impl AppSnapshot {
     }
 
     pub fn mock_reference_state() -> Self {
+        let store = Self::reference_projection_store();
+        let mut snapshot =
+            Self::from_projection_shell_snapshot(Self::reference_projection_shell_snapshot(&store));
+        snapshot.is_git_repo = true;
+        snapshot.available_environments = Self::reference_environments();
+        snapshot.vcs_refs = Self::reference_vcs_refs();
+        snapshot.current_git_branch = Some("main".to_string());
+        snapshot.primary_environment_id = Some("primary-local".to_string());
+        snapshot.available_editors = vec![EditorId::VsCode, EditorId::Zed, EditorId::FileManager];
+        snapshot.preferred_editor = Some(EditorId::VsCode);
+        snapshot.selected_model = DEFAULT_GIT_TEXT_GENERATION_MODEL.to_string();
+        let thread = store
+            .load_thread_detail("local", "thread-r3code-ui-shell")
+            .expect("reference projection thread detail should load")
+            .expect("reference projection thread detail should exist");
+        snapshot.messages = thread.messages;
+        snapshot.activities = thread.activities;
+        snapshot.turn_diff_summaries = thread.turn_diff_summaries;
+        snapshot
+    }
+
+    #[cfg(test)]
+    fn static_mock_reference_state() -> Self {
         Self {
             route: ChatRoute::Thread(ThreadRouteTarget::Server {
                 thread_ref: ScopedThreadRef::new("local", "thread-r3code-ui-shell"),
@@ -10120,6 +11369,163 @@ mod tests {
         assert_eq!(
             resolve_advertised_endpoint_pairing_url(&tailscale_https, "PAIRCODE").unwrap(),
             "https://app.t3.codes/pair?host=https%3A%2F%2Fdesktop.tailnet.ts.net%3A8765#token=PAIRCODE"
+        );
+    }
+
+    #[test]
+    fn ports_client_runtime_endpoint_environment_and_scoped_ref_helpers() {
+        assert_eq!(
+            normalize_client_runtime_http_base_url("https://example.com/path?x=1#hash").unwrap(),
+            "https://example.com/"
+        );
+        assert_eq!(
+            normalize_client_runtime_http_base_url("wss://example.com/socket").unwrap(),
+            "https://example.com/"
+        );
+        assert_eq!(
+            derive_client_runtime_ws_base_url("https://example.com/api").unwrap(),
+            "wss://example.com/"
+        );
+        assert_eq!(
+            derive_client_runtime_ws_base_url("http://127.0.0.1:3773").unwrap(),
+            "ws://127.0.0.1:3773/"
+        );
+        assert_eq!(
+            classify_client_runtime_hosted_https_compatibility(
+                "http://192.168.1.44:3773",
+                ClientRuntimeHostedHttpsCompatibility::Unknown
+            )
+            .unwrap(),
+            ClientRuntimeHostedHttpsCompatibility::MixedContentBlocked
+        );
+        assert_eq!(
+            classify_client_runtime_hosted_https_compatibility(
+                "https://desktop.example.com",
+                ClientRuntimeHostedHttpsCompatibility::Compatible
+            )
+            .unwrap(),
+            ClientRuntimeHostedHttpsCompatibility::Compatible
+        );
+
+        let endpoint =
+            create_client_runtime_advertised_endpoint(CreateClientRuntimeAdvertisedEndpointInput {
+                id: "lan:http://192.168.1.44:3773".to_string(),
+                label: "LAN".to_string(),
+                provider: ClientRuntimeAdvertisedEndpointProvider {
+                    id: "desktop-core".to_string(),
+                    label: "Desktop".to_string(),
+                    kind: "core".to_string(),
+                    is_addon: false,
+                },
+                http_base_url: "http://192.168.1.44:3773".to_string(),
+                reachability: "lan".to_string(),
+                hosted_https_compatibility: None,
+                desktop_compatibility: None,
+                source: "desktop-core".to_string(),
+                status: None,
+                is_default: Some(true),
+                description: None,
+            })
+            .unwrap();
+        assert_eq!(endpoint.http_base_url, "http://192.168.1.44:3773/");
+        assert_eq!(endpoint.ws_base_url, "ws://192.168.1.44:3773/");
+        assert_eq!(
+            endpoint.hosted_https_app,
+            ClientRuntimeHostedHttpsCompatibility::MixedContentBlocked
+        );
+        assert_eq!(endpoint.desktop_app_compatibility, "compatible");
+        assert_eq!(endpoint.status, "available");
+        assert_eq!(endpoint.is_default, Some(true));
+
+        let environment = create_known_environment(
+            None,
+            "Remote environment",
+            None,
+            KnownEnvironmentConnectionTarget {
+                http_base_url: "https://remote.example.com".to_string(),
+                ws_base_url: "wss://remote.example.com".to_string(),
+            },
+        );
+        assert_eq!(environment.id, "ws:Remote environment");
+        assert_eq!(environment.source, "manual");
+        assert_eq!(
+            get_known_environment_http_base_url(Some(&environment)).as_deref(),
+            Some("https://remote.example.com")
+        );
+        assert_eq!(
+            get_known_environment_ws_base_url(Some(&environment)).as_deref(),
+            Some("wss://remote.example.com")
+        );
+        assert_eq!(
+            attach_environment_descriptor_to_known_environment(
+                &environment,
+                "environment-test",
+                "Test environment"
+            )
+            .label,
+            "Test environment"
+        );
+
+        let project_ref = scope_project_ref("environment-test", "project-1");
+        let thread_ref = scope_thread_ref("environment-test", "thread-1");
+        assert_eq!(
+            scoped_project_key(&project_ref),
+            "environment-test:project-1"
+        );
+        assert_eq!(scoped_thread_key(&thread_ref), "environment-test:thread-1");
+        assert_eq!(
+            parse_scoped_project_key("environment-test:project-1"),
+            Some(project_ref)
+        );
+        assert_eq!(
+            parse_scoped_thread_key("environment-test:thread-1"),
+            Some(thread_ref)
+        );
+        assert_eq!(parse_scoped_project_key("bad-key"), None);
+    }
+
+    #[test]
+    fn ports_client_runtime_source_control_discovery_state_helpers() {
+        assert_eq!(
+            get_source_control_discovery_target_key(Some(" primary ")).as_deref(),
+            Some("primary")
+        );
+        assert_eq!(get_source_control_discovery_target_key(Some("   ")), None);
+        assert_eq!(get_source_control_discovery_target_key(None), None);
+        assert_eq!(
+            EMPTY_SOURCE_CONTROL_DISCOVERY_STATE_SNAPSHOT,
+            SourceControlDiscoveryStateSnapshot {
+                has_data: false,
+                error: None,
+                is_pending: false,
+            }
+        );
+        assert_eq!(
+            source_control_discovery_mark_pending(&EMPTY_SOURCE_CONTROL_DISCOVERY_STATE_SNAPSHOT),
+            INITIAL_SOURCE_CONTROL_DISCOVERY_STATE_SNAPSHOT
+        );
+        let with_data = source_control_discovery_set_data();
+        assert_eq!(
+            source_control_discovery_mark_pending(&with_data),
+            SourceControlDiscoveryStateSnapshot {
+                has_data: true,
+                error: None,
+                is_pending: true,
+            }
+        );
+        assert_eq!(
+            source_control_discovery_set_error(&with_data, Some("probe failed")),
+            SourceControlDiscoveryStateSnapshot {
+                has_data: true,
+                error: Some("probe failed".to_string()),
+                is_pending: false,
+            }
+        );
+        assert_eq!(
+            source_control_discovery_set_error(&with_data, None)
+                .error
+                .as_deref(),
+            Some("Failed to discover source control tools.")
         );
     }
 
@@ -11697,6 +13103,152 @@ mod tests {
     }
 
     #[test]
+    fn keybindings_server_runtime_config_contracts_match_upstream() {
+        assert_eq!(MAX_KEYBINDINGS_COUNT, 256);
+        assert_eq!(default_server_keybinding_rules().len(), 31);
+
+        let custom_toggle = ServerKeybindingRule {
+            command: "terminal.toggle".to_string(),
+            key: "mod+shift+t".to_string(),
+            when: None,
+        };
+        let state = keybindings_config_state_from_custom_rules(&[custom_toggle.clone()], &[]);
+        assert!(
+            state
+                .keybindings
+                .iter()
+                .any(|binding| binding.command == "terminal.toggle"
+                    && shortcut_to_keybinding_input(&binding.shortcut) == "mod+shift+t")
+        );
+        assert!(
+            !state
+                .keybindings
+                .iter()
+                .any(|binding| binding.command == "terminal.toggle"
+                    && shortcut_to_keybinding_input(&binding.shortcut) == "mod+j")
+        );
+
+        let with_invalid = compile_server_keybindings_config(&[
+            ServerKeybindingRule {
+                command: "terminal.toggle".to_string(),
+                key: "mod+j".to_string(),
+                when: None,
+            },
+            ServerKeybindingRule {
+                command: "terminal.new".to_string(),
+                key: "mod+shift+d+o".to_string(),
+                when: None,
+            },
+        ]);
+        assert_eq!(with_invalid.len(), 1);
+        assert_eq!(with_invalid[0].command, "terminal.toggle");
+
+        let issues = vec![KeybindingsConfigIssue {
+            kind: "keybindings.malformed-config".to_string(),
+            index: None,
+            message: "expected JSON array".to_string(),
+        }];
+        let skipped = sync_default_keybindings_on_startup_plan(&[custom_toggle.clone()], true);
+        assert!(skipped.skipped_due_to_issues);
+        assert!(!skipped.changed);
+        assert_eq!(
+            keybindings_config_state_from_custom_rules(&[], &issues).issues,
+            issues
+        );
+
+        let conflict_plan = sync_default_keybindings_on_startup_plan(
+            &[ServerKeybindingRule {
+                command: "script.custom-action.run".to_string(),
+                key: "mod+j".to_string(),
+                when: None,
+            }],
+            false,
+        );
+        assert!(
+            !conflict_plan
+                .next_config
+                .iter()
+                .any(|rule| rule.command == "terminal.toggle")
+        );
+        assert_eq!(
+            conflict_plan.skipped_default_conflicts,
+            vec![KeybindingsDefaultConflict {
+                default_command: "terminal.toggle".to_string(),
+                conflicting_command: "script.custom-action.run".to_string(),
+                key: "mod+j".to_string(),
+                when: None,
+            }]
+        );
+
+        let sync_plan = sync_default_keybindings_on_startup_plan(&[custom_toggle.clone()], false);
+        assert!(sync_plan.changed);
+        assert!(
+            sync_plan
+                .next_config
+                .iter()
+                .any(|rule| rule.command == "terminal.toggle" && rule.key == "mod+shift+t")
+        );
+        for default_rule in default_server_keybinding_rules() {
+            if default_rule.command != "terminal.toggle" {
+                assert!(
+                    sync_plan
+                        .next_config
+                        .iter()
+                        .any(|rule| rule.command == default_rule.command),
+                    "expected missing default {} to be backfilled",
+                    default_rule.command
+                );
+            }
+        }
+
+        let upserted = upsert_keybinding_rule_in_config(
+            &[
+                ServerKeybindingRule {
+                    command: "script.run-tests.run".to_string(),
+                    key: "mod+r".to_string(),
+                    when: None,
+                },
+                ServerKeybindingRule {
+                    command: "script.run-tests.run".to_string(),
+                    key: "mod+shift+r".to_string(),
+                    when: None,
+                },
+            ],
+            &KeybindingUpsertInput {
+                command: "script.run-tests.run".to_string(),
+                key: "mod+alt+r".to_string(),
+                when: None,
+                replace: Some(KeybindingTarget {
+                    command: "script.run-tests.run".to_string(),
+                    key: "mod+r".to_string(),
+                    when: None,
+                }),
+            },
+        );
+        assert_eq!(
+            upserted
+                .iter()
+                .map(|rule| (rule.key.as_str(), rule.command.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("mod+shift+r", "script.run-tests.run"),
+                ("mod+alt+r", "script.run-tests.run")
+            ]
+        );
+
+        let removed = remove_keybinding_rule_from_config(
+            &upserted,
+            &KeybindingTarget {
+                command: "script.run-tests.run".to_string(),
+                key: "mod+shift+r".to_string(),
+                when: None,
+            },
+        );
+        assert_eq!(removed.len(), 1);
+        assert_eq!(removed[0].key, "mod+alt+r");
+    }
+
+    #[test]
     fn open_in_picker_visibility_and_options_match_upstream_logic() {
         assert!(should_show_open_in_picker(
             Some("codething-mvp"),
@@ -11733,6 +13285,145 @@ mod tests {
                 .map(|option| option.label)
                 .collect::<Vec<_>>(),
             vec!["VS Code Insiders", "VSCodium", "Explorer"]
+        );
+    }
+
+    #[test]
+    fn source_control_settings_helpers_match_upstream_presentation() {
+        assert_eq!(SOURCE_CONTROL_DEFAULT_FETCH_INTERVAL_SECONDS, 30);
+        assert_eq!(git_fetch_interval_seconds_from_millis(29_500), 30);
+        assert_eq!(normalize_git_fetch_interval_seconds(None), 0);
+        assert_eq!(normalize_git_fetch_interval_seconds(Some(f64::NAN)), 0);
+        assert_eq!(normalize_git_fetch_interval_seconds(Some(-3.4)), 0);
+        assert_eq!(normalize_git_fetch_interval_seconds(Some(7.6)), 8);
+
+        let authenticated = SourceControlProviderAuth {
+            status: SourceControlProviderAuthStatus::Authenticated,
+            account: Some("jasper".to_string()),
+            host: None,
+            detail: None,
+        };
+        assert_eq!(
+            source_control_auth_presentation(&authenticated),
+            SourceControlAuthPresentation {
+                label: "Authenticated".to_string(),
+                badge: None,
+            }
+        );
+
+        let unauthenticated = SourceControlProviderAuth {
+            status: SourceControlProviderAuthStatus::Unauthenticated,
+            account: None,
+            host: None,
+            detail: None,
+        };
+        assert_eq!(
+            source_control_auth_presentation(&unauthenticated),
+            SourceControlAuthPresentation {
+                label: "Not authenticated".to_string(),
+                badge: Some(SourceControlBadge::Warning),
+            }
+        );
+
+        let git = SourceControlDiscoveryItem::Vcs(VcsDiscoveryItem {
+            kind: VcsDriverKind::Git,
+            label: "Git".to_string(),
+            executable: Some("git".to_string()),
+            implemented: true,
+            status: SourceControlDiscoveryStatus::Available,
+            version: Some("git version 2.50.0".to_string()),
+            install_hint: "Install Git.".to_string(),
+            detail: None,
+        });
+        assert!(!source_control_is_provider_item(&git));
+        assert!(!source_control_is_vcs_not_ready(&git));
+        assert!(source_control_item_enabled(&git));
+        assert_eq!(
+            source_control_item_status_tone(&git),
+            SourceControlStatusTone::Success
+        );
+        assert_eq!(source_control_item_summary(&git), "Available");
+
+        let jj = SourceControlDiscoveryItem::Vcs(VcsDiscoveryItem {
+            kind: VcsDriverKind::Jj,
+            label: "Jujutsu".to_string(),
+            executable: Some("jj".to_string()),
+            implemented: false,
+            status: SourceControlDiscoveryStatus::Available,
+            version: None,
+            install_hint: "Install Jujutsu.".to_string(),
+            detail: None,
+        });
+        assert!(source_control_is_vcs_not_ready(&jj));
+        assert!(!source_control_item_enabled(&jj));
+        assert_eq!(
+            source_control_item_status_tone(&jj),
+            SourceControlStatusTone::Muted
+        );
+        assert_eq!(
+            source_control_item_summary(&jj),
+            "Support for Jujutsu is coming soon."
+        );
+
+        let missing_git = SourceControlDiscoveryItem::Vcs(VcsDiscoveryItem {
+            kind: VcsDriverKind::Git,
+            label: "Git".to_string(),
+            executable: Some("git".to_string()),
+            implemented: true,
+            status: SourceControlDiscoveryStatus::Missing,
+            version: None,
+            install_hint: "Install Git.".to_string(),
+            detail: None,
+        });
+        assert!(!source_control_item_enabled(&missing_git));
+        assert_eq!(
+            source_control_item_status_tone(&missing_git),
+            SourceControlStatusTone::Warning
+        );
+        assert_eq!(
+            source_control_item_summary(&missing_git),
+            "Not available on this server: Install Git."
+        );
+
+        let github = SourceControlDiscoveryItem::Provider(SourceControlProviderDiscoveryItem {
+            kind: SourceControlProviderKind::Github,
+            label: "GitHub".to_string(),
+            executable: Some("gh".to_string()),
+            status: SourceControlDiscoveryStatus::Available,
+            version: None,
+            install_hint: "Install GitHub CLI.".to_string(),
+            detail: None,
+            auth: unauthenticated,
+        });
+        assert!(source_control_is_provider_item(&github));
+        assert!(source_control_item_enabled(&github));
+        assert_eq!(
+            source_control_item_status_tone(&github),
+            SourceControlStatusTone::Warning
+        );
+        assert_eq!(
+            source_control_item_summary(&github),
+            "GitHub is not authenticated on this server. Sign in or configure credentials using the gh tool on the server host to enable pull request features."
+        );
+
+        let authed_github =
+            SourceControlDiscoveryItem::Provider(SourceControlProviderDiscoveryItem {
+                kind: SourceControlProviderKind::Github,
+                label: "GitHub".to_string(),
+                executable: Some("gh".to_string()),
+                status: SourceControlDiscoveryStatus::Available,
+                version: None,
+                install_hint: "Install GitHub CLI.".to_string(),
+                detail: None,
+                auth: authenticated,
+            });
+        assert_eq!(
+            source_control_item_status_tone(&authed_github),
+            SourceControlStatusTone::Success
+        );
+        assert_eq!(
+            source_control_item_summary(&authed_github),
+            "Authenticated as jasper"
         );
     }
 
@@ -13906,6 +15597,281 @@ mod tests {
         let state = EnvironmentState::default();
 
         assert!(get_thread_from_environment_state(&state, "missing-thread").is_none());
+    }
+
+    fn projection_project(project_id: &str, created_at: &str) -> ProjectionProjectRow {
+        ProjectionProjectRow {
+            project_id: project_id.to_string(),
+            title: format!("Project {project_id}"),
+            workspace_root: format!("/repo/{project_id}"),
+            scripts: Vec::new(),
+            created_at: created_at.to_string(),
+            updated_at: created_at.to_string(),
+            deleted_at: None,
+        }
+    }
+
+    fn projection_thread(
+        thread_id: &str,
+        project_id: &str,
+        created_at: &str,
+    ) -> ProjectionThreadRow {
+        ProjectionThreadRow {
+            thread_id: thread_id.to_string(),
+            project_id: project_id.to_string(),
+            title: format!("Thread {thread_id}"),
+            runtime_mode: RuntimeMode::FullAccess,
+            interaction_mode: ProviderInteractionMode::Default,
+            branch: Some("main".to_string()),
+            worktree_path: Some(format!("/repo/{project_id}")),
+            created_at: created_at.to_string(),
+            updated_at: created_at.to_string(),
+            archived_at: None,
+            latest_user_message_at: None,
+            pending_approval_count: 0,
+            pending_user_input_count: 0,
+            has_actionable_proposed_plan: false,
+            deleted_at: None,
+        }
+    }
+
+    #[test]
+    fn projection_shell_snapshot_filters_deleted_rows_and_keeps_t3_ordering() {
+        let mut deleted_project = projection_project("project-deleted", "2026-03-04T12:00:00.000Z");
+        deleted_project.deleted_at = Some("2026-03-04T12:00:10.000Z".to_string());
+        let mut deleted_thread = projection_thread(
+            "thread-deleted",
+            "project-first",
+            "2026-03-04T12:00:00.000Z",
+        );
+        deleted_thread.deleted_at = Some("2026-03-04T12:00:10.000Z".to_string());
+
+        let snapshot = build_projection_shell_snapshot(ProjectionShellSnapshotInput {
+            environment_id: "environment-local".to_string(),
+            projects: vec![
+                projection_project("project-second", "2026-03-04T12:00:02.000Z"),
+                deleted_project,
+                projection_project("project-first", "2026-03-04T12:00:01.000Z"),
+            ],
+            threads: vec![
+                projection_thread("thread-second", "project-first", "2026-03-04T12:00:02.000Z"),
+                deleted_thread,
+                projection_thread("thread-first", "project-first", "2026-03-04T12:00:01.000Z"),
+            ],
+            sessions: Vec::new(),
+            latest_turns: Vec::new(),
+        });
+
+        assert_eq!(
+            snapshot
+                .projects
+                .iter()
+                .map(|project| project.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["project-first", "project-second"]
+        );
+        assert_eq!(
+            snapshot
+                .threads
+                .iter()
+                .map(|thread| thread.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["thread-first", "thread-second"]
+        );
+        assert!(
+            !snapshot
+                .environment_state
+                .thread_shell_by_id
+                .contains_key("thread-deleted")
+        );
+    }
+
+    #[test]
+    fn projection_thread_summary_maps_pending_flags_before_runtime_status() {
+        let mut thread = projection_thread(
+            "thread-pending",
+            "project-first",
+            "2026-03-04T12:00:01.000Z",
+        );
+        thread.pending_approval_count = 2;
+        thread.pending_user_input_count = 1;
+        thread.has_actionable_proposed_plan = true;
+        thread.latest_user_message_at = Some("2026-03-04T12:00:02.000Z".to_string());
+
+        let summary = thread_summary_from_projection(
+            "environment-local",
+            &thread,
+            "Project",
+            Some(&ProjectionThreadSessionRow {
+                thread_id: "thread-pending".to_string(),
+                status: "running".to_string(),
+                provider_name: "codex".to_string(),
+                provider_instance_id: Some("codex".to_string()),
+                active_turn_id: Some("turn-1".to_string()),
+                last_error: None,
+                updated_at: "2026-03-04T12:00:03.000Z".to_string(),
+            }),
+            None,
+        );
+
+        assert_eq!(summary.status, ThreadStatus::NeedsInput);
+        assert!(summary.has_pending_approvals);
+        assert!(summary.has_pending_user_input);
+        assert!(summary.has_actionable_proposed_plan);
+        assert_eq!(
+            summary.latest_user_message_at.as_deref(),
+            Some("2026-03-04T12:00:02.000Z")
+        );
+    }
+
+    #[test]
+    fn projection_thread_status_maps_session_and_latest_turn_state() {
+        let thread =
+            projection_thread("thread-status", "project-first", "2026-03-04T12:00:01.000Z");
+
+        assert_eq!(
+            projection_thread_status(
+                &thread,
+                Some(&ProjectionThreadSessionRow {
+                    thread_id: "thread-status".to_string(),
+                    status: "connecting".to_string(),
+                    provider_name: "codex".to_string(),
+                    provider_instance_id: None,
+                    active_turn_id: None,
+                    last_error: None,
+                    updated_at: "2026-03-04T12:00:02.000Z".to_string(),
+                }),
+                None,
+            ),
+            ThreadStatus::Running
+        );
+        assert_eq!(
+            projection_thread_status(
+                &thread,
+                None,
+                Some(&ProjectionLatestTurnRow {
+                    thread_id: "thread-status".to_string(),
+                    turn_id: "turn-1".to_string(),
+                    state: "queued".to_string(),
+                    requested_at: "2026-03-04T12:00:02.000Z".to_string(),
+                    started_at: None,
+                    completed_at: None,
+                    assistant_message_id: None,
+                    source_proposed_plan_thread_id: None,
+                    source_proposed_plan_id: None,
+                }),
+            ),
+            ThreadStatus::Running
+        );
+        assert_eq!(
+            projection_thread_status(
+                &thread,
+                Some(&ProjectionThreadSessionRow {
+                    thread_id: "thread-status".to_string(),
+                    status: "error".to_string(),
+                    provider_name: "codex".to_string(),
+                    provider_instance_id: None,
+                    active_turn_id: None,
+                    last_error: Some("failed".to_string()),
+                    updated_at: "2026-03-04T12:00:02.000Z".to_string(),
+                }),
+                None,
+            ),
+            ThreadStatus::Failed
+        );
+    }
+
+    #[test]
+    fn projection_shell_snapshot_builds_environment_state_for_thread_detail() {
+        let snapshot = build_projection_shell_snapshot(ProjectionShellSnapshotInput {
+            environment_id: "environment-local".to_string(),
+            projects: vec![projection_project(
+                "project-first",
+                "2026-03-04T12:00:00.000Z",
+            )],
+            threads: vec![ProjectionThreadRow {
+                archived_at: Some("2026-03-04T12:00:10.000Z".to_string()),
+                ..projection_thread("thread-first", "project-first", "2026-03-04T12:00:01.000Z")
+            }],
+            sessions: vec![ProjectionThreadSessionRow {
+                thread_id: "thread-first".to_string(),
+                status: "running".to_string(),
+                provider_name: "codex".to_string(),
+                provider_instance_id: Some("codex".to_string()),
+                active_turn_id: Some("turn-1".to_string()),
+                last_error: None,
+                updated_at: "2026-03-04T12:00:02.000Z".to_string(),
+            }],
+            latest_turns: vec![ProjectionLatestTurnRow {
+                thread_id: "thread-first".to_string(),
+                turn_id: "turn-1".to_string(),
+                state: "completed".to_string(),
+                requested_at: "2026-03-04T12:00:01.000Z".to_string(),
+                started_at: Some("2026-03-04T12:00:02.000Z".to_string()),
+                completed_at: Some("2026-03-04T12:00:03.000Z".to_string()),
+                assistant_message_id: Some("msg-assistant".to_string()),
+                source_proposed_plan_thread_id: Some("thread-plan".to_string()),
+                source_proposed_plan_id: Some("plan-1".to_string()),
+            }],
+        });
+
+        let thread =
+            get_thread_from_environment_state(&snapshot.environment_state, "thread-first").unwrap();
+
+        assert_eq!(
+            thread.shell.archived_at.as_deref(),
+            Some("2026-03-04T12:00:10.000Z")
+        );
+        assert_eq!(thread.session.unwrap().status, SessionPhase::Running);
+        assert_eq!(thread.latest_turn.unwrap().state, "completed");
+        assert_eq!(
+            thread.pending_source_proposed_plan.as_deref(),
+            Some("plan-1")
+        );
+    }
+
+    #[test]
+    fn app_snapshot_can_be_built_from_projection_shell_snapshot() {
+        let shell = build_projection_shell_snapshot(ProjectionShellSnapshotInput {
+            environment_id: "environment-local".to_string(),
+            projects: vec![projection_project(
+                "project-first",
+                "2026-03-04T12:00:00.000Z",
+            )],
+            threads: vec![projection_thread(
+                "thread-first",
+                "project-first",
+                "2026-03-04T12:00:01.000Z",
+            )],
+            sessions: Vec::new(),
+            latest_turns: Vec::new(),
+        });
+
+        let snapshot = AppSnapshot::from_projection_shell_snapshot(shell);
+
+        assert_eq!(snapshot.projects[0].id, "project-first");
+        assert_eq!(snapshot.threads[0].id, "thread-first");
+        assert_eq!(
+            snapshot.route,
+            ChatRoute::Thread(ThreadRouteTarget::Server {
+                thread_ref: ScopedThreadRef::new("environment-local", "thread-first"),
+            })
+        );
+        assert_eq!(
+            snapshot.primary_environment_id.as_deref(),
+            Some("environment-local")
+        );
+    }
+
+    #[test]
+    fn mock_reference_state_uses_projection_store_for_shell_rows() {
+        let snapshot = AppSnapshot::mock_reference_state();
+        let static_snapshot = AppSnapshot::static_mock_reference_state();
+
+        assert_eq!(snapshot.projects, static_snapshot.projects);
+        assert_eq!(snapshot.threads, static_snapshot.threads);
+        assert_eq!(snapshot.route, static_snapshot.route);
+        assert_eq!(snapshot.messages, static_snapshot.messages);
     }
 
     fn vcs_ref(name: &str, is_default: bool, worktree_path: Option<&str>) -> VcsRef {
