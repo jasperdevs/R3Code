@@ -209,6 +209,63 @@ pub struct ThreadScopedToastData {
     pub thread_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WsConnectionUiState {
+    Connected,
+    Connecting,
+    Error,
+    Offline,
+    Reconnecting,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WsReconnectPhase {
+    Attempting,
+    Exhausted,
+    Idle,
+    Waiting,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WsConnectionPhase {
+    Idle,
+    Connecting,
+    Connected,
+    Disconnected,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WsConnectionStatus {
+    pub attempt_count: usize,
+    pub close_code: Option<i32>,
+    pub close_reason: Option<String>,
+    pub connection_label: Option<String>,
+    pub connected_at: Option<String>,
+    pub disconnected_at: Option<String>,
+    pub has_connected: bool,
+    pub last_error: Option<String>,
+    pub last_error_at: Option<String>,
+    pub next_retry_at: Option<String>,
+    pub online: bool,
+    pub phase: WsConnectionPhase,
+    pub reconnect_attempt_count: usize,
+    pub reconnect_max_attempts: usize,
+    pub reconnect_phase: WsReconnectPhase,
+    pub socket_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WsConnectionMetadata {
+    pub connection_label: Option<String>,
+    pub version_mismatch_hint: Option<String>,
+}
+
+pub const WS_RECONNECT_INITIAL_DELAY_MS: u64 = 1_000;
+pub const WS_RECONNECT_BACKOFF_FACTOR: u64 = 2;
+pub const WS_RECONNECT_MAX_DELAY_MS: u64 = 64_000;
+pub const WS_RECONNECT_MAX_RETRIES: usize = 7;
+pub const WS_RECONNECT_MAX_ATTEMPTS: usize = WS_RECONNECT_MAX_RETRIES + 1;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlineTerminalContextInsertion {
     pub prompt: String,
@@ -2009,6 +2066,249 @@ pub fn should_render_thread_scoped_toast(
     };
     active_thread_ref
         .is_some_and(|active_thread_ref| active_thread_ref.thread_id == *toast_thread_id)
+}
+
+pub fn initial_ws_connection_status(online: bool) -> WsConnectionStatus {
+    WsConnectionStatus {
+        attempt_count: 0,
+        close_code: None,
+        close_reason: None,
+        connection_label: None,
+        connected_at: None,
+        disconnected_at: None,
+        has_connected: false,
+        last_error: None,
+        last_error_at: None,
+        next_retry_at: None,
+        online,
+        phase: WsConnectionPhase::Idle,
+        reconnect_attempt_count: 0,
+        reconnect_max_attempts: WS_RECONNECT_MAX_ATTEMPTS,
+        reconnect_phase: WsReconnectPhase::Idle,
+        socket_url: None,
+    }
+}
+
+pub fn get_ws_connection_ui_state(status: &WsConnectionStatus) -> WsConnectionUiState {
+    if status.phase == WsConnectionPhase::Connected {
+        return WsConnectionUiState::Connected;
+    }
+
+    if !status.online
+        && (status.disconnected_at.is_some() || status.phase == WsConnectionPhase::Disconnected)
+    {
+        return WsConnectionUiState::Offline;
+    }
+
+    if !status.has_connected {
+        return if status.phase == WsConnectionPhase::Disconnected {
+            WsConnectionUiState::Error
+        } else {
+            WsConnectionUiState::Connecting
+        };
+    }
+
+    WsConnectionUiState::Reconnecting
+}
+
+pub fn record_ws_connection_attempt(
+    current: &WsConnectionStatus,
+    socket_url: &str,
+    metadata: Option<&WsConnectionMetadata>,
+) -> WsConnectionStatus {
+    let connection_label = metadata
+        .and_then(|metadata| normalize_connection_label(metadata.connection_label.as_deref()));
+    let mut next = current.clone();
+    next.attempt_count += 1;
+    if connection_label.is_some() {
+        next.connection_label = connection_label;
+    }
+    next.next_retry_at = None;
+    next.phase = WsConnectionPhase::Connecting;
+    next.reconnect_attempt_count = if current.phase == WsConnectionPhase::Connected {
+        1
+    } else {
+        current.reconnect_attempt_count + 1
+    };
+    next.reconnect_phase = WsReconnectPhase::Attempting;
+    next.socket_url = Some(socket_url.to_string());
+    next
+}
+
+pub fn record_ws_connection_opened_at(
+    current: &WsConnectionStatus,
+    metadata: Option<&WsConnectionMetadata>,
+    now_iso: &str,
+) -> WsConnectionStatus {
+    let connection_label = metadata
+        .and_then(|metadata| normalize_connection_label(metadata.connection_label.as_deref()));
+    let mut next = current.clone();
+    next.close_code = None;
+    next.close_reason = None;
+    if connection_label.is_some() {
+        next.connection_label = connection_label;
+    }
+    next.connected_at = Some(now_iso.to_string());
+    next.disconnected_at = None;
+    next.has_connected = true;
+    next.next_retry_at = None;
+    next.phase = WsConnectionPhase::Connected;
+    next.reconnect_attempt_count = 0;
+    next.reconnect_phase = WsReconnectPhase::Idle;
+    next
+}
+
+pub fn record_ws_connection_errored_at(
+    current: &WsConnectionStatus,
+    message: Option<&str>,
+    metadata: Option<&WsConnectionMetadata>,
+    now_iso: &str,
+) -> WsConnectionStatus {
+    let hint = metadata.and_then(|metadata| metadata.version_mismatch_hint.as_deref());
+    apply_ws_disconnect_state_at(
+        current,
+        WsDisconnectUpdates {
+            close_code: None,
+            close_reason: None,
+            last_error: append_ws_connection_hint(message, hint)
+                .or_else(|| append_ws_connection_hint(current.last_error.as_deref(), hint)),
+            last_error_at: Some(now_iso.to_string()),
+        },
+        None,
+        now_iso,
+    )
+}
+
+pub fn record_ws_connection_closed_at(
+    current: &WsConnectionStatus,
+    code: Option<i32>,
+    reason: Option<&str>,
+    metadata: Option<&WsConnectionMetadata>,
+    now_iso: &str,
+) -> WsConnectionStatus {
+    let hint = metadata.and_then(|metadata| metadata.version_mismatch_hint.as_deref());
+    let connection_label = metadata
+        .and_then(|metadata| normalize_connection_label(metadata.connection_label.as_deref()));
+    apply_ws_disconnect_state_at(
+        current,
+        WsDisconnectUpdates {
+            close_code: code.or(current.close_code),
+            close_reason: append_ws_connection_hint(reason, hint)
+                .or_else(|| append_ws_connection_hint(current.close_reason.as_deref(), hint)),
+            last_error: None,
+            last_error_at: None,
+        },
+        connection_label,
+        now_iso,
+    )
+}
+
+pub fn set_browser_online_status(current: &WsConnectionStatus, online: bool) -> WsConnectionStatus {
+    let mut next = current.clone();
+    next.online = online;
+    next
+}
+
+pub fn reset_ws_reconnect_backoff(current: &WsConnectionStatus) -> WsConnectionStatus {
+    let mut next = current.clone();
+    next.next_retry_at = None;
+    next.reconnect_attempt_count = 0;
+    next.reconnect_phase = WsReconnectPhase::Idle;
+    next
+}
+
+pub fn get_ws_reconnect_delay_ms_for_retry(retry_index: i64) -> Option<u64> {
+    if retry_index < 0 || retry_index as usize >= WS_RECONNECT_MAX_RETRIES {
+        return None;
+    }
+    Some(
+        (WS_RECONNECT_INITIAL_DELAY_MS * WS_RECONNECT_BACKOFF_FACTOR.pow(retry_index as u32))
+            .min(WS_RECONNECT_MAX_DELAY_MS),
+    )
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct WsDisconnectUpdates {
+    close_code: Option<i32>,
+    close_reason: Option<String>,
+    last_error: Option<String>,
+    last_error_at: Option<String>,
+}
+
+fn apply_ws_disconnect_state_at(
+    current: &WsConnectionStatus,
+    updates: WsDisconnectUpdates,
+    connection_label: Option<String>,
+    now_iso: &str,
+) -> WsConnectionStatus {
+    let disconnected_at = current
+        .disconnected_at
+        .clone()
+        .unwrap_or_else(|| now_iso.to_string());
+    let next_retry_delay_ms = if current.next_retry_at.is_some()
+        || current.reconnect_phase == WsReconnectPhase::Exhausted
+    {
+        None
+    } else {
+        get_ws_reconnect_delay_ms_for_retry(current.reconnect_attempt_count.saturating_sub(1) as i64)
+    };
+    let next_retry_at = next_retry_delay_ms
+        .and_then(|delay_ms| iso_timestamp_after_millis(now_iso, delay_ms))
+        .or_else(|| current.next_retry_at.clone());
+    let reconnect_phase = if current.reconnect_phase == WsReconnectPhase::Waiting
+        || current.reconnect_phase == WsReconnectPhase::Exhausted
+    {
+        current.reconnect_phase
+    } else if next_retry_delay_ms.is_none() {
+        WsReconnectPhase::Exhausted
+    } else {
+        WsReconnectPhase::Waiting
+    };
+
+    let mut next = current.clone();
+    if updates.close_code.is_some() {
+        next.close_code = updates.close_code;
+    }
+    if updates.close_reason.is_some() {
+        next.close_reason = updates.close_reason;
+    }
+    if updates.last_error.is_some() {
+        next.last_error = updates.last_error;
+    }
+    if updates.last_error_at.is_some() {
+        next.last_error_at = updates.last_error_at;
+    }
+    if connection_label.is_some() {
+        next.connection_label = connection_label;
+    }
+    next.disconnected_at = Some(disconnected_at);
+    next.next_retry_at = next_retry_at;
+    next.phase = WsConnectionPhase::Disconnected;
+    next.reconnect_phase = reconnect_phase;
+    next
+}
+
+fn normalize_connection_label(label: Option<&str>) -> Option<String> {
+    label
+        .map(str::trim)
+        .filter(|label| !label.is_empty())
+        .map(ToString::to_string)
+}
+
+fn append_ws_connection_hint(message: Option<&str>, hint: Option<&str>) -> Option<String> {
+    let normalized_message = message.map(str::trim).filter(|message| !message.is_empty());
+    let normalized_hint = hint.map(str::trim).filter(|hint| !hint.is_empty());
+    match (normalized_message, normalized_hint) {
+        (None, None) => None,
+        (None, Some(hint)) => Some(format!("Hint: {hint}")),
+        (Some(message), None) => Some(message.to_string()),
+        (Some(message), Some(hint)) => Some(format!("{message} Hint: {hint}")),
+    }
+}
+
+fn iso_timestamp_after_millis(now_iso: &str, delay_ms: u64) -> Option<String> {
+    let unix_ms = iso_utc_timestamp_millis(now_iso)?;
+    unix_millis_to_iso(unix_ms + delay_ms as i128)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25533,6 +25833,116 @@ mod tests {
             None,
             Some(&active_thread_ref)
         ));
+    }
+
+    #[test]
+    fn websocket_connection_state_matches_upstream_reconnect_logic() {
+        let now = "2026-04-03T20:30:00.000Z";
+        let mut status = initial_ws_connection_status(true);
+
+        status = record_ws_connection_attempt(&status, "ws://localhost:3020/ws", None);
+        status = record_ws_connection_opened_at(&status, None, now);
+        status = record_ws_connection_closed_at(&status, Some(1006), Some("offline"), None, now);
+        status = set_browser_online_status(&status, false);
+        assert_eq!(
+            get_ws_connection_ui_state(&status),
+            WsConnectionUiState::Offline
+        );
+
+        let connecting = record_ws_connection_attempt(
+            &initial_ws_connection_status(true),
+            "ws://localhost:3020/ws",
+            None,
+        );
+        assert_eq!(connecting.attempt_count, 1);
+        assert!(!connecting.has_connected);
+        assert_eq!(connecting.phase, WsConnectionPhase::Connecting);
+        assert_eq!(
+            get_ws_connection_ui_state(&connecting),
+            WsConnectionUiState::Connecting
+        );
+
+        let remote_attempt = record_ws_connection_attempt(
+            &initial_ws_connection_status(true),
+            "ws://localhost:3020/ws",
+            Some(&WsConnectionMetadata {
+                connection_label: Some("Remote Mac".to_string()),
+                version_mismatch_hint: None,
+            }),
+        );
+        let first_retry_delay_ms = get_ws_reconnect_delay_ms_for_retry(0).unwrap();
+        let failed = record_ws_connection_errored_at(
+            &remote_attempt,
+            Some("Unable to connect to the T3 server WebSocket."),
+            None,
+            now,
+        );
+        assert_eq!(failed.connection_label.as_deref(), Some("Remote Mac"));
+        assert_eq!(
+            failed.next_retry_at.as_deref(),
+            iso_timestamp_after_millis(now, first_retry_delay_ms).as_deref()
+        );
+        assert_eq!(failed.reconnect_attempt_count, 1);
+        assert_eq!(failed.reconnect_phase, WsReconnectPhase::Waiting);
+
+        let hinted_error = record_ws_connection_errored_at(
+            &remote_attempt,
+            Some("Unable to connect to the T3 server WebSocket."),
+            Some(&WsConnectionMetadata {
+                connection_label: None,
+                version_mismatch_hint: Some(
+                    "Version mismatch. Try syncing the client and server.".to_string(),
+                ),
+            }),
+            now,
+        );
+        assert_eq!(
+            hinted_error.last_error.as_deref(),
+            Some(
+                "Unable to connect to the T3 server WebSocket. Hint: Version mismatch. Try syncing the client and server."
+            )
+        );
+
+        let opened = record_ws_connection_opened_at(&remote_attempt, None, now);
+        let hinted_close = record_ws_connection_closed_at(
+            &opened,
+            Some(1006),
+            Some("socket closed"),
+            Some(&WsConnectionMetadata {
+                connection_label: None,
+                version_mismatch_hint: Some(
+                    "Version mismatch. Try syncing the client and server.".to_string(),
+                ),
+            }),
+            now,
+        );
+        assert_eq!(
+            hinted_close.close_reason.as_deref(),
+            Some("socket closed Hint: Version mismatch. Try syncing the client and server.")
+        );
+
+        let mut exhausted = initial_ws_connection_status(true);
+        for _ in 0..WS_RECONNECT_MAX_ATTEMPTS {
+            exhausted = record_ws_connection_attempt(&exhausted, "ws://localhost:3020/ws", None);
+            exhausted = record_ws_connection_errored_at(
+                &exhausted,
+                Some("Unable to connect to the T3 server WebSocket."),
+                None,
+                now,
+            );
+            if exhausted.reconnect_phase == WsReconnectPhase::Waiting {
+                exhausted.next_retry_at = None;
+                exhausted.reconnect_phase = WsReconnectPhase::Attempting;
+            }
+        }
+        assert_eq!(exhausted.next_retry_at, None);
+        assert_eq!(exhausted.reconnect_attempt_count, WS_RECONNECT_MAX_ATTEMPTS);
+        assert_eq!(exhausted.reconnect_phase, WsReconnectPhase::Exhausted);
+
+        assert_eq!(get_ws_reconnect_delay_ms_for_retry(-1), None);
+        assert_eq!(get_ws_reconnect_delay_ms_for_retry(0), Some(1_000));
+        assert_eq!(get_ws_reconnect_delay_ms_for_retry(6), Some(64_000));
+        assert_eq!(get_ws_reconnect_delay_ms_for_retry(7), None);
     }
 
     #[test]

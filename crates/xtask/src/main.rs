@@ -1716,6 +1716,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core provider_update_dismissals`",
             "Wire dismissal persistence into the live GPUI provider update notification surface.",
         )
+    } else if path == "apps/web/src/rpc/wsConnectionState.ts"
+        || path == "apps/web/src/rpc/wsConnectionState.test.ts"
+    {
+        (
+            "websocket connection UI state, reconnect backoff, error/close hint, and retry scheduling helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core websocket_connection_state`",
+            "Wire helpers into the live GPUI websocket connection surface and real socket lifecycle.",
+        )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
             "logical project path normalization, physical/grouping/order keys, repository-scoped keys, settings override resolution, ref fallback, and group-label helpers in crates/r3_core/src/lib.rs",
