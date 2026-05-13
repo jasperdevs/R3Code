@@ -9665,6 +9665,224 @@ pub fn derive_terminal_assistant_message_ids(messages: &[ChatMessage]) -> BTreeS
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MessagesTimelineEntry {
+    Work {
+        id: String,
+        created_at: String,
+        entry: WorkLogEntry,
+    },
+    Message {
+        id: String,
+        created_at: String,
+        message: ChatMessage,
+    },
+    ProposedPlan {
+        id: String,
+        created_at: String,
+        proposed_plan: ProposedPlan,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MessagesTimelineRow {
+    Work {
+        id: String,
+        created_at: String,
+        grouped_entries: Vec<WorkLogEntry>,
+    },
+    Message {
+        id: String,
+        created_at: String,
+        message: ChatMessage,
+        duration_start: String,
+        show_completion_divider: bool,
+        completion_summary: Option<String>,
+        show_assistant_copy_button: bool,
+        assistant_copy_streaming: bool,
+        assistant_turn_diff_summary: Option<TurnDiffSummary>,
+        revert_turn_count: Option<u32>,
+    },
+    ProposedPlan {
+        id: String,
+        created_at: String,
+        proposed_plan: ProposedPlan,
+    },
+    Working {
+        id: String,
+        created_at: Option<String>,
+    },
+}
+
+impl MessagesTimelineRow {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Work { id, .. }
+            | Self::Message { id, .. }
+            | Self::ProposedPlan { id, .. }
+            | Self::Working { id, .. } => id,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct StableMessagesTimelineRowsState {
+    pub by_id: BTreeMap<String, MessagesTimelineRow>,
+    pub result: Vec<MessagesTimelineRow>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DeriveMessagesTimelineRowsInput {
+    pub timeline_entries: Vec<MessagesTimelineEntry>,
+    pub completion_divider_before_entry_id: Option<String>,
+    pub completion_summary: Option<String>,
+    pub is_working: bool,
+    pub active_turn_in_progress: bool,
+    pub active_turn_id: Option<String>,
+    pub active_turn_started_at: Option<String>,
+    pub turn_diff_summary_by_assistant_message_id: BTreeMap<String, TurnDiffSummary>,
+    pub revert_turn_count_by_user_message_id: BTreeMap<String, u32>,
+}
+
+pub fn derive_messages_timeline_rows(
+    input: DeriveMessagesTimelineRowsInput,
+) -> Vec<MessagesTimelineRow> {
+    let messages = input
+        .timeline_entries
+        .iter()
+        .filter_map(|entry| match entry {
+            MessagesTimelineEntry::Message { message, .. } => Some(message.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    let duration_start_by_message_id = compute_message_duration_start(&messages);
+    let terminal_assistant_message_ids = derive_terminal_assistant_message_ids(&messages);
+    let mut rows = Vec::new();
+    let mut index = 0usize;
+    while index < input.timeline_entries.len() {
+        match &input.timeline_entries[index] {
+            MessagesTimelineEntry::Work {
+                id,
+                created_at,
+                entry,
+            } => {
+                let mut grouped_entries = vec![entry.clone()];
+                let mut cursor = index + 1;
+                while let Some(MessagesTimelineEntry::Work { entry, .. }) =
+                    input.timeline_entries.get(cursor)
+                {
+                    grouped_entries.push(entry.clone());
+                    cursor += 1;
+                }
+                rows.push(MessagesTimelineRow::Work {
+                    id: id.clone(),
+                    created_at: created_at.clone(),
+                    grouped_entries,
+                });
+                index = cursor;
+            }
+            MessagesTimelineEntry::ProposedPlan {
+                id,
+                created_at,
+                proposed_plan,
+            } => {
+                rows.push(MessagesTimelineRow::ProposedPlan {
+                    id: id.clone(),
+                    created_at: created_at.clone(),
+                    proposed_plan: proposed_plan.clone(),
+                });
+                index += 1;
+            }
+            MessagesTimelineEntry::Message {
+                id,
+                created_at,
+                message,
+            } => {
+                let assistant_turn_still_in_progress = message.role == MessageRole::Assistant
+                    && input.active_turn_in_progress
+                    && input.active_turn_id.as_ref().is_some()
+                    && message.turn_id == input.active_turn_id;
+                let show_completion_divider = message.role == MessageRole::Assistant
+                    && input.completion_divider_before_entry_id.as_deref() == Some(id.as_str());
+                rows.push(MessagesTimelineRow::Message {
+                    id: id.clone(),
+                    created_at: created_at.clone(),
+                    message: message.clone(),
+                    duration_start: duration_start_by_message_id
+                        .get(&message.id)
+                        .cloned()
+                        .unwrap_or_else(|| message.created_at.clone()),
+                    show_completion_divider,
+                    completion_summary: show_completion_divider
+                        .then(|| input.completion_summary.clone())
+                        .flatten(),
+                    show_assistant_copy_button: message.role == MessageRole::Assistant
+                        && terminal_assistant_message_ids.contains(&message.id),
+                    assistant_copy_streaming: message.streaming || assistant_turn_still_in_progress,
+                    assistant_turn_diff_summary: (message.role == MessageRole::Assistant)
+                        .then(|| {
+                            input
+                                .turn_diff_summary_by_assistant_message_id
+                                .get(&message.id)
+                                .cloned()
+                        })
+                        .flatten(),
+                    revert_turn_count: (message.role == MessageRole::User)
+                        .then(|| {
+                            input
+                                .revert_turn_count_by_user_message_id
+                                .get(&message.id)
+                                .copied()
+                        })
+                        .flatten(),
+                });
+                index += 1;
+            }
+        }
+    }
+    if input.is_working {
+        rows.push(MessagesTimelineRow::Working {
+            id: "working-indicator-row".to_string(),
+            created_at: input.active_turn_started_at,
+        });
+    }
+    rows
+}
+
+pub fn compute_stable_messages_timeline_rows(
+    rows: Vec<MessagesTimelineRow>,
+    previous: &StableMessagesTimelineRowsState,
+) -> StableMessagesTimelineRowsState {
+    let mut next = BTreeMap::new();
+    let mut any_changed = rows.len() != previous.by_id.len();
+    let result = rows
+        .into_iter()
+        .enumerate()
+        .map(|(index, row)| {
+            let row_id = row.id().to_string();
+            let next_row = previous
+                .by_id
+                .get(&row_id)
+                .filter(|previous_row| *previous_row == &row)
+                .cloned()
+                .unwrap_or(row);
+            next.insert(row_id, next_row.clone());
+            if !any_changed && previous.result.get(index) != Some(&next_row) {
+                any_changed = true;
+            }
+            next_row
+        })
+        .collect::<Vec<_>>();
+    if any_changed {
+        StableMessagesTimelineRowsState {
+            by_id: next,
+            result,
+        }
+    } else {
+        previous.clone()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UserInputQuestionOption {
     pub label: String,
     pub description: String,
@@ -16263,6 +16481,134 @@ mod tests {
         assert!(terminal_ids.contains("a2"));
         assert!(!terminal_ids.contains("a3"));
         assert!(terminal_ids.contains("a4"));
+
+        let assistant_summary = TurnDiffSummary {
+            turn_id: "turn-1".to_string(),
+            completed_at: "2026-01-01T00:00:55Z".to_string(),
+            status: None,
+            files: vec![TurnDiffFileChange {
+                path: "src/index.ts".to_string(),
+                kind: None,
+                additions: Some(3),
+                deletions: Some(1),
+            }],
+            checkpoint_ref: None,
+            assistant_message_id: Some("a2".to_string()),
+            checkpoint_turn_count: Some(2),
+        };
+        let mut diff_by_assistant = BTreeMap::new();
+        diff_by_assistant.insert("a2".to_string(), assistant_summary.clone());
+        let mut revert_by_user = BTreeMap::new();
+        revert_by_user.insert("u1".to_string(), 1);
+        let rows = derive_messages_timeline_rows(DeriveMessagesTimelineRowsInput {
+            timeline_entries: vec![
+                MessagesTimelineEntry::Message {
+                    id: "entry-u1".to_string(),
+                    created_at: messages[0].created_at.clone(),
+                    message: messages[0].clone(),
+                },
+                MessagesTimelineEntry::Work {
+                    id: "work-1".to_string(),
+                    created_at: "2026-01-01T00:00:01Z".to_string(),
+                    entry: WorkLogEntry {
+                        id: "work-1".to_string(),
+                        activity_kind: "tool.updated".to_string(),
+                        created_at: "2026-01-01T00:00:01Z".to_string(),
+                        label: "thinking".to_string(),
+                        detail: None,
+                        command: None,
+                        raw_command: None,
+                        changed_files: Vec::new(),
+                        tone: ActivityTone::Thinking,
+                        tool_title: None,
+                        item_type: None,
+                        request_kind: None,
+                        tool_call_id: None,
+                    },
+                },
+                MessagesTimelineEntry::Work {
+                    id: "work-2".to_string(),
+                    created_at: "2026-01-01T00:00:02Z".to_string(),
+                    entry: WorkLogEntry {
+                        id: "work-2".to_string(),
+                        activity_kind: "tool.completed".to_string(),
+                        created_at: "2026-01-01T00:00:02Z".to_string(),
+                        label: "read".to_string(),
+                        detail: Some("Reading package.json".to_string()),
+                        command: None,
+                        raw_command: None,
+                        changed_files: Vec::new(),
+                        tone: ActivityTone::Tool,
+                        tool_title: None,
+                        item_type: None,
+                        request_kind: None,
+                        tool_call_id: None,
+                    },
+                },
+                MessagesTimelineEntry::Message {
+                    id: "entry-a1".to_string(),
+                    created_at: messages[1].created_at.clone(),
+                    message: messages[1].clone(),
+                },
+                MessagesTimelineEntry::Message {
+                    id: "entry-a2".to_string(),
+                    created_at: messages[2].created_at.clone(),
+                    message: messages[2].clone(),
+                },
+            ],
+            completion_divider_before_entry_id: Some("entry-a2".to_string()),
+            completion_summary: Some("done".to_string()),
+            is_working: true,
+            active_turn_in_progress: true,
+            active_turn_id: Some("turn-1".to_string()),
+            active_turn_started_at: Some("2026-01-01T00:00:00Z".to_string()),
+            turn_diff_summary_by_assistant_message_id: diff_by_assistant,
+            revert_turn_count_by_user_message_id: revert_by_user,
+        });
+        assert_eq!(rows.len(), 5);
+        match &rows[0] {
+            MessagesTimelineRow::Message {
+                revert_turn_count, ..
+            } => assert_eq!(*revert_turn_count, Some(1)),
+            other => panic!("expected user message row, got {other:?}"),
+        }
+        match &rows[1] {
+            MessagesTimelineRow::Work {
+                grouped_entries, ..
+            } => assert_eq!(grouped_entries.len(), 2),
+            other => panic!("expected grouped work row, got {other:?}"),
+        }
+        match &rows[3] {
+            MessagesTimelineRow::Message {
+                show_assistant_copy_button,
+                assistant_copy_streaming,
+                show_completion_divider,
+                completion_summary,
+                assistant_turn_diff_summary,
+                ..
+            } => {
+                assert!(*show_assistant_copy_button);
+                assert!(*assistant_copy_streaming);
+                assert!(*show_completion_divider);
+                assert_eq!(completion_summary.as_deref(), Some("done"));
+                assert_eq!(
+                    assistant_turn_diff_summary.as_ref(),
+                    Some(&assistant_summary)
+                );
+            }
+            other => panic!("expected assistant message row, got {other:?}"),
+        }
+        assert!(matches!(rows[4], MessagesTimelineRow::Working { .. }));
+
+        let initial = compute_stable_messages_timeline_rows(
+            rows.clone(),
+            &StableMessagesTimelineRowsState::default(),
+        );
+        let repeated = compute_stable_messages_timeline_rows(rows.clone(), &initial);
+        assert_eq!(repeated, initial);
+        let reordered =
+            compute_stable_messages_timeline_rows(vec![rows[1].clone(), rows[0].clone()], &initial);
+        assert_ne!(reordered.result, initial.result);
     }
 
     #[test]

@@ -1684,10 +1684,10 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
         || path == "apps/web/src/components/chat/MessagesTimeline.logic.test.ts"
     {
         (
-            "message timeline duration boundaries, compact work labels, assistant copy visibility, and terminal assistant-message selection helpers in crates/r3_core/src/lib.rs",
+            "message timeline duration boundaries, compact work labels, assistant copy visibility, terminal assistant-message selection, row derivation, and stable-row reuse helpers in crates/r3_core/src/lib.rs",
             "partial",
             "`cargo test -p r3_core messages_timeline_logic`",
-            "Port full timeline row derivation, stable row identity reuse, proposed-plan/work grouping integration, browser rendering, and exact UI wiring.",
+            "Port browser rendering, proposed-plan UI lifecycle, exact diff/revert controls, live scroll behavior, and remaining UI wiring.",
         )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
