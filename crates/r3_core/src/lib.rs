@@ -4305,6 +4305,74 @@ pub struct CopyToClipboardOutcome {
     pub scheduled_reset_ms: Option<u64>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WebThemePreference {
+    Light,
+    Dark,
+    System,
+}
+
+impl WebThemePreference {
+    pub fn as_storage_value(self) -> &'static str {
+        match self {
+            Self::Light => "light",
+            Self::Dark => "dark",
+            Self::System => "system",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResolvedWebTheme {
+    Light,
+    Dark,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WebThemeSnapshot {
+    pub theme: WebThemePreference,
+    pub system_dark: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrowserChromeSurface {
+    SidebarInset,
+    SidebarInner,
+    Body,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrowserChromeThemeSyncPlan {
+    pub surface: BrowserChromeSurface,
+    pub background_color: String,
+    pub ensure_dynamic_meta_tag: bool,
+    pub meta_name: &'static str,
+    pub meta_selector: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ApplyWebThemePlan {
+    pub is_dark: bool,
+    pub add_no_transitions: bool,
+    pub request_animation_frame_to_remove_no_transitions: bool,
+    pub sync_desktop_theme: Option<WebThemePreference>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SetWebThemePlan {
+    pub storage_key: &'static str,
+    pub storage_value: &'static str,
+    pub apply_plan: Option<ApplyWebThemePlan>,
+    pub emit_change: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebThemeSubscribePlan {
+    pub add_listener: bool,
+    pub media_query: Option<&'static str>,
+    pub storage_event_key: Option<&'static str>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelPickerState {
     pub active_entry: Option<ProviderInstanceEntry>,
@@ -8126,6 +8194,198 @@ impl CopyToClipboardState {
         self.timeout_active = false;
         cleared
     }
+}
+
+pub const WEB_THEME_STORAGE_KEY: &str = "r3code:theme";
+pub const WEB_THEME_MEDIA_QUERY: &str = "(prefers-color-scheme: dark)";
+pub const WEB_THEME_COLOR_META_NAME: &str = "theme-color";
+pub const WEB_DYNAMIC_THEME_COLOR_SELECTOR: &str =
+    "meta[name=\"theme-color\"][data-dynamic-theme-color=\"true\"]";
+pub const DEFAULT_WEB_THEME_SNAPSHOT: WebThemeSnapshot = WebThemeSnapshot {
+    theme: WebThemePreference::System,
+    system_dark: false,
+};
+
+pub fn parse_web_theme_storage_value(raw: Option<&str>) -> WebThemePreference {
+    match raw {
+        Some("light") => WebThemePreference::Light,
+        Some("dark") => WebThemePreference::Dark,
+        Some("system") => WebThemePreference::System,
+        _ => DEFAULT_WEB_THEME_SNAPSHOT.theme,
+    }
+}
+
+pub fn get_stored_web_theme(has_theme_storage: bool, raw: Option<&str>) -> WebThemePreference {
+    if has_theme_storage {
+        parse_web_theme_storage_value(raw)
+    } else {
+        DEFAULT_WEB_THEME_SNAPSHOT.theme
+    }
+}
+
+pub fn get_web_theme_snapshot(
+    has_theme_storage: bool,
+    raw_storage_value: Option<&str>,
+    system_dark: bool,
+) -> WebThemeSnapshot {
+    if !has_theme_storage {
+        return DEFAULT_WEB_THEME_SNAPSHOT;
+    }
+
+    let theme = get_stored_web_theme(true, raw_storage_value);
+    WebThemeSnapshot {
+        theme,
+        system_dark: theme == WebThemePreference::System && system_dark,
+    }
+}
+
+pub fn resolve_web_theme(snapshot: WebThemeSnapshot) -> ResolvedWebTheme {
+    match snapshot.theme {
+        WebThemePreference::Dark => ResolvedWebTheme::Dark,
+        WebThemePreference::Light => ResolvedWebTheme::Light,
+        WebThemePreference::System if snapshot.system_dark => ResolvedWebTheme::Dark,
+        WebThemePreference::System => ResolvedWebTheme::Light,
+    }
+}
+
+pub fn normalize_theme_color(value: Option<&str>) -> Option<String> {
+    let trimmed = value?.trim();
+    let normalized = trimmed.to_ascii_lowercase();
+    if normalized.is_empty()
+        || normalized == "transparent"
+        || normalized == "rgba(0, 0, 0, 0)"
+        || normalized == "rgba(0 0 0 / 0)"
+    {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+pub fn resolve_browser_chrome_surface(
+    has_sidebar_inset: bool,
+    has_sidebar_inner: bool,
+) -> BrowserChromeSurface {
+    if has_sidebar_inset {
+        BrowserChromeSurface::SidebarInset
+    } else if has_sidebar_inner {
+        BrowserChromeSurface::SidebarInner
+    } else {
+        BrowserChromeSurface::Body
+    }
+}
+
+pub fn sync_browser_chrome_theme_plan(
+    has_document: bool,
+    has_get_computed_style: bool,
+    has_sidebar_inset: bool,
+    has_sidebar_inner: bool,
+    surface_background: Option<&str>,
+    body_background: Option<&str>,
+) -> Option<BrowserChromeThemeSyncPlan> {
+    if !has_document || !has_get_computed_style {
+        return None;
+    }
+
+    let surface = resolve_browser_chrome_surface(has_sidebar_inset, has_sidebar_inner);
+    let background_color = normalize_theme_color(surface_background)
+        .or_else(|| normalize_theme_color(body_background))?;
+
+    Some(BrowserChromeThemeSyncPlan {
+        surface,
+        background_color,
+        ensure_dynamic_meta_tag: true,
+        meta_name: WEB_THEME_COLOR_META_NAME,
+        meta_selector: WEB_DYNAMIC_THEME_COLOR_SELECTOR,
+    })
+}
+
+pub fn apply_web_theme_plan(
+    theme: WebThemePreference,
+    suppress_transitions: bool,
+    system_dark: bool,
+    has_document: bool,
+    has_window: bool,
+    has_desktop_bridge: bool,
+    last_desktop_theme: Option<WebThemePreference>,
+) -> Option<ApplyWebThemePlan> {
+    if !has_document || !has_window {
+        return None;
+    }
+
+    Some(ApplyWebThemePlan {
+        is_dark: theme == WebThemePreference::Dark
+            || (theme == WebThemePreference::System && system_dark),
+        add_no_transitions: suppress_transitions,
+        request_animation_frame_to_remove_no_transitions: suppress_transitions,
+        sync_desktop_theme: (has_desktop_bridge && last_desktop_theme != Some(theme))
+            .then_some(theme),
+    })
+}
+
+pub fn desktop_theme_after_sync_rejection(
+    attempted_theme: WebThemePreference,
+    last_desktop_theme: Option<WebThemePreference>,
+    rejected: bool,
+) -> Option<WebThemePreference> {
+    if rejected && last_desktop_theme == Some(attempted_theme) {
+        None
+    } else {
+        last_desktop_theme
+    }
+}
+
+pub fn set_web_theme_plan(
+    has_theme_storage: bool,
+    next: WebThemePreference,
+    system_dark: bool,
+    has_document: bool,
+    has_window: bool,
+    has_desktop_bridge: bool,
+    last_desktop_theme: Option<WebThemePreference>,
+) -> Option<SetWebThemePlan> {
+    if !has_theme_storage {
+        return None;
+    }
+
+    Some(SetWebThemePlan {
+        storage_key: WEB_THEME_STORAGE_KEY,
+        storage_value: next.as_storage_value(),
+        apply_plan: apply_web_theme_plan(
+            next,
+            true,
+            system_dark,
+            has_document,
+            has_window,
+            has_desktop_bridge,
+            last_desktop_theme,
+        ),
+        emit_change: true,
+    })
+}
+
+pub fn web_theme_subscribe_plan(has_window: bool) -> WebThemeSubscribePlan {
+    if !has_window {
+        WebThemeSubscribePlan {
+            add_listener: false,
+            media_query: None,
+            storage_event_key: None,
+        }
+    } else {
+        WebThemeSubscribePlan {
+            add_listener: true,
+            media_query: Some(WEB_THEME_MEDIA_QUERY),
+            storage_event_key: Some(WEB_THEME_STORAGE_KEY),
+        }
+    }
+}
+
+pub fn should_apply_web_theme_storage_event(key: Option<&str>) -> bool {
+    key == Some(WEB_THEME_STORAGE_KEY)
+}
+
+pub fn should_apply_system_theme_change(stored_theme: WebThemePreference) -> bool {
+    stored_theme == WebThemePreference::System
 }
 
 fn matches_locked_provider(
@@ -32292,6 +32552,194 @@ mod tests {
                 scheduled_reset_ms: None,
             }
         );
+    }
+
+    #[test]
+    fn web_theme_helpers_match_upstream_contract_with_r3_storage_key() {
+        assert_eq!(WEB_THEME_STORAGE_KEY, "r3code:theme");
+        assert_eq!(WEB_THEME_MEDIA_QUERY, "(prefers-color-scheme: dark)");
+        assert_eq!(
+            WEB_DYNAMIC_THEME_COLOR_SELECTOR,
+            "meta[name=\"theme-color\"][data-dynamic-theme-color=\"true\"]"
+        );
+        assert_eq!(
+            parse_web_theme_storage_value(Some("light")),
+            WebThemePreference::Light
+        );
+        assert_eq!(
+            parse_web_theme_storage_value(Some("invalid")),
+            WebThemePreference::System
+        );
+        assert_eq!(
+            get_stored_web_theme(false, Some("dark")),
+            WebThemePreference::System
+        );
+
+        let system_snapshot = get_web_theme_snapshot(true, Some("system"), true);
+        assert_eq!(
+            system_snapshot,
+            WebThemeSnapshot {
+                theme: WebThemePreference::System,
+                system_dark: true,
+            }
+        );
+        assert_eq!(resolve_web_theme(system_snapshot), ResolvedWebTheme::Dark);
+        assert_eq!(
+            resolve_web_theme(get_web_theme_snapshot(true, Some("light"), true)),
+            ResolvedWebTheme::Light
+        );
+        assert_eq!(
+            get_web_theme_snapshot(false, Some("dark"), true),
+            DEFAULT_WEB_THEME_SNAPSHOT
+        );
+
+        assert_eq!(
+            normalize_theme_color(Some("  RGB(1, 2, 3)  ")),
+            Some("RGB(1, 2, 3)".to_string())
+        );
+        assert_eq!(normalize_theme_color(Some("transparent")), None);
+        assert_eq!(normalize_theme_color(Some("rgba(0 0 0 / 0)")), None);
+        assert_eq!(
+            resolve_browser_chrome_surface(true, true),
+            BrowserChromeSurface::SidebarInset
+        );
+        assert_eq!(
+            resolve_browser_chrome_surface(false, true),
+            BrowserChromeSurface::SidebarInner
+        );
+        assert_eq!(
+            resolve_browser_chrome_surface(false, false),
+            BrowserChromeSurface::Body
+        );
+        assert_eq!(
+            sync_browser_chrome_theme_plan(
+                true,
+                true,
+                false,
+                true,
+                Some(" transparent "),
+                Some(" rgb(255, 255, 255) "),
+            ),
+            Some(BrowserChromeThemeSyncPlan {
+                surface: BrowserChromeSurface::SidebarInner,
+                background_color: "rgb(255, 255, 255)".to_string(),
+                ensure_dynamic_meta_tag: true,
+                meta_name: WEB_THEME_COLOR_META_NAME,
+                meta_selector: WEB_DYNAMIC_THEME_COLOR_SELECTOR,
+            })
+        );
+        assert_eq!(
+            sync_browser_chrome_theme_plan(true, true, false, false, Some("transparent"), None),
+            None
+        );
+
+        assert_eq!(
+            apply_web_theme_plan(
+                WebThemePreference::System,
+                true,
+                true,
+                true,
+                true,
+                true,
+                None,
+            ),
+            Some(ApplyWebThemePlan {
+                is_dark: true,
+                add_no_transitions: true,
+                request_animation_frame_to_remove_no_transitions: true,
+                sync_desktop_theme: Some(WebThemePreference::System),
+            })
+        );
+        assert_eq!(
+            apply_web_theme_plan(
+                WebThemePreference::Dark,
+                false,
+                false,
+                true,
+                true,
+                true,
+                Some(WebThemePreference::Dark),
+            )
+            .unwrap()
+            .sync_desktop_theme,
+            None
+        );
+        assert_eq!(
+            apply_web_theme_plan(
+                WebThemePreference::Dark,
+                true,
+                false,
+                false,
+                true,
+                true,
+                None,
+            ),
+            None
+        );
+        assert_eq!(
+            desktop_theme_after_sync_rejection(
+                WebThemePreference::Light,
+                Some(WebThemePreference::Light),
+                true,
+            ),
+            None
+        );
+        assert_eq!(
+            set_web_theme_plan(
+                true,
+                WebThemePreference::Dark,
+                false,
+                true,
+                true,
+                true,
+                None
+            ),
+            Some(SetWebThemePlan {
+                storage_key: WEB_THEME_STORAGE_KEY,
+                storage_value: "dark",
+                apply_plan: Some(ApplyWebThemePlan {
+                    is_dark: true,
+                    add_no_transitions: true,
+                    request_animation_frame_to_remove_no_transitions: true,
+                    sync_desktop_theme: Some(WebThemePreference::Dark),
+                }),
+                emit_change: true,
+            })
+        );
+        assert_eq!(
+            set_web_theme_plan(
+                false,
+                WebThemePreference::Dark,
+                false,
+                true,
+                true,
+                true,
+                None
+            ),
+            None
+        );
+        assert_eq!(
+            web_theme_subscribe_plan(true),
+            WebThemeSubscribePlan {
+                add_listener: true,
+                media_query: Some(WEB_THEME_MEDIA_QUERY),
+                storage_event_key: Some(WEB_THEME_STORAGE_KEY),
+            }
+        );
+        assert_eq!(
+            web_theme_subscribe_plan(false),
+            WebThemeSubscribePlan {
+                add_listener: false,
+                media_query: None,
+                storage_event_key: None,
+            }
+        );
+        assert!(should_apply_web_theme_storage_event(Some(
+            WEB_THEME_STORAGE_KEY
+        )));
+        assert!(!should_apply_web_theme_storage_event(Some("t3code:theme")));
+        assert!(should_apply_system_theme_change(WebThemePreference::System));
+        assert!(!should_apply_system_theme_change(WebThemePreference::Dark));
     }
 
     #[test]
