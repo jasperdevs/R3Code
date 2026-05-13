@@ -316,6 +316,12 @@ pub struct ThreadScopedToastData {
     pub thread_id: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorktreeCleanupThread {
+    pub id: String,
+    pub worktree_path: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ModelPickerOpenState {
     pub open: bool,
@@ -2265,6 +2271,44 @@ pub fn should_render_thread_scoped_toast(
     };
     active_thread_ref
         .is_some_and(|active_thread_ref| active_thread_ref.thread_id == *toast_thread_id)
+}
+
+pub fn normalize_worktree_cleanup_path(path: Option<&str>) -> Option<String> {
+    let trimmed = path?.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+pub fn get_orphaned_worktree_path_for_thread(
+    threads: &[WorktreeCleanupThread],
+    thread_id: &str,
+) -> Option<String> {
+    let target_thread = threads.iter().find(|thread| thread.id == thread_id)?;
+    let target_worktree_path =
+        normalize_worktree_cleanup_path(target_thread.worktree_path.as_deref())?;
+
+    let is_shared = threads.iter().any(|thread| {
+        thread.id != thread_id
+            && normalize_worktree_cleanup_path(thread.worktree_path.as_deref()).as_deref()
+                == Some(target_worktree_path.as_str())
+    });
+
+    (!is_shared).then_some(target_worktree_path)
+}
+
+pub fn format_worktree_path_for_display(worktree_path: &str) -> String {
+    let trimmed = worktree_path.trim();
+    if trimmed.is_empty() {
+        return worktree_path.to_string();
+    }
+
+    let normalized = trimmed.replace('\\', "/").trim_end_matches('/').to_string();
+    normalized
+        .split('/')
+        .next_back()
+        .map(str::trim)
+        .filter(|last_part| !last_part.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| trimmed.to_string())
 }
 
 pub fn initial_model_picker_open_state() -> ModelPickerOpenState {
@@ -27031,6 +27075,73 @@ mod tests {
         let reclosed = set_model_picker_open_state(opened.state, false);
         assert_eq!(reclosed.state, ModelPickerOpenState { open: false });
         assert!(reclosed.changed);
+    }
+
+    #[test]
+    fn worktree_cleanup_helpers_match_upstream_logic() {
+        let thread = |id: &str, path: Option<&str>| WorktreeCleanupThread {
+            id: id.to_string(),
+            worktree_path: path.map(str::to_string),
+        };
+
+        assert_eq!(
+            get_orphaned_worktree_path_for_thread(&[], "missing-thread"),
+            None
+        );
+        assert_eq!(
+            get_orphaned_worktree_path_for_thread(&[thread("thread-1", None)], "thread-1"),
+            None
+        );
+        assert_eq!(
+            get_orphaned_worktree_path_for_thread(
+                &[thread(
+                    "thread-1",
+                    Some("  /tmp/repo/worktrees/feature-a  ")
+                )],
+                "thread-1"
+            )
+            .as_deref(),
+            Some("/tmp/repo/worktrees/feature-a")
+        );
+        assert_eq!(
+            get_orphaned_worktree_path_for_thread(
+                &[
+                    thread("thread-1", Some("/tmp/repo/worktrees/feature-a")),
+                    thread("thread-2", Some(" /tmp/repo/worktrees/feature-a ")),
+                ],
+                "thread-1"
+            ),
+            None
+        );
+        assert_eq!(
+            get_orphaned_worktree_path_for_thread(
+                &[
+                    thread("thread-1", Some("/tmp/repo/worktrees/feature-a")),
+                    thread("thread-2", Some("/tmp/repo/worktrees/feature-b")),
+                ],
+                "thread-1"
+            )
+            .as_deref(),
+            Some("/tmp/repo/worktrees/feature-a")
+        );
+
+        assert_eq!(
+            format_worktree_path_for_display(
+                "/Users/julius/.t3/worktrees/t3code-mvp/t3code-4e609bb8"
+            ),
+            "t3code-4e609bb8"
+        );
+        assert_eq!(
+            format_worktree_path_for_display(
+                "C:\\Users\\julius\\.t3\\worktrees\\t3code-mvp\\t3code-4e609bb8"
+            ),
+            "t3code-4e609bb8"
+        );
+        assert_eq!(
+            format_worktree_path_for_display("/tmp/custom-worktrees/my-worktree/"),
+            "my-worktree"
+        );
+        assert_eq!(format_worktree_path_for_display("   "), "   ");
     }
 
     #[test]

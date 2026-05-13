@@ -1860,6 +1860,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core selects_and_resolves_advertised_pairing_endpoints`; `cargo test -p r3_core hosted_pairing_helpers`",
             "Wire helpers into live GPUI connection settings pairing links.",
         )
+    } else if path == "apps/web/src/worktreeCleanup.ts"
+        || path == "apps/web/src/worktreeCleanup.test.ts"
+    {
+        (
+            "orphaned worktree path detection and worktree path display formatting helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core worktree_cleanup_helpers`",
+            "Wire helpers into live GPUI thread/worktree deletion flow.",
+        )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
             "logical project path normalization, physical/grouping/order keys, repository-scoped keys, settings override resolution, ref fallback, and group-label helpers in crates/r3_core/src/lib.rs",
