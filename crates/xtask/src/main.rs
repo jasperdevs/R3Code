@@ -1739,6 +1739,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core web_theme_helpers_match_upstream_contract_with_r3_storage_key`",
             "Wire helpers into live GPUI theme persistence, OS appearance subscriptions, browser chrome/meta updates, and desktop bridge theme sync.",
         )
+    } else if path == "apps/web/src/hooks/useThreadActions.ts" {
+        (
+            "thread action hook planning for archive/unarchive command dispatch, running-thread archive guard, route-matched new-thread navigation, deleted thread-key filtering, fallback thread selection after delete, direct archived-thread delete, session stop/terminal close/draft cleanup, orphaned worktree confirmation/removal, git invalidation, and delete confirmation copy in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core thread_actions_helpers_match_upstream_archive_delete_flow`",
+            "Wire helpers into live GPUI sidebar/thread menus, environment API commands, local dialog confirmations, router navigation, terminal/composer cleanup, and worktree removal toasts.",
+        )
     } else if path == "apps/web/src/markdown-links.ts"
         || path == "apps/web/src/markdown-links.test.ts"
     {

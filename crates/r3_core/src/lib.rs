@@ -633,6 +633,59 @@ pub struct NewThreadPlan {
     pub navigate_to_draft_id: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadActionsResolvedThread {
+    pub thread_ref: ScopedThreadRef,
+    pub project_id: String,
+    pub title: String,
+    pub session_status: Option<String>,
+    pub active_turn_id: Option<String>,
+    pub worktree_path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadArchivePlan {
+    pub dispatch_command_type: Option<&'static str>,
+    pub error: Option<&'static str>,
+    pub navigate_to_new_thread_project_ref: Option<ScopedProjectRef>,
+    pub refresh_archived_threads_environment_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadUnarchivePlan {
+    pub dispatch_command_type: Option<&'static str>,
+    pub refresh_archived_threads_environment_id: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ThreadDeleteNavigation {
+    None,
+    Index,
+    Thread(ScopedThreadRef),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadDeletePlan {
+    pub dispatch_delete_command: bool,
+    pub direct_delete_without_store_thread: bool,
+    pub stop_session_before_delete: bool,
+    pub close_terminal_delete_history: bool,
+    pub refresh_archived_threads_environment_id: Option<String>,
+    pub clear_composer_draft: bool,
+    pub clear_project_draft_thread: Option<ScopedProjectRef>,
+    pub clear_terminal_state: bool,
+    pub fallback_navigation: ThreadDeleteNavigation,
+    pub worktree_confirm_message: Option<String>,
+    pub remove_worktree: Option<String>,
+    pub invalidate_git_queries: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadDeleteConfirmationPlan {
+    pub confirm_message: Option<String>,
+    pub proceed_to_delete: bool,
+}
+
 pub type ReactQueryKey = Vec<Option<String>>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -17419,6 +17472,228 @@ pub fn plan_new_thread_for_project(
     }
 }
 
+pub fn route_thread_ref_matches(
+    current_route_thread_ref: Option<&ScopedThreadRef>,
+    target: &ScopedThreadRef,
+) -> bool {
+    current_route_thread_ref.is_some_and(|current| current == target)
+}
+
+pub fn plan_archive_thread_action(
+    has_environment_api: bool,
+    target: &ScopedThreadRef,
+    resolved_thread: Option<&ThreadActionsResolvedThread>,
+    current_route_thread_ref: Option<&ScopedThreadRef>,
+) -> ThreadArchivePlan {
+    let Some(thread) = resolved_thread.filter(|_| has_environment_api) else {
+        return ThreadArchivePlan {
+            dispatch_command_type: None,
+            error: None,
+            navigate_to_new_thread_project_ref: None,
+            refresh_archived_threads_environment_id: None,
+        };
+    };
+
+    if thread.session_status.as_deref() == Some("running") && thread.active_turn_id.is_some() {
+        return ThreadArchivePlan {
+            dispatch_command_type: None,
+            error: Some("Cannot archive a running thread."),
+            navigate_to_new_thread_project_ref: None,
+            refresh_archived_threads_environment_id: None,
+        };
+    }
+
+    ThreadArchivePlan {
+        dispatch_command_type: Some("thread.archive"),
+        error: None,
+        navigate_to_new_thread_project_ref: route_thread_ref_matches(
+            current_route_thread_ref,
+            target,
+        )
+        .then(|| scope_project_ref(&thread.thread_ref.environment_id, &thread.project_id)),
+        refresh_archived_threads_environment_id: Some(target.environment_id.clone()),
+    }
+}
+
+pub fn plan_unarchive_thread_action(
+    has_environment_api: bool,
+    target: &ScopedThreadRef,
+) -> ThreadUnarchivePlan {
+    ThreadUnarchivePlan {
+        dispatch_command_type: has_environment_api.then_some("thread.unarchive"),
+        refresh_archived_threads_environment_id: has_environment_api
+            .then(|| target.environment_id.clone()),
+    }
+}
+
+pub fn deleted_thread_ids_for_environment(
+    deleted_thread_keys: &[String],
+    environment_id: &str,
+) -> BTreeSet<String> {
+    deleted_thread_keys
+        .iter()
+        .filter_map(|thread_key| parse_scoped_thread_key(thread_key))
+        .filter(|thread_ref| thread_ref.environment_id == environment_id)
+        .map(|thread_ref| thread_ref.thread_id)
+        .collect()
+}
+
+pub fn get_fallback_thread_id_after_delete(
+    threads: &[ThreadSortInput],
+    deleted_thread_id: &str,
+    deleted_thread_ids: &BTreeSet<String>,
+    sort_order: SidebarThreadSortOrder,
+) -> Option<String> {
+    let deleted_thread = threads
+        .iter()
+        .find(|thread| thread.id == deleted_thread_id)?;
+    let candidates = threads
+        .iter()
+        .filter(|thread| {
+            thread.project_id == deleted_thread.project_id
+                && thread.id != deleted_thread_id
+                && !deleted_thread_ids.contains(&thread.id)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    sort_thread_inputs(&candidates, sort_order)
+        .into_iter()
+        .next()
+        .map(|thread| thread.id)
+}
+
+pub fn plan_delete_thread_action(
+    has_environment_api: bool,
+    target: &ScopedThreadRef,
+    resolved_thread: Option<&ThreadActionsResolvedThread>,
+    threads: &[ThreadSortInput],
+    worktree_threads: &[WorktreeCleanupThread],
+    thread_project_cwd: Option<&str>,
+    current_route_thread_ref: Option<&ScopedThreadRef>,
+    deleted_thread_keys: &[String],
+    sort_order: SidebarThreadSortOrder,
+    has_local_api: bool,
+    delete_worktree_confirmed: bool,
+    fallback_thread_exists: bool,
+) -> ThreadDeletePlan {
+    if !has_environment_api {
+        return ThreadDeletePlan {
+            dispatch_delete_command: false,
+            direct_delete_without_store_thread: false,
+            stop_session_before_delete: false,
+            close_terminal_delete_history: false,
+            refresh_archived_threads_environment_id: None,
+            clear_composer_draft: false,
+            clear_project_draft_thread: None,
+            clear_terminal_state: false,
+            fallback_navigation: ThreadDeleteNavigation::None,
+            worktree_confirm_message: None,
+            remove_worktree: None,
+            invalidate_git_queries: false,
+        };
+    }
+
+    let Some(thread) = resolved_thread else {
+        return ThreadDeletePlan {
+            dispatch_delete_command: true,
+            direct_delete_without_store_thread: true,
+            stop_session_before_delete: false,
+            close_terminal_delete_history: false,
+            refresh_archived_threads_environment_id: Some(target.environment_id.clone()),
+            clear_composer_draft: false,
+            clear_project_draft_thread: None,
+            clear_terminal_state: false,
+            fallback_navigation: ThreadDeleteNavigation::None,
+            worktree_confirm_message: None,
+            remove_worktree: None,
+            invalidate_git_queries: false,
+        };
+    };
+
+    let deleted_thread_ids =
+        deleted_thread_ids_for_environment(deleted_thread_keys, &target.environment_id);
+    let fallback_thread_id = get_fallback_thread_id_after_delete(
+        threads,
+        &target.thread_id,
+        &deleted_thread_ids,
+        sort_order,
+    );
+    let fallback_navigation = if route_thread_ref_matches(current_route_thread_ref, target) {
+        match (fallback_thread_id, fallback_thread_exists) {
+            (Some(thread_id), true) => {
+                ThreadDeleteNavigation::Thread(scope_thread_ref(&target.environment_id, &thread_id))
+            }
+            _ => ThreadDeleteNavigation::Index,
+        }
+    } else {
+        ThreadDeleteNavigation::None
+    };
+
+    let orphaned_worktree_path =
+        get_orphaned_worktree_path_for_thread(worktree_threads, &target.thread_id);
+    let can_delete_worktree = orphaned_worktree_path.is_some() && thread_project_cwd.is_some();
+    let worktree_confirm_message = (can_delete_worktree && has_local_api).then(|| {
+        let path = orphaned_worktree_path.as_deref().unwrap_or_default();
+        [
+            "This thread is the only one linked to this worktree:".to_string(),
+            format_worktree_path_for_display(path),
+            String::new(),
+            "Delete the worktree too?".to_string(),
+        ]
+        .join("\n")
+    });
+    let remove_worktree = (can_delete_worktree && has_local_api && delete_worktree_confirmed)
+        .then(|| orphaned_worktree_path.clone())
+        .flatten();
+
+    ThreadDeletePlan {
+        dispatch_delete_command: true,
+        direct_delete_without_store_thread: false,
+        stop_session_before_delete: thread
+            .session_status
+            .as_deref()
+            .is_some_and(|status| status != "closed"),
+        close_terminal_delete_history: true,
+        refresh_archived_threads_environment_id: Some(target.environment_id.clone()),
+        clear_composer_draft: true,
+        clear_project_draft_thread: Some(scope_project_ref(
+            &target.environment_id,
+            &thread.project_id,
+        )),
+        clear_terminal_state: true,
+        fallback_navigation,
+        worktree_confirm_message,
+        invalidate_git_queries: remove_worktree.is_some(),
+        remove_worktree,
+    }
+}
+
+pub fn confirm_delete_thread_plan(
+    confirm_thread_delete: bool,
+    has_local_api: bool,
+    resolved_thread_title: Option<&str>,
+    user_confirmed: bool,
+) -> ThreadDeleteConfirmationPlan {
+    if confirm_thread_delete && has_local_api {
+        let title = resolved_thread_title.unwrap_or("this thread");
+        ThreadDeleteConfirmationPlan {
+            confirm_message: Some(
+                [
+                    format!("Delete thread \"{title}\"?"),
+                    "This permanently clears conversation history for this thread.".to_string(),
+                ]
+                .join("\n"),
+            ),
+            proceed_to_delete: user_confirmed,
+        }
+    } else {
+        ThreadDeleteConfirmationPlan {
+            confirm_message: None,
+            proceed_to_delete: true,
+        }
+    }
+}
+
 pub const GIT_BRANCHES_STALE_TIME_MS: u64 = 15_000;
 pub const GIT_BRANCHES_REFETCH_INTERVAL_MS: u64 = 60_000;
 pub const GIT_BRANCHES_PAGE_SIZE: u32 = 100;
@@ -26110,6 +26385,173 @@ mod tests {
         assert_eq!(
             create_plan.navigate_to_draft_id.as_deref(),
             Some("draft-new")
+        );
+    }
+
+    #[test]
+    fn thread_actions_helpers_match_upstream_archive_delete_flow() {
+        let target = ScopedThreadRef::new("env-a", "thread-a");
+        let resolved = ThreadActionsResolvedThread {
+            thread_ref: target.clone(),
+            project_id: "project-1".to_string(),
+            title: "Fix bug".to_string(),
+            session_status: Some("running".to_string()),
+            active_turn_id: Some("turn-1".to_string()),
+            worktree_path: Some("/repo/.worktrees/thread-a".to_string()),
+        };
+        assert_eq!(
+            plan_archive_thread_action(true, &target, Some(&resolved), Some(&target)),
+            ThreadArchivePlan {
+                dispatch_command_type: None,
+                error: Some("Cannot archive a running thread."),
+                navigate_to_new_thread_project_ref: None,
+                refresh_archived_threads_environment_id: None,
+            }
+        );
+
+        let idle_resolved = ThreadActionsResolvedThread {
+            session_status: Some("closed".to_string()),
+            active_turn_id: None,
+            ..resolved.clone()
+        };
+        assert_eq!(
+            plan_archive_thread_action(true, &target, Some(&idle_resolved), Some(&target)),
+            ThreadArchivePlan {
+                dispatch_command_type: Some("thread.archive"),
+                error: None,
+                navigate_to_new_thread_project_ref: Some(scope_project_ref("env-a", "project-1")),
+                refresh_archived_threads_environment_id: Some("env-a".to_string()),
+            }
+        );
+        assert_eq!(
+            plan_unarchive_thread_action(true, &target),
+            ThreadUnarchivePlan {
+                dispatch_command_type: Some("thread.unarchive"),
+                refresh_archived_threads_environment_id: Some("env-a".to_string()),
+            }
+        );
+
+        assert_eq!(
+            deleted_thread_ids_for_environment(
+                &[
+                    scoped_thread_key(&ScopedThreadRef::new("env-a", "thread-a")),
+                    scoped_thread_key(&ScopedThreadRef::new("env-b", "thread-b")),
+                ],
+                "env-a",
+            ),
+            BTreeSet::from(["thread-a".to_string()])
+        );
+
+        let mut thread_a = thread_sort_input("thread-a");
+        thread_a.updated_at = Some("2026-03-09T10:00:00.000Z".to_string());
+        let mut thread_b = thread_sort_input("thread-b");
+        thread_b.updated_at = Some("2026-03-09T11:00:00.000Z".to_string());
+        let mut thread_c = thread_sort_input("thread-c");
+        thread_c.updated_at = Some("2026-03-09T12:00:00.000Z".to_string());
+        thread_c.project_id = "project-2".to_string();
+        assert_eq!(
+            get_fallback_thread_id_after_delete(
+                &[thread_a.clone(), thread_b.clone(), thread_c],
+                "thread-a",
+                &BTreeSet::new(),
+                SidebarThreadSortOrder::UpdatedAt,
+            ),
+            Some("thread-b".to_string())
+        );
+
+        assert_eq!(
+            plan_delete_thread_action(
+                true,
+                &target,
+                None,
+                &[thread_a.clone(), thread_b.clone()],
+                &[],
+                None,
+                Some(&target),
+                &[],
+                SidebarThreadSortOrder::UpdatedAt,
+                false,
+                false,
+                true,
+            ),
+            ThreadDeletePlan {
+                dispatch_delete_command: true,
+                direct_delete_without_store_thread: true,
+                stop_session_before_delete: false,
+                close_terminal_delete_history: false,
+                refresh_archived_threads_environment_id: Some("env-a".to_string()),
+                clear_composer_draft: false,
+                clear_project_draft_thread: None,
+                clear_terminal_state: false,
+                fallback_navigation: ThreadDeleteNavigation::None,
+                worktree_confirm_message: None,
+                remove_worktree: None,
+                invalidate_git_queries: false,
+            }
+        );
+
+        let delete_plan = plan_delete_thread_action(
+            true,
+            &target,
+            Some(&idle_resolved),
+            &[thread_a, thread_b],
+            &[
+                WorktreeCleanupThread {
+                    id: "thread-a".to_string(),
+                    worktree_path: Some("/repo/.worktrees/thread-a".to_string()),
+                },
+                WorktreeCleanupThread {
+                    id: "thread-b".to_string(),
+                    worktree_path: None,
+                },
+            ],
+            Some("/repo"),
+            Some(&target),
+            &[],
+            SidebarThreadSortOrder::UpdatedAt,
+            true,
+            true,
+            true,
+        );
+        assert!(delete_plan.dispatch_delete_command);
+        assert!(delete_plan.close_terminal_delete_history);
+        assert!(delete_plan.clear_composer_draft);
+        assert_eq!(
+            delete_plan.clear_project_draft_thread,
+            Some(scope_project_ref("env-a", "project-1"))
+        );
+        assert_eq!(
+            delete_plan.fallback_navigation,
+            ThreadDeleteNavigation::Thread(ScopedThreadRef::new("env-a", "thread-b"))
+        );
+        assert_eq!(
+            delete_plan.worktree_confirm_message.as_deref(),
+            Some(
+                "This thread is the only one linked to this worktree:\nthread-a\n\nDelete the worktree too?"
+            )
+        );
+        assert_eq!(
+            delete_plan.remove_worktree.as_deref(),
+            Some("/repo/.worktrees/thread-a")
+        );
+        assert!(delete_plan.invalidate_git_queries);
+
+        assert_eq!(
+            confirm_delete_thread_plan(true, true, Some("Fix bug"), false),
+            ThreadDeleteConfirmationPlan {
+                confirm_message: Some(
+                    "Delete thread \"Fix bug\"?\nThis permanently clears conversation history for this thread."
+                        .to_string(),
+                ),
+                proceed_to_delete: false,
+            }
+        );
+        assert_eq!(
+            confirm_delete_thread_plan(false, true, Some("Fix bug"), false),
+            ThreadDeleteConfirmationPlan {
+                confirm_message: None,
+                proceed_to_delete: true,
+            }
         );
     }
 
