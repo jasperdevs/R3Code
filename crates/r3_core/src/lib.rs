@@ -732,6 +732,22 @@ pub const EMPTY_TITLE_CLASS_NAME: &str = "font-heading font-semibold text-xl";
 pub const EMPTY_DESCRIPTION_CLASS_NAME: &str = "text-muted-foreground text-sm [&>a:hover]:text-primary [&>a]:underline [&>a]:underline-offset-4 [[data-slot=empty-title]+&]:mt-1";
 pub const EMPTY_CONTENT_CLASS_NAME: &str =
     "flex w-full min-w-0 max-w-sm flex-col items-center gap-4 text-balance text-sm";
+pub const KBD_SLOT: &str = "kbd";
+pub const KBD_GROUP_SLOT: &str = "kbd-group";
+pub const KBD_CLASS_NAME: &str = "pointer-events-none inline-flex h-5 min-w-5 select-none items-center justify-center gap-1 rounded bg-muted px-1 font-medium font-sans text-muted-foreground text-xs [&_svg:not([class*='size-'])]:size-3";
+pub const KBD_GROUP_CLASS_NAME: &str = "inline-flex items-center gap-1";
+pub const SKELETON_SLOT: &str = "skeleton";
+pub const SKELETON_CLASS_NAME: &str = "animate-skeleton rounded-sm [--skeleton-highlight:--alpha(var(--color-white)/64%)] [background:linear-gradient(120deg,transparent_40%,var(--skeleton-highlight),transparent_60%)_var(--color-muted)_0_0/200%_100%_fixed] dark:[--skeleton-highlight:--alpha(var(--color-white)/4%)]";
+pub const SPINNER_ICON_NAME: &str = "Loader2Icon";
+pub const SPINNER_ARIA_LABEL: &str = "Loading";
+pub const SPINNER_ROLE: &str = "status";
+pub const SPINNER_CLASS_NAME: &str = "animate-spin";
+pub const SEPARATOR_SLOT: &str = "separator";
+pub const SEPARATOR_DEFAULT_ORIENTATION: &str = "horizontal";
+pub const SEPARATOR_CLASS_NAME: &str = "shrink-0 bg-border data-[orientation=horizontal]:h-px data-[orientation=horizontal]:w-full data-[orientation=vertical]:w-px data-[orientation=vertical]:not-[[class^='h-']]:not-[[class*='_h-']]:self-stretch";
+pub const LABEL_SLOT: &str = "label";
+pub const LABEL_CLASS_NAME: &str =
+    "inline-flex items-center gap-2 text-base/4.5 sm:text-sm/4 font-medium text-foreground";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmptyMediaVariant {
@@ -36628,6 +36644,37 @@ mod tests {
         assert_eq!(
             EMPTY_CONTENT_CLASS_NAME,
             "flex w-full min-w-0 max-w-sm flex-col items-center gap-4 text-balance text-sm"
+        );
+    }
+
+    #[test]
+    fn small_ui_primitive_contracts_match_upstream_components() {
+        assert_eq!(KBD_SLOT, "kbd");
+        assert_eq!(KBD_GROUP_SLOT, "kbd-group");
+        assert_eq!(
+            KBD_CLASS_NAME,
+            "pointer-events-none inline-flex h-5 min-w-5 select-none items-center justify-center gap-1 rounded bg-muted px-1 font-medium font-sans text-muted-foreground text-xs [&_svg:not([class*='size-'])]:size-3"
+        );
+        assert_eq!(KBD_GROUP_CLASS_NAME, "inline-flex items-center gap-1");
+        assert_eq!(SKELETON_SLOT, "skeleton");
+        assert_eq!(
+            SKELETON_CLASS_NAME,
+            "animate-skeleton rounded-sm [--skeleton-highlight:--alpha(var(--color-white)/64%)] [background:linear-gradient(120deg,transparent_40%,var(--skeleton-highlight),transparent_60%)_var(--color-muted)_0_0/200%_100%_fixed] dark:[--skeleton-highlight:--alpha(var(--color-white)/4%)]"
+        );
+        assert_eq!(SPINNER_ICON_NAME, "Loader2Icon");
+        assert_eq!(SPINNER_ARIA_LABEL, "Loading");
+        assert_eq!(SPINNER_ROLE, "status");
+        assert_eq!(SPINNER_CLASS_NAME, "animate-spin");
+        assert_eq!(SEPARATOR_SLOT, "separator");
+        assert_eq!(SEPARATOR_DEFAULT_ORIENTATION, "horizontal");
+        assert_eq!(
+            SEPARATOR_CLASS_NAME,
+            "shrink-0 bg-border data-[orientation=horizontal]:h-px data-[orientation=horizontal]:w-full data-[orientation=vertical]:w-px data-[orientation=vertical]:not-[[class^='h-']]:not-[[class*='_h-']]:self-stretch"
+        );
+        assert_eq!(LABEL_SLOT, "label");
+        assert_eq!(
+            LABEL_CLASS_NAME,
+            "inline-flex items-center gap-2 text-base/4.5 sm:text-sm/4 font-medium text-foreground"
         );
     }
 
