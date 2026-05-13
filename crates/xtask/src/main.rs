@@ -2468,6 +2468,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace provider_settings_form_helpers_match_upstream_contract`",
             "Wire derived fields into the live GPUI provider settings form, card/dialog variants, commit-on-blur controls, and exact input/switch styling.",
         )
+    } else if path == "apps/web/src/components/settings/ProviderInstanceCard.test.ts"
+        || path == "apps/web/src/components/settings/ProviderInstanceCard.tsx"
+    {
+        (
+            "ProviderInstanceCard model display derivation that keeps live server models while replacing stale live custom rows with current config custom models in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace provider_models_for_display_match_upstream_instance_card_contract`",
+            "Wire the remaining provider instance card controls, environment variable drafts, accent swatches, auth copy, update actions, and exact GPUI card rendering.",
+        )
     } else if path.starts_with("apps/web/src/components/")
         || path.starts_with("apps/web/src/composer")
         || path.starts_with("apps/web/src/diff")

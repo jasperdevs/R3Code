@@ -6240,6 +6240,37 @@ pub fn get_default_server_model(providers: &[ServerProvider], provider: &str) ->
         .unwrap_or_else(|| DEFAULT_MODEL.to_string())
 }
 
+pub fn derive_provider_models_for_display(
+    live_models: Option<&[ServerProviderModel]>,
+    custom_models: &[String],
+) -> Vec<ServerProviderModel> {
+    let mut live_custom_models_by_slug = HashMap::<&str, &ServerProviderModel>::new();
+    let mut server_models = Vec::new();
+
+    for model in live_models.unwrap_or_default() {
+        if model.is_custom {
+            live_custom_models_by_slug.insert(&model.slug, model);
+        } else {
+            server_models.push(model.clone());
+        }
+    }
+
+    server_models.extend(custom_models.iter().map(|slug| {
+        live_custom_models_by_slug
+            .get(slug.as_str())
+            .map(|model| (*model).clone())
+            .unwrap_or_else(|| ServerProviderModel {
+                slug: slug.clone(),
+                name: slug.clone(),
+                short_name: None,
+                sub_provider: None,
+                is_custom: true,
+                capabilities: None,
+            })
+    }));
+    server_models
+}
+
 pub fn get_provider_model_capabilities(
     models: &[ServerProviderModel],
     model: Option<&str>,
@@ -39089,6 +39120,44 @@ mod tests {
         assert_eq!(
             resolve_selectable_provider_instance(&no_sendable, Some("removed_instance")),
             None
+        );
+    }
+
+    #[test]
+    fn provider_models_for_display_match_upstream_instance_card_contract() {
+        let live_models = vec![
+            ServerProviderModel {
+                slug: "server-model".to_string(),
+                name: "Server Model".to_string(),
+                short_name: None,
+                sub_provider: None,
+                is_custom: false,
+                capabilities: None,
+            },
+            ServerProviderModel {
+                slug: "removed-custom".to_string(),
+                name: "Removed Custom".to_string(),
+                short_name: None,
+                sub_provider: None,
+                is_custom: true,
+                capabilities: None,
+            },
+            ServerProviderModel {
+                slug: "kept-custom".to_string(),
+                name: "Kept Custom".to_string(),
+                short_name: None,
+                sub_provider: None,
+                is_custom: true,
+                capabilities: None,
+            },
+        ];
+
+        assert_eq!(
+            derive_provider_models_for_display(Some(&live_models), &["kept-custom".to_string()])
+                .into_iter()
+                .map(|model| model.slug)
+                .collect::<Vec<_>>(),
+            vec!["server-model", "kept-custom"]
         );
     }
 
