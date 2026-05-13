@@ -5048,6 +5048,7 @@ pub struct GitVcsCommandPlan {
     pub operation: &'static str,
     pub args: Vec<String>,
     pub stdin: Option<String>,
+    pub env: Option<BTreeMap<String, String>>,
     pub allow_non_zero_exit: bool,
     pub timeout_ms: u64,
     pub max_output_bytes: usize,
@@ -5069,6 +5070,7 @@ pub fn git_list_workspace_files_plan() -> GitVcsCommandPlan {
             .map(|value| value.to_string())
             .collect(),
         stdin: None,
+        env: None,
         allow_non_zero_exit: true,
         timeout_ms: 20_000,
         max_output_bytes: GIT_WORKSPACE_FILES_MAX_OUTPUT_BYTES,
@@ -5081,6 +5083,7 @@ pub fn git_list_remotes_plan() -> GitVcsCommandPlan {
         operation: "GitVcsDriver.listRemotes",
         args: vec!["remote".to_string(), "-v".to_string()],
         stdin: None,
+        env: None,
         allow_non_zero_exit: true,
         timeout_ms: 5_000,
         max_output_bytes: 64 * 1024,
@@ -5102,6 +5105,7 @@ pub fn git_filter_ignored_paths_plan(relative_paths: &[String]) -> GitVcsCommand
             .map(|value| value.to_string())
             .collect(),
         stdin: Some(stdin),
+        env: None,
         allow_non_zero_exit: true,
         timeout_ms: 20_000,
         max_output_bytes: GIT_WORKSPACE_FILES_MAX_OUTPUT_BYTES,
@@ -5221,6 +5225,268 @@ pub fn filter_git_ignored_paths(relative_paths: &[String], ignored_stdout: &str)
         .iter()
         .filter(|relative_path| !ignored_paths.contains(*relative_path))
         .cloned()
+        .collect()
+}
+
+pub const GIT_CHECKPOINT_AUTHOR_NAME: &str = "T3 Code";
+pub const GIT_CHECKPOINT_AUTHOR_EMAIL: &str = "t3code@users.noreply.github.com";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitCheckpointCapturePlan {
+    pub temp_index_path: String,
+    pub cleanup_temp_index: bool,
+    pub commands: Vec<GitVcsCommandPlan>,
+}
+
+fn git_checkpoint_command(
+    operation: &'static str,
+    args: Vec<String>,
+    env: Option<BTreeMap<String, String>>,
+) -> GitVcsCommandPlan {
+    GitVcsCommandPlan {
+        operation,
+        args,
+        stdin: None,
+        env,
+        allow_non_zero_exit: false,
+        timeout_ms: 30_000,
+        max_output_bytes: 1_000_000,
+        append_truncation_marker: false,
+    }
+}
+
+fn git_checkpoint_env(temp_index_path: &str) -> BTreeMap<String, String> {
+    BTreeMap::from([
+        ("GIT_INDEX_FILE".to_string(), temp_index_path.to_string()),
+        (
+            "GIT_AUTHOR_NAME".to_string(),
+            GIT_CHECKPOINT_AUTHOR_NAME.to_string(),
+        ),
+        (
+            "GIT_AUTHOR_EMAIL".to_string(),
+            GIT_CHECKPOINT_AUTHOR_EMAIL.to_string(),
+        ),
+        (
+            "GIT_COMMITTER_NAME".to_string(),
+            GIT_CHECKPOINT_AUTHOR_NAME.to_string(),
+        ),
+        (
+            "GIT_COMMITTER_EMAIL".to_string(),
+            GIT_CHECKPOINT_AUTHOR_EMAIL.to_string(),
+        ),
+    ])
+}
+
+pub fn git_checkpoint_temp_index_path(git_common_dir: &str, unique_id: &str) -> String {
+    format!(
+        "{}/t3-checkpoint-index-{}",
+        git_common_dir.trim_end_matches(['/', '\\']),
+        unique_id
+    )
+}
+
+pub fn git_capture_checkpoint_plan(
+    checkpoint_ref: &str,
+    git_common_dir: &str,
+    unique_id: &str,
+    head_exists: bool,
+    tree_oid: &str,
+    commit_oid: &str,
+) -> GitCheckpointCapturePlan {
+    let operation = "GitVcsDriver.checkpoints.captureCheckpoint";
+    let temp_index_path = git_checkpoint_temp_index_path(git_common_dir, unique_id);
+    let env = git_checkpoint_env(&temp_index_path);
+    let mut commands = Vec::new();
+
+    if head_exists {
+        commands.push(git_checkpoint_command(
+            operation,
+            vec!["read-tree".to_string(), "HEAD".to_string()],
+            Some(env.clone()),
+        ));
+    }
+    commands.push(git_checkpoint_command(
+        operation,
+        vec![
+            "add".to_string(),
+            "-A".to_string(),
+            "--".to_string(),
+            ".".to_string(),
+        ],
+        Some(env.clone()),
+    ));
+    commands.push(git_checkpoint_command(
+        operation,
+        vec!["write-tree".to_string()],
+        Some(env.clone()),
+    ));
+    commands.push(git_checkpoint_command(
+        operation,
+        vec![
+            "commit-tree".to_string(),
+            tree_oid.to_string(),
+            "-m".to_string(),
+            format!("t3 checkpoint ref={checkpoint_ref}"),
+        ],
+        Some(env),
+    ));
+    commands.push(git_checkpoint_command(
+        operation,
+        vec![
+            "update-ref".to_string(),
+            checkpoint_ref.to_string(),
+            commit_oid.to_string(),
+        ],
+        None,
+    ));
+
+    GitCheckpointCapturePlan {
+        temp_index_path,
+        cleanup_temp_index: true,
+        commands,
+    }
+}
+
+pub fn git_checkpoint_empty_tree_oid_error(cwd: &str) -> VcsContractError {
+    VcsContractError::ProcessExit {
+        context: VcsProcessErrorContext {
+            operation: "GitVcsDriver.checkpoints.captureCheckpoint".to_string(),
+            command: "git write-tree".to_string(),
+            cwd: cwd.to_string(),
+        },
+        exit_code: 0,
+        detail: "git write-tree returned an empty tree oid.".to_string(),
+    }
+}
+
+pub fn git_checkpoint_empty_commit_oid_error(cwd: &str) -> VcsContractError {
+    VcsContractError::ProcessExit {
+        context: VcsProcessErrorContext {
+            operation: "GitVcsDriver.checkpoints.captureCheckpoint".to_string(),
+            command: "git commit-tree".to_string(),
+            cwd: cwd.to_string(),
+        },
+        exit_code: 0,
+        detail: "git commit-tree returned an empty commit oid.".to_string(),
+    }
+}
+
+pub fn git_restore_checkpoint_plan(commit_oid: &str, head_exists: bool) -> Vec<GitVcsCommandPlan> {
+    let operation = "GitVcsDriver.checkpoints.restoreCheckpoint";
+    let mut commands = vec![
+        git_checkpoint_command(
+            operation,
+            vec![
+                "restore".to_string(),
+                "--source".to_string(),
+                commit_oid.to_string(),
+                "--worktree".to_string(),
+                "--staged".to_string(),
+                "--".to_string(),
+                ".".to_string(),
+            ],
+            None,
+        ),
+        git_checkpoint_command(
+            operation,
+            vec![
+                "clean".to_string(),
+                "-fd".to_string(),
+                "--".to_string(),
+                ".".to_string(),
+            ],
+            None,
+        ),
+    ];
+    if head_exists {
+        commands.push(git_checkpoint_command(
+            operation,
+            vec![
+                "reset".to_string(),
+                "--quiet".to_string(),
+                "--".to_string(),
+                ".".to_string(),
+            ],
+            None,
+        ));
+    }
+    commands
+}
+
+pub fn git_diff_checkpoints_from_revision(
+    from_checkpoint_ref: &str,
+    fallback_from_to_head: bool,
+    resolved_from_commit: Option<&str>,
+    head_commit: Option<&str>,
+    cwd: &str,
+) -> Result<String, VcsContractError> {
+    if !fallback_from_to_head {
+        return Ok(from_checkpoint_ref.to_string());
+    }
+    if let Some(commit) = resolved_from_commit.filter(|commit| !commit.is_empty()) {
+        return Ok(commit.to_string());
+    }
+    if let Some(commit) = head_commit.filter(|commit| !commit.is_empty()) {
+        return Ok(commit.to_string());
+    }
+    Err(VcsContractError::ProcessExit {
+        context: VcsProcessErrorContext {
+            operation: "GitVcsDriver.checkpoints.diffCheckpoints".to_string(),
+            command: "git diff".to_string(),
+            cwd: cwd.to_string(),
+        },
+        exit_code: 1,
+        detail: "Checkpoint ref is unavailable for diff operation.".to_string(),
+    })
+}
+
+pub fn git_diff_checkpoints_plan(
+    from_revision: &str,
+    to_checkpoint_ref: &str,
+    ignore_whitespace: bool,
+) -> GitVcsCommandPlan {
+    let mut args = vec![
+        "diff".to_string(),
+        "--patch".to_string(),
+        "--no-color".to_string(),
+        "--no-ext-diff".to_string(),
+        "--no-textconv".to_string(),
+    ];
+    if ignore_whitespace {
+        args.push("--ignore-all-space".to_string());
+    }
+    args.push(format!("{from_revision}^{{commit}}"));
+    args.push(format!("{to_checkpoint_ref}^{{commit}}"));
+
+    GitVcsCommandPlan {
+        operation: "GitVcsDriver.checkpoints.diffCheckpoints",
+        args,
+        stdin: None,
+        env: None,
+        allow_non_zero_exit: true,
+        timeout_ms: 30_000,
+        max_output_bytes: GIT_CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+        append_truncation_marker: false,
+    }
+}
+
+pub fn git_delete_checkpoint_ref_plans(checkpoint_refs: &[String]) -> Vec<GitVcsCommandPlan> {
+    checkpoint_refs
+        .iter()
+        .map(|checkpoint_ref| GitVcsCommandPlan {
+            operation: "GitVcsDriver.checkpoints.deleteCheckpointRefs",
+            args: vec![
+                "update-ref".to_string(),
+                "-d".to_string(),
+                checkpoint_ref.clone(),
+            ],
+            stdin: None,
+            env: None,
+            allow_non_zero_exit: true,
+            timeout_ms: 30_000,
+            max_output_bytes: 1_000_000,
+            append_truncation_marker: false,
+        })
         .collect()
 }
 
@@ -16179,6 +16445,7 @@ mod tests {
                 operation: "GitVcsDriver.listRemotes",
                 args: vec!["remote".to_string(), "-v".to_string()],
                 stdin: None,
+                env: None,
                 allow_non_zero_exit: true,
                 timeout_ms: 5_000,
                 max_output_bytes: 64 * 1024,
@@ -16207,6 +16474,141 @@ mod tests {
                     is_primary: false,
                 },
             ]
+        );
+
+        let capture_plan = git_capture_checkpoint_plan(
+            "refs/t3/checkpoints/dGhyZWFk/turn/1",
+            "/repo/.git",
+            "uuid-1",
+            true,
+            "tree-oid",
+            "commit-oid",
+        );
+        assert_eq!(
+            capture_plan.temp_index_path,
+            "/repo/.git/t3-checkpoint-index-uuid-1"
+        );
+        assert!(capture_plan.cleanup_temp_index);
+        assert_eq!(
+            capture_plan
+                .commands
+                .iter()
+                .map(|command| command.args.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                vec!["read-tree", "HEAD"],
+                vec!["add", "-A", "--", "."],
+                vec!["write-tree"],
+                vec![
+                    "commit-tree",
+                    "tree-oid",
+                    "-m",
+                    "t3 checkpoint ref=refs/t3/checkpoints/dGhyZWFk/turn/1"
+                ],
+                vec![
+                    "update-ref",
+                    "refs/t3/checkpoints/dGhyZWFk/turn/1",
+                    "commit-oid"
+                ],
+            ]
+        );
+        let checkpoint_env = capture_plan.commands[0].env.as_ref().unwrap();
+        assert_eq!(
+            checkpoint_env.get("GIT_INDEX_FILE").map(String::as_str),
+            Some("/repo/.git/t3-checkpoint-index-uuid-1")
+        );
+        assert_eq!(
+            checkpoint_env.get("GIT_AUTHOR_NAME").map(String::as_str),
+            Some("T3 Code")
+        );
+        assert!(capture_plan.commands[4].env.is_none());
+
+        assert_eq!(
+            git_restore_checkpoint_plan("commit-oid", true)
+                .into_iter()
+                .map(|command| command.args)
+                .collect::<Vec<_>>(),
+            vec![
+                vec![
+                    "restore",
+                    "--source",
+                    "commit-oid",
+                    "--worktree",
+                    "--staged",
+                    "--",
+                    "."
+                ],
+                vec!["clean", "-fd", "--", "."],
+                vec!["reset", "--quiet", "--", "."],
+            ]
+        );
+        assert_eq!(
+            git_diff_checkpoints_from_revision(
+                "refs/t3/checkpoints/from",
+                true,
+                None,
+                Some("head-commit"),
+                "/repo",
+            )
+            .unwrap(),
+            "head-commit"
+        );
+        assert_eq!(
+            git_diff_checkpoints_from_revision(
+                "refs/t3/checkpoints/from",
+                false,
+                None,
+                None,
+                "/repo"
+            )
+            .unwrap(),
+            "refs/t3/checkpoints/from"
+        );
+        assert_eq!(
+            git_diff_checkpoints_from_revision(
+                "refs/t3/checkpoints/from",
+                true,
+                None,
+                None,
+                "/repo"
+            )
+            .unwrap_err()
+            .message(),
+            "VCS process failed in GitVcsDriver.checkpoints.diffCheckpoints: git diff (/repo) exited with 1 - Checkpoint ref is unavailable for diff operation."
+        );
+        assert_eq!(
+            git_diff_checkpoints_plan("from-commit", "refs/t3/checkpoints/to", true).args,
+            vec![
+                "diff",
+                "--patch",
+                "--no-color",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--ignore-all-space",
+                "from-commit^{commit}",
+                "refs/t3/checkpoints/to^{commit}",
+            ]
+        );
+        assert_eq!(
+            git_delete_checkpoint_ref_plans(&[
+                "refs/t3/checkpoints/one".to_string(),
+                "refs/t3/checkpoints/two".to_string(),
+            ])
+            .into_iter()
+            .map(|command| command.args)
+            .collect::<Vec<_>>(),
+            vec![
+                vec!["update-ref", "-d", "refs/t3/checkpoints/one"],
+                vec!["update-ref", "-d", "refs/t3/checkpoints/two"],
+            ]
+        );
+        assert_eq!(
+            git_checkpoint_empty_tree_oid_error("/repo").message(),
+            "VCS process failed in GitVcsDriver.checkpoints.captureCheckpoint: git write-tree (/repo) exited with 0 - git write-tree returned an empty tree oid."
+        );
+        assert_eq!(
+            git_checkpoint_empty_commit_oid_error("/repo").message(),
+            "VCS process failed in GitVcsDriver.checkpoints.captureCheckpoint: git commit-tree (/repo) exited with 0 - git commit-tree returned an empty commit oid."
         );
 
         let context = VcsProcessErrorContext {

@@ -1756,7 +1756,7 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
         )
     } else if path.starts_with("apps/server/src/git/") || path.starts_with("apps/server/src/vcs/") {
         (
-            "branch/git presentation helpers, VCS contract shapes, Git workspace-file/remotes/check-ignore helper contracts in crates/r3_core/src/lib.rs plus VCS process default/error/truncation contracts in crates/r3_core/src/process.rs",
+            "branch/git presentation helpers, VCS contract shapes, Git workspace-file/remotes/check-ignore and checkpoint command-plan contracts in crates/r3_core/src/lib.rs plus VCS process default/error/truncation contracts in crates/r3_core/src/process.rs",
             "partial",
             "`cargo test -p r3_core process`; branch/git menu tests",
             "Port live git status, refs, worktrees, commits, push, checkout, workspace file execution, and VCS process service wiring.",
