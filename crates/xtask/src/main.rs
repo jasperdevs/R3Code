@@ -1796,6 +1796,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core provider_presentation_metadata`; `cargo test -p r3_core model_picker`",
             "Wire icon mapping into live GPUI model picker/provider trigger rendering.",
         )
+    } else if path == "apps/web/src/editorPreferences.ts" {
+        (
+            "preferred-editor storage key, stored editor selection, upstream editor-order fallback, and persistence decision helper in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core preferred_editor_resolution`",
+            "Wire helper into live GPUI editor preference storage and shell open action.",
+        )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
             "logical project path normalization, physical/grouping/order keys, repository-scoped keys, settings override resolution, ref fallback, and group-label helpers in crates/r3_core/src/lib.rs",

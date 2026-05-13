@@ -3044,10 +3044,42 @@ pub enum EditorId {
     FileManager,
 }
 
+pub const LAST_EDITOR_STORAGE_KEY: &str = "r3code:last-editor";
+
+pub const EDITORS_IN_UPSTREAM_ORDER: [EditorId; 21] = [
+    EditorId::Cursor,
+    EditorId::Trae,
+    EditorId::Kiro,
+    EditorId::VsCode,
+    EditorId::VsCodeInsiders,
+    EditorId::VsCodium,
+    EditorId::Zed,
+    EditorId::Antigravity,
+    EditorId::Idea,
+    EditorId::Aqua,
+    EditorId::CLion,
+    EditorId::DataGrip,
+    EditorId::DataSpell,
+    EditorId::GoLand,
+    EditorId::PhpStorm,
+    EditorId::PyCharm,
+    EditorId::Rider,
+    EditorId::RubyMine,
+    EditorId::RustRover,
+    EditorId::WebStorm,
+    EditorId::FileManager,
+];
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EditorOption {
     pub label: &'static str,
     pub id: EditorId,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PreferredEditorResolution {
+    pub editor: Option<EditorId>,
+    pub should_persist: bool,
 }
 
 pub const DEFAULT_PROVIDER_DRIVER_KIND: &str = "codex";
@@ -11402,6 +11434,45 @@ pub fn resolve_editor_options(platform: &str, available_editors: &[EditorId]) ->
         .copied()
         .filter(|option| available_editors.iter().any(|editor| editor == &option.id))
         .collect()
+}
+
+pub fn resolve_preferred_editor(
+    available_editors: &[EditorId],
+    stored_editor: Option<EditorId>,
+) -> Option<EditorId> {
+    if let Some(stored_editor) = stored_editor {
+        if available_editors.contains(&stored_editor) {
+            return Some(stored_editor);
+        }
+    }
+
+    EDITORS_IN_UPSTREAM_ORDER
+        .iter()
+        .copied()
+        .find(|editor| available_editors.contains(editor))
+}
+
+pub fn resolve_and_persist_preferred_editor(
+    available_editors: &[EditorId],
+    stored_editor: Option<EditorId>,
+) -> PreferredEditorResolution {
+    if let Some(stored_editor) = stored_editor {
+        if available_editors.contains(&stored_editor) {
+            return PreferredEditorResolution {
+                editor: Some(stored_editor),
+                should_persist: false,
+            };
+        }
+    }
+
+    let editor = EDITORS_IN_UPSTREAM_ORDER
+        .iter()
+        .copied()
+        .find(|editor| available_editors.contains(editor));
+    PreferredEditorResolution {
+        editor,
+        should_persist: editor.is_some(),
+    }
 }
 
 fn editor_options(platform: &str) -> Vec<EditorOption> {
@@ -22514,6 +22585,55 @@ mod tests {
                 .map(|option| option.label)
                 .collect::<Vec<_>>(),
             vec!["VS Code Insiders", "VSCodium", "Explorer"]
+        );
+    }
+
+    #[test]
+    fn preferred_editor_resolution_matches_upstream_storage_logic() {
+        assert_eq!(LAST_EDITOR_STORAGE_KEY, "r3code:last-editor");
+        assert_eq!(
+            resolve_preferred_editor(
+                &[EditorId::VsCode, EditorId::Cursor],
+                Some(EditorId::VsCode)
+            ),
+            Some(EditorId::VsCode)
+        );
+        assert_eq!(
+            resolve_preferred_editor(&[EditorId::VsCode, EditorId::Cursor], Some(EditorId::Zed)),
+            Some(EditorId::Cursor)
+        );
+        assert_eq!(
+            resolve_preferred_editor(&[EditorId::FileManager], None),
+            Some(EditorId::FileManager)
+        );
+        assert_eq!(resolve_preferred_editor(&[], Some(EditorId::Cursor)), None);
+
+        assert_eq!(
+            resolve_and_persist_preferred_editor(
+                &[EditorId::VsCode, EditorId::Cursor],
+                Some(EditorId::VsCode)
+            ),
+            PreferredEditorResolution {
+                editor: Some(EditorId::VsCode),
+                should_persist: false,
+            }
+        );
+        assert_eq!(
+            resolve_and_persist_preferred_editor(
+                &[EditorId::VsCode, EditorId::Cursor],
+                Some(EditorId::Zed)
+            ),
+            PreferredEditorResolution {
+                editor: Some(EditorId::Cursor),
+                should_persist: true,
+            }
+        );
+        assert_eq!(
+            resolve_and_persist_preferred_editor(&[], None),
+            PreferredEditorResolution {
+                editor: None,
+                should_persist: false,
+            }
         );
     }
 
