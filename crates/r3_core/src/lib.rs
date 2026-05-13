@@ -6265,6 +6265,20 @@ pub struct SourceControlPreparedDestination {
     pub directory_name: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceControlDestinationInspection {
+    Missing,
+    EmptyDirectory,
+    NonEmptyDirectory,
+    ExistingUnreadable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlPrepareDestinationDecision {
+    pub prepared: SourceControlPreparedDestination,
+    pub create_parent_directory: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceControlCloneRepositoryPlan {
     pub cwd: String,
@@ -6758,6 +6772,44 @@ pub fn prepare_source_control_destination(
         parent_path,
         directory_name,
     })
+}
+
+pub fn source_control_prepare_destination_decision(
+    destination_path: &str,
+    home: &str,
+    inspection: SourceControlDestinationInspection,
+    read_directory_cause: Option<&str>,
+) -> Result<SourceControlPrepareDestinationDecision, SourceControlRepositoryErrorContract> {
+    let prepared = prepare_source_control_destination(destination_path, home)?;
+    match inspection {
+        SourceControlDestinationInspection::Missing => {
+            Ok(SourceControlPrepareDestinationDecision {
+                create_parent_directory: Some(prepared.parent_path.clone()),
+                prepared,
+            })
+        }
+        SourceControlDestinationInspection::EmptyDirectory => {
+            Ok(SourceControlPrepareDestinationDecision {
+                prepared,
+                create_parent_directory: None,
+            })
+        }
+        SourceControlDestinationInspection::NonEmptyDirectory => {
+            Err(source_control_repository_error(
+                SourceControlProviderKind::Unknown,
+                "cloneRepository",
+                "Destination path already exists and is not empty.",
+            ))
+        }
+        SourceControlDestinationInspection::ExistingUnreadable => {
+            Err(source_control_repository_error_with_cause(
+                SourceControlProviderKind::Unknown,
+                "cloneRepository",
+                "Destination path already exists and is not a directory.",
+                read_directory_cause,
+            ))
+        }
+    }
 }
 
 pub fn source_control_clone_repository_plan(
@@ -20728,6 +20780,55 @@ mod tests {
                 directory_name: "t3code".to_string(),
             }
         );
+        assert_eq!(
+            source_control_prepare_destination_decision(
+                "/tmp/t3code",
+                "/home/jasper",
+                SourceControlDestinationInspection::Missing,
+                None,
+            )
+            .unwrap(),
+            SourceControlPrepareDestinationDecision {
+                prepared: prepared.clone(),
+                create_parent_directory: Some("/tmp".to_string()),
+            }
+        );
+        assert_eq!(
+            source_control_prepare_destination_decision(
+                "/tmp/t3code",
+                "/home/jasper",
+                SourceControlDestinationInspection::EmptyDirectory,
+                None,
+            )
+            .unwrap(),
+            SourceControlPrepareDestinationDecision {
+                prepared: prepared.clone(),
+                create_parent_directory: None,
+            }
+        );
+        assert_eq!(
+            source_control_prepare_destination_decision(
+                "/tmp/t3code",
+                "/home/jasper",
+                SourceControlDestinationInspection::NonEmptyDirectory,
+                None,
+            )
+            .unwrap_err()
+            .message(),
+            "Source control repository operation cloneRepository failed for unknown: Destination path already exists and is not empty."
+        );
+        let unreadable = source_control_prepare_destination_decision(
+            "/tmp/t3code",
+            "/home/jasper",
+            SourceControlDestinationInspection::ExistingUnreadable,
+            Some("not a directory"),
+        )
+        .unwrap_err();
+        assert_eq!(
+            unreadable.message(),
+            "Source control repository operation cloneRepository failed for unknown: Destination path already exists and is not a directory."
+        );
+        assert_eq!(unreadable.cause.as_deref(), Some("not a directory"));
 
         let repository = source_control_repository_info(SourceControlProviderKind::Github, &urls);
         let clone_plan = source_control_clone_repository_plan(
