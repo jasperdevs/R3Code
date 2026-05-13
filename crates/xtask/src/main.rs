@@ -2204,10 +2204,10 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
         )
     } else if path.starts_with("apps/desktop/src/ssh/") || path.starts_with("packages/ssh/src/") {
         (
-            "selected SSH parsing, config/known_hosts discovery, command arg, output-line, connection-key, remote package-spec, askpass, child-env, auth-failure, and tunnel JSON/script-helper contracts in crates/r3_core/src/lib.rs",
+            "selected SSH parsing, config/known_hosts discovery, command arg, output-line, connection-key, remote package-spec, askpass, child-env, auth-failure, tunnel JSON decode, and remote runner/launch/pairing/stop script-builder contracts in crates/r3_core/src/lib.rs",
             "partial",
             "`cargo test --workspace` SSH parse tests",
-            "Port SSH discovery, tunnels, password prompts, and remote API/session bootstrap.",
+            "Port live SSH discovery/tunnel execution, password prompts, and remote API/session bootstrap.",
         )
     } else if path.starts_with("apps/desktop/src/backend/tailscale")
         || path.starts_with("packages/tailscale/src/")

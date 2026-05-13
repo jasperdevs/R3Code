@@ -6027,6 +6027,13 @@ pub struct RemotePairingOutput {
     pub credential: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RemoteT3RunnerOptions {
+    pub package_spec: Option<String>,
+    pub node_script_path: Option<String>,
+    pub node_engine_range: Option<String>,
+}
+
 pub const DEFAULT_SSH_COMMAND_TIMEOUT_MS: u64 = 60_000;
 pub const DEFAULT_REMOTE_PORT: u16 = 3773;
 pub const REMOTE_PORT_SCAN_WINDOW: u16 = 200;
@@ -6049,6 +6056,399 @@ exit 1
 "#;
 pub const ASKPASS_WINDOWS_LAUNCHER_SCRIPT: &str = "@echo off\r\npowershell -NoProfile -ExecutionPolicy Bypass -File \"%~dp0ssh-askpass.ps1\" %*\r\n";
 pub const ASKPASS_WINDOWS_SCRIPT: &str = "# Invoked by ssh via SSH_ASKPASS (through ssh-askpass.cmd) when R3Code re-runs\r\n# ssh with a cached password from the renderer's in-app prompt. We never expose\r\n# a native dialog here - if T3_SSH_AUTH_SECRET is missing, that's a caller bug\r\n# and we fail loudly.\r\nif ($null -ne $env:T3_SSH_AUTH_SECRET) {\r\n  [Console]::Out.WriteLine($env:T3_SSH_AUTH_SECRET)\r\n  exit 0\r\n}\r\n[Console]::Error.WriteLine(\"R3Code ssh-askpass invoked without T3_SSH_AUTH_SECRET.\")\r\nexit 1\r\n";
+
+pub const REMOTE_PICK_PORT_SCRIPT: &str = r###"const fs = require("node:fs");
+const net = require("node:net");
+const filePath = process.argv[2] ?? "";
+const defaultPort = Number.parseInt(process.argv[3] ?? "", 10);
+const scanWindow = Number.parseInt(process.argv[4] ?? "", 10);
+const raw = fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8").trim() : "";
+const preferred = Number.parseInt(raw, 10);
+const start = Number.isInteger(preferred) ? preferred : defaultPort;
+const end = start + scanWindow;
+
+function tryPort(port) {
+  return new Promise((resolve) => {
+    const server = net.createServer();
+    server.unref();
+    server.once("error", () => resolve(false));
+    server.listen(port, "127.0.0.1", () => {
+      server.close((error) => resolve(error ? false : port));
+    });
+  });
+}
+
+(async () => {
+  for (let port = start; port < end; port += 1) {
+    const available = await tryPort(port);
+    if (available) {
+      process.stdout.write(String(port));
+      return;
+    }
+  }
+  process.exit(1);
+})().catch(() => process.exit(1));
+"###;
+
+pub const REMOTE_WAIT_READY_SCRIPT: &str = r###"const http = require("node:http");
+const port = Number.parseInt(process.argv[2] ?? "", 10);
+const timeoutMs = Number.parseInt(process.argv[3] ?? "", 10);
+const probeTimeoutMs = Number.parseInt(process.argv[4] ?? "", 10);
+if (!Number.isInteger(port) || !Number.isInteger(timeoutMs) || !Number.isInteger(probeTimeoutMs)) {
+  process.exit(1);
+}
+const deadline = Date.now() + timeoutMs;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function probe() {
+  return new Promise((resolve) => {
+    const request = http.get(
+      {
+        hostname: "127.0.0.1",
+        port,
+        path: "/",
+        timeout: probeTimeoutMs,
+      },
+      (response) => {
+        response.resume();
+        response.once("end", () => {
+          resolve(response.statusCode >= 200 && response.statusCode < 300);
+        });
+      },
+    );
+    request.once("timeout", () => {
+      request.destroy();
+      resolve(false);
+    });
+    request.once("error", () => resolve(false));
+  });
+}
+
+(async () => {
+  while (Date.now() < deadline) {
+    if (await probe()) {
+      process.exit(0);
+    }
+    await sleep(100);
+  }
+  process.exit(1);
+})().catch(() => process.exit(1));
+"###;
+
+pub const REMOTE_NODE_ENV_SCRIPT: &str = r###"prepend_path_if_dir() {
+  if [ -d "$1" ]; then
+    case ":$PATH:" in
+      *":$1:"*) ;;
+      *) PATH="$1:$PATH" ;;
+    esac
+  fi
+}
+
+remote_node_satisfies_engine() {
+  T3_NODE_ENGINE_RANGE=@@T3_NODE_ENGINE_RANGE@@
+  if [ -z "$T3_NODE_ENGINE_RANGE" ]; then
+    return 0
+  fi
+  node - "$T3_NODE_ENGINE_RANGE" <<'NODE'
+@@T3_NODE_ENGINE_CHECK_SCRIPT@@
+NODE
+}
+
+ensure_remote_node_path() {
+  if command -v node >/dev/null 2>&1 && remote_node_satisfies_engine >/dev/null 2>&1; then
+    return 0
+  fi
+
+  prepend_path_if_dir "$HOME/.local/bin"
+  prepend_path_if_dir "$HOME/bin"
+  prepend_path_if_dir "/opt/homebrew/bin"
+  prepend_path_if_dir "/usr/local/bin"
+  prepend_path_if_dir "/usr/bin"
+  prepend_path_if_dir "/bin"
+
+  if [ -z "${VOLTA_HOME:-}" ]; then
+    VOLTA_HOME="$HOME/.volta"
+  fi
+  export VOLTA_HOME
+  prepend_path_if_dir "$VOLTA_HOME/bin"
+
+  prepend_path_if_dir "$HOME/.asdf/shims"
+  prepend_path_if_dir "$HOME/.asdf/bin"
+  if [ ! -x "$HOME/.asdf/shims/node" ] && [ -s "$HOME/.asdf/asdf.sh" ]; then
+    # shellcheck disable=SC1090
+    . "$HOME/.asdf/asdf.sh"
+  fi
+
+  prepend_path_if_dir "$HOME/.local/share/mise/shims"
+  prepend_path_if_dir "$HOME/.mise/shims"
+  if ! command -v node >/dev/null 2>&1 && command -v mise >/dev/null 2>&1; then
+    eval "$(mise activate sh)" >/dev/null 2>&1 || true
+  fi
+
+  if [ -z "${FNM_DIR:-}" ]; then
+    FNM_DIR="$HOME/.local/share/fnm"
+  fi
+  export FNM_DIR
+  prepend_path_if_dir "$FNM_DIR"
+  prepend_path_if_dir "$HOME/.fnm"
+  if ! command -v node >/dev/null 2>&1 && command -v fnm >/dev/null 2>&1; then
+    eval "$(fnm env --use-on-cd --shell sh)" >/dev/null 2>&1 || eval "$(fnm env --shell sh)" >/dev/null 2>&1 || true
+  fi
+
+  prepend_path_if_dir "$HOME/.nodenv/bin"
+  prepend_path_if_dir "$HOME/.nodenv/shims"
+  if ! command -v node >/dev/null 2>&1 && command -v nodenv >/dev/null 2>&1; then
+    eval "$(nodenv init -)" >/dev/null 2>&1 || true
+  fi
+
+  if [ -z "${NVM_DIR:-}" ]; then
+    NVM_DIR="$HOME/.nvm"
+  fi
+  export NVM_DIR
+
+  if [ -s "$NVM_DIR/nvm.sh" ]; then
+    # shellcheck disable=SC1090
+    . "$NVM_DIR/nvm.sh"
+    if ! command -v node >/dev/null 2>&1 && command -v nvm >/dev/null 2>&1; then
+      nvm use --silent default >/dev/null 2>&1 || nvm use --silent node >/dev/null 2>&1 || nvm use --silent --lts >/dev/null 2>&1 || true
+    fi
+  fi
+
+  if ! command -v node >/dev/null 2>&1 && [ -d "$NVM_DIR/versions/node" ]; then
+    for T3_NODE_BIN in "$NVM_DIR"/versions/node/*/bin; do
+      if [ -x "$T3_NODE_BIN/node" ]; then
+        PATH="$T3_NODE_BIN:$PATH"
+        export PATH
+      fi
+    done
+  fi
+
+  command -v node >/dev/null 2>&1 && remote_node_satisfies_engine
+}
+"###;
+
+pub const REMOTE_RUNNER_SCRIPT: &str = r###"#!/bin/sh
+set -eu
+@@T3_NODE_ENV_SCRIPT@@
+ensure_remote_node_path || true
+T3_NODE_SCRIPT_PATH=@@T3_NODE_SCRIPT_PATH@@
+if [ -n "$T3_NODE_SCRIPT_PATH" ]; then
+  if ! command -v node >/dev/null 2>&1; then
+    printf 'Remote host is missing node on PATH. Install Node or configure a supported version manager for non-interactive shells.\n' >&2
+    exit 1
+  fi
+  exec node "$T3_NODE_SCRIPT_PATH" "$@"
+fi
+if command -v t3 >/dev/null 2>&1; then
+  exec t3 "$@"
+fi
+if command -v npx >/dev/null 2>&1; then
+  exec npx --yes @@T3_PACKAGE_SPEC@@ "$@"
+fi
+if command -v npm >/dev/null 2>&1; then
+  exec npm exec --yes @@T3_PACKAGE_SPEC@@ -- "$@"
+fi
+printf 'Remote host is missing the t3 CLI and could not install @@T3_PACKAGE_SPEC@@ because node/npm/npx are unavailable on PATH. Install Node or configure a supported version manager for non-interactive shells.\n' >&2
+exit 1
+"###;
+
+pub const REMOTE_LAUNCH_SCRIPT: &str = r###"set -eu
+@@T3_NODE_ENV_SCRIPT@@
+STATE_KEY="$1"
+STATE_DIR="$HOME/.t3/ssh-launch/$STATE_KEY"
+DEFAULT_SERVER_HOME="$HOME/.t3"
+DEFAULT_RUNTIME_FILE="$DEFAULT_SERVER_HOME/userdata/server-runtime.json"
+PORT_FILE="$STATE_DIR/port"
+PID_FILE="$STATE_DIR/pid"
+MANAGED_FILE="$STATE_DIR/managed"
+LOG_FILE="$STATE_DIR/server.log"
+RUNNER_FILE="$STATE_DIR/run-t3.sh"
+RUNNER_NEXT="$STATE_DIR/run-t3.next.$$"
+mkdir -p "$STATE_DIR"
+cleanup_runner_next() {
+  rm -f "$RUNNER_NEXT"
+}
+trap cleanup_runner_next EXIT
+cat >"$RUNNER_NEXT" <<'SH'
+@@T3_RUNNER_SCRIPT@@
+SH
+RUNNER_CHANGED=0
+if [ ! -f "$RUNNER_FILE" ] || ! cmp -s "$RUNNER_NEXT" "$RUNNER_FILE"; then
+  RUNNER_CHANGED=1
+fi
+mv "$RUNNER_NEXT" "$RUNNER_FILE"
+chmod 700 "$RUNNER_FILE"
+if ! ensure_remote_node_path; then
+  printf 'Remote host is missing node on PATH. Install Node or configure a supported version manager for non-interactive shells.\n' >&2
+  exit 1
+fi
+pick_port() {
+  node - "$PORT_FILE" "@@T3_DEFAULT_REMOTE_PORT@@" "@@T3_REMOTE_PORT_SCAN_WINDOW@@" <<'NODE'
+@@T3_PICK_PORT_SCRIPT@@
+NODE
+}
+wait_ready() {
+  node - "$REMOTE_PORT" "$1" "@@T3_READY_PROBE_TIMEOUT_MS@@" <<'NODE'
+@@T3_WAIT_READY_SCRIPT@@
+NODE
+}
+wait_for_pid_exit() {
+  PID_TO_WAIT="$1"
+  WAIT_COUNT=0
+  while kill -0 "$PID_TO_WAIT" 2>/dev/null && [ "$WAIT_COUNT" -lt 20 ]; do
+    WAIT_COUNT=$((WAIT_COUNT + 1))
+    sleep 0.1
+  done
+}
+resolve_default_runtime_port() {
+  node - "$DEFAULT_RUNTIME_FILE" <<'NODE'
+const fs = require("node:fs");
+const runtimePath = process.argv[2] ?? "";
+try {
+	  const runtime = JSON.parse(fs.readFileSync(runtimePath, "utf8"));
+	  const pid = Number(runtime.pid);
+	  const port = Number(runtime.port);
+	  if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(port)) {
+	    process.exit(1);
+	  }
+  const origin = new URL(String(runtime.origin ?? ""));
+  if (origin.protocol !== "http:" || !["127.0.0.1", "localhost"].includes(origin.hostname)) {
+    process.exit(1);
+  }
+  process.kill(pid, 0);
+  process.stdout.write(`${pid} ${port}`);
+} catch {
+  process.exit(1);
+}
+NODE
+}
+REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
+REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
+REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
+DEFAULT_RUNTIME_INFO="$(resolve_default_runtime_port 2>/dev/null || true)"
+DEFAULT_RUNTIME_PID=""
+DEFAULT_REMOTE_PORT=""
+if [ -n "$DEFAULT_RUNTIME_INFO" ]; then
+  DEFAULT_RUNTIME_PID="${DEFAULT_RUNTIME_INFO%% *}"
+  DEFAULT_REMOTE_PORT="${DEFAULT_RUNTIME_INFO#* }"
+fi
+if [ -n "$DEFAULT_REMOTE_PORT" ]; then
+  REMOTE_PORT="$DEFAULT_REMOTE_PORT"
+  if wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
+    if [ "$REMOTE_MANAGED" = "managed" ]; then
+      PID_TO_STOP="${REMOTE_PID:-$DEFAULT_RUNTIME_PID}"
+      if [ -n "$PID_TO_STOP" ] && kill -0 "$PID_TO_STOP" 2>/dev/null; then
+        kill "$PID_TO_STOP" 2>/dev/null || true
+        wait_for_pid_exit "$PID_TO_STOP"
+      fi
+      REMOTE_PID=""
+      REMOTE_PORT="$DEFAULT_REMOTE_PORT"
+      REMOTE_MANAGED="external"
+      rm -f "$PID_FILE"
+      printf '%s\n' "$REMOTE_PORT" >"$PORT_FILE"
+      printf 'external\n' >"$MANAGED_FILE"
+    else
+      printf '%s\n' "$REMOTE_PORT" >"$PORT_FILE"
+      printf 'external\n' >"$MANAGED_FILE"
+      REMOTE_PID=""
+      REMOTE_MANAGED="external"
+    fi
+  else
+    REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
+    REMOTE_PORT="$(cat "$PORT_FILE" 2>/dev/null || true)"
+    REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
+  fi
+fi
+if [ "$REMOTE_MANAGED" = "external" ]; then
+  if [ -z "$REMOTE_PORT" ] || ! wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
+    REMOTE_PID=""
+    REMOTE_PORT=""
+    REMOTE_MANAGED=""
+  fi
+elif [ -n "$REMOTE_PID" ] && [ -n "$REMOTE_PORT" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+  if [ "$RUNNER_CHANGED" -eq 1 ]; then
+    kill "$REMOTE_PID" 2>/dev/null || true
+    wait_for_pid_exit "$REMOTE_PID"
+    REMOTE_PID=""
+    REMOTE_PORT=""
+    REMOTE_MANAGED=""
+  elif ! wait_ready "@@T3_REUSE_READY_TIMEOUT_MS@@"; then
+    kill "$REMOTE_PID" 2>/dev/null || true
+    wait_for_pid_exit "$REMOTE_PID"
+    REMOTE_PID=""
+    REMOTE_PORT=""
+    REMOTE_MANAGED=""
+  fi
+else
+  REMOTE_PID=""
+  REMOTE_PORT=""
+  REMOTE_MANAGED=""
+fi
+if [ -z "$REMOTE_PORT" ]; then
+  REMOTE_PORT="$(pick_port)" || true
+  if [ -z "$REMOTE_PORT" ]; then
+    printf 'Failed to find an available port on the remote host. Ensure node is available on PATH.\n' >&2
+    exit 1
+  fi
+  nohup env T3CODE_NO_BROWSER=1 "$RUNNER_FILE" serve --host 127.0.0.1 --port "$REMOTE_PORT" --base-dir "$DEFAULT_SERVER_HOME" >>"$LOG_FILE" 2>&1 < /dev/null &
+  REMOTE_PID="$!"
+  printf '%s\n' "$REMOTE_PID" >"$PID_FILE"
+  printf '%s\n' "$REMOTE_PORT" >"$PORT_FILE"
+  printf 'managed\n' >"$MANAGED_FILE"
+  if ! wait_ready "@@T3_READY_TIMEOUT_MS@@"; then
+    printf 'Remote T3 server did not become ready on 127.0.0.1:%s.\n' "$REMOTE_PORT" >&2
+    tail -n 80 "$LOG_FILE" >&2 2>/dev/null || true
+    kill "$REMOTE_PID" 2>/dev/null || true
+    wait_for_pid_exit "$REMOTE_PID"
+    rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
+    exit 1
+  fi
+fi
+printf '{"remotePort":%s,"serverKind":"%s"}\n' "$REMOTE_PORT" "${REMOTE_MANAGED:-managed}"
+"###;
+
+pub const REMOTE_PAIRING_SCRIPT: &str = r###"set -eu
+STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
+DEFAULT_SERVER_HOME="$HOME/.t3"
+RUNNER_FILE="$STATE_DIR/run-t3.sh"
+mkdir -p "$STATE_DIR"
+cat >"$RUNNER_FILE" <<'SH'
+@@T3_RUNNER_SCRIPT@@
+SH
+chmod 700 "$RUNNER_FILE"
+PAIRING_BASE_DIR="$DEFAULT_SERVER_HOME"
+"$RUNNER_FILE" auth pairing create --base-dir "$PAIRING_BASE_DIR" --json
+"###;
+
+pub const REMOTE_STOP_SCRIPT: &str = r###"set -eu
+STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
+PID_FILE="$STATE_DIR/pid"
+PORT_FILE="$STATE_DIR/port"
+MANAGED_FILE="$STATE_DIR/managed"
+REMOTE_MANAGED="$(cat "$MANAGED_FILE" 2>/dev/null || true)"
+REMOTE_PID="$(cat "$PID_FILE" 2>/dev/null || true)"
+if [ "$REMOTE_MANAGED" != "external" ] && [ -n "$REMOTE_PID" ] && kill -0 "$REMOTE_PID" 2>/dev/null; then
+  kill "$REMOTE_PID" 2>/dev/null || true
+  WAIT_COUNT=0
+  while kill -0 "$REMOTE_PID" 2>/dev/null && [ "$WAIT_COUNT" -lt 20 ]; do
+    WAIT_COUNT=$((WAIT_COUNT + 1))
+    sleep 0.1
+  done
+fi
+rm -f "$PID_FILE" "$PORT_FILE" "$MANAGED_FILE"
+printf '{"stopped":true}\n'
+"###;
+
+pub const REMOTE_LOG_TAIL_SCRIPT: &str = r###"set -eu
+STATE_DIR="$HOME/.t3/ssh-launch/@@T3_STATE_KEY@@"
+LOG_FILE="$STATE_DIR/server.log"
+if [ -f "$LOG_FILE" ]; then
+  tail -n 80 "$LOG_FILE" 2>/dev/null || true
+fi
+"###;
 
 pub fn format_desktop_ssh_target(target: &DesktopSshEnvironmentTarget) -> String {
     let authority = if let Some(username) = target.username.as_deref() {
@@ -6127,6 +6527,231 @@ pub fn apply_script_placeholders(
         result = result.replace(&format!("@@{token}@@"), value);
     }
     result
+}
+
+pub fn strip_trailing_newlines(value: &str) -> String {
+    value.trim_end_matches('\n').to_string()
+}
+
+pub fn build_remote_node_engine_check_script() -> String {
+    strip_trailing_newlines(
+        r###"function satisfiesSemverRange(rawVersion, range) {
+    const normalizedVersion = String(rawVersion).trim().replace(/^v/, "");
+    const versionMatch = normalizedVersion.match(
+      /^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-[0-9A-Za-z.-]+)?$/,
+    );
+    if (!versionMatch) {
+      return false;
+    }
+
+    const version = {
+      major: Number(versionMatch[1]),
+      minor: Number(versionMatch[2] || 0),
+      patch: Number(versionMatch[3] || 0),
+    };
+
+    return range.split("||").some((group) => {
+      const comparators = group.trim().split(/\s+/).filter(Boolean);
+      if (comparators.length === 0) {
+        return false;
+      }
+      return comparators.every((comparator) => {
+        const match = comparator.trim().match(/^(\^|>=|>|<=|<|=)?\s*v?(\d+(?:\.\d+){0,2})$/);
+        if (!match) {
+          return false;
+        }
+        const targetVersion = match[2];
+        if (targetVersion === undefined) {
+          return false;
+        }
+        const targetMatch = targetVersion.match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?$/);
+        if (!targetMatch) {
+          return false;
+        }
+        const target = {
+          major: Number(targetMatch[1]),
+          minor: Number(targetMatch[2] || 0),
+          patch: Number(targetMatch[3] || 0),
+        };
+        const compared =
+          version.major !== target.major
+            ? version.major > target.major
+              ? 1
+              : -1
+            : version.minor !== target.minor
+              ? version.minor > target.minor
+                ? 1
+                : -1
+              : version.patch !== target.patch
+                ? version.patch > target.patch
+                  ? 1
+                  : -1
+                : 0;
+        const operator = match[1] || "=";
+        switch (operator) {
+          case "^":
+            if (compared < 0) {
+              return false;
+            }
+            if (target.major > 0) {
+              return version.major === target.major;
+            }
+            if (target.minor > 0) {
+              return version.major === 0 && version.minor === target.minor;
+            }
+            return version.major === 0 && version.minor === 0 && version.patch === target.patch;
+          case ">=":
+            return compared >= 0;
+          case ">":
+            return compared > 0;
+          case "<=":
+            return compared <= 0;
+          case "<":
+            return compared < 0;
+          case "=":
+            return compared === 0;
+          default:
+            return false;
+        }
+      });
+    });
+  }
+(function remoteNodeEngineCheckMain() {
+  const range = process.argv[2] || "";
+  const rawVersion =
+    process.versions && process.versions.node ? process.versions.node : process.version;
+
+  if (!satisfiesSemverRange(rawVersion, range)) {
+    process.stderr.write(
+      "Remote node " + rawVersion + " does not satisfy required range " + range + ".\n",
+    );
+    process.exit(1);
+  }
+})();"###,
+    )
+}
+
+pub fn build_remote_node_env_script(input: Option<&RemoteT3RunnerOptions>) -> String {
+    let node_engine_range = input
+        .and_then(|options| options.node_engine_range.as_deref())
+        .map(str::trim)
+        .unwrap_or("");
+    strip_trailing_newlines(&apply_script_placeholders(
+        REMOTE_NODE_ENV_SCRIPT,
+        &BTreeMap::from([
+            (
+                "T3_NODE_ENGINE_RANGE".to_string(),
+                shell_single_quote(node_engine_range),
+            ),
+            (
+                "T3_NODE_ENGINE_CHECK_SCRIPT".to_string(),
+                build_remote_node_engine_check_script(),
+            ),
+        ]),
+    ))
+}
+
+pub fn build_remote_t3_runner_script(input: Option<&RemoteT3RunnerOptions>) -> String {
+    let package_spec = input
+        .and_then(|options| options.package_spec.as_deref())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("t3@latest");
+    let node_script_path = input
+        .and_then(|options| options.node_script_path.as_deref())
+        .map(str::trim)
+        .unwrap_or("");
+    strip_trailing_newlines(&apply_script_placeholders(
+        REMOTE_RUNNER_SCRIPT,
+        &BTreeMap::from([
+            (
+                "T3_PACKAGE_SPEC".to_string(),
+                shell_single_quote(package_spec),
+            ),
+            (
+                "T3_NODE_SCRIPT_PATH".to_string(),
+                shell_single_quote(node_script_path),
+            ),
+            (
+                "T3_NODE_ENV_SCRIPT".to_string(),
+                build_remote_node_env_script(input),
+            ),
+        ]),
+    ))
+}
+
+pub fn build_remote_launch_script(input: Option<&RemoteT3RunnerOptions>) -> String {
+    apply_script_placeholders(
+        REMOTE_LAUNCH_SCRIPT,
+        &BTreeMap::from([
+            (
+                "T3_NODE_ENV_SCRIPT".to_string(),
+                build_remote_node_env_script(input),
+            ),
+            (
+                "T3_RUNNER_SCRIPT".to_string(),
+                strip_trailing_newlines(&build_remote_t3_runner_script(input)),
+            ),
+            (
+                "T3_PICK_PORT_SCRIPT".to_string(),
+                strip_trailing_newlines(REMOTE_PICK_PORT_SCRIPT),
+            ),
+            (
+                "T3_WAIT_READY_SCRIPT".to_string(),
+                strip_trailing_newlines(REMOTE_WAIT_READY_SCRIPT),
+            ),
+            (
+                "T3_DEFAULT_REMOTE_PORT".to_string(),
+                DEFAULT_REMOTE_PORT.to_string(),
+            ),
+            (
+                "T3_REMOTE_PORT_SCAN_WINDOW".to_string(),
+                REMOTE_PORT_SCAN_WINDOW.to_string(),
+            ),
+            (
+                "T3_READY_TIMEOUT_MS".to_string(),
+                REMOTE_READY_TIMEOUT_MS.to_string(),
+            ),
+            (
+                "T3_REUSE_READY_TIMEOUT_MS".to_string(),
+                REMOTE_REUSE_READY_TIMEOUT_MS.to_string(),
+            ),
+            (
+                "T3_READY_PROBE_TIMEOUT_MS".to_string(),
+                SSH_READY_PROBE_TIMEOUT_MS.to_string(),
+            ),
+        ]),
+    )
+}
+
+pub fn build_remote_pairing_script(
+    target: &DesktopSshEnvironmentTarget,
+    input: Option<&RemoteT3RunnerOptions>,
+) -> String {
+    apply_script_placeholders(
+        REMOTE_PAIRING_SCRIPT,
+        &BTreeMap::from([
+            ("T3_STATE_KEY".to_string(), remote_state_key(target)),
+            (
+                "T3_RUNNER_SCRIPT".to_string(),
+                strip_trailing_newlines(&build_remote_t3_runner_script(input)),
+            ),
+        ]),
+    )
+}
+
+pub fn build_remote_stop_script(target: &DesktopSshEnvironmentTarget) -> String {
+    apply_script_placeholders(
+        REMOTE_STOP_SCRIPT,
+        &BTreeMap::from([("T3_STATE_KEY".to_string(), remote_state_key(target))]),
+    )
+}
+
+pub fn build_remote_log_tail_script(target: &DesktopSshEnvironmentTarget) -> String {
+    apply_script_placeholders(
+        REMOTE_LOG_TAIL_SCRIPT,
+        &BTreeMap::from([("T3_STATE_KEY".to_string(), remote_state_key(target))]),
+    )
 }
 
 fn decode_remote_json_output(stdout: &str) -> Result<serde_json::Value, String> {
@@ -12073,6 +12698,150 @@ mod tests {
         let explicit_port_parse_int =
             parse_manual_desktop_ssh_target("devbox", "", "22abc").unwrap();
         assert_eq!(explicit_port_parse_int.port, Some(22));
+    }
+
+    #[test]
+    fn builds_remote_ssh_tunnel_scripts_like_upstream() {
+        const TEST_NODE_ENGINE_RANGE: &str = "^22.16 || ^23.11 || >=24.10";
+        let target = DesktopSshEnvironmentTarget {
+            alias: "devbox".to_string(),
+            hostname: "devbox.example.com".to_string(),
+            username: Some("julius".to_string()),
+            port: Some(2222),
+        };
+        let engine_options = RemoteT3RunnerOptions {
+            node_engine_range: Some(TEST_NODE_ENGINE_RANGE.to_string()),
+            ..Default::default()
+        };
+        let runner = build_remote_t3_runner_script(Some(&engine_options));
+
+        assert!(runner.contains("T3_NODE_SCRIPT_PATH=''"));
+        assert!(runner.contains("exec t3 \"$@\""));
+        assert!(runner.contains("exec npx --yes 't3@latest' \"$@\""));
+        assert!(runner.contains("exec npm exec --yes 't3@latest' -- \"$@\""));
+        assert!(runner.contains("could not install 't3@latest'"));
+        assert!(runner.contains("prepend_path_if_dir \"$HOME/.local/bin\""));
+        assert!(runner.contains(&format!("T3_NODE_ENGINE_RANGE='{TEST_NODE_ENGINE_RANGE}'")));
+        assert!(runner.contains("remote_node_satisfies_engine()"));
+        assert!(runner.contains("function satisfiesSemverRange"));
+        assert!(runner.contains("satisfiesSemverRange(rawVersion, range)"));
+        assert!(runner.contains("prepend_path_if_dir \"$VOLTA_HOME/bin\""));
+        assert!(runner.contains("prepend_path_if_dir \"$HOME/.asdf/shims\""));
+        assert!(runner.contains("prepend_path_if_dir \"$HOME/.local/share/mise/shims\""));
+        assert!(runner.contains("eval \"$(fnm env --use-on-cd --shell sh)\""));
+        assert!(runner.contains("prepend_path_if_dir \"$HOME/.nodenv/shims\""));
+        assert!(runner.contains("NVM_DIR=\"$HOME/.nvm\""));
+        assert!(runner.contains("nvm use --silent default"));
+        assert!(runner.contains("for T3_NODE_BIN in \"$NVM_DIR\"/versions/node/*/bin"));
+        assert!(!runner.contains("ensure $NVM_DIR/nvm.sh is available"));
+
+        let default_runner = build_remote_t3_runner_script(None);
+        assert!(default_runner.contains("T3_NODE_ENGINE_RANGE=''"));
+        assert!(!default_runner.contains(TEST_NODE_ENGINE_RANGE));
+
+        let quoted_package_runner = build_remote_t3_runner_script(Some(&RemoteT3RunnerOptions {
+            package_spec: Some("t3@nightly; touch /tmp/t3-owned".to_string()),
+            ..Default::default()
+        }));
+        assert!(
+            quoted_package_runner
+                .contains("exec npx --yes 't3@nightly; touch /tmp/t3-owned' \"$@\"")
+        );
+        assert!(
+            quoted_package_runner
+                .contains("exec npm exec --yes 't3@nightly; touch /tmp/t3-owned' -- \"$@\"")
+        );
+        assert!(!quoted_package_runner.contains("exec npx --yes t3@nightly; touch /tmp/t3-owned"));
+
+        let node_script_runner = build_remote_t3_runner_script(Some(&RemoteT3RunnerOptions {
+            node_script_path: Some(
+                "/Users/julius/Development/Work/codething-mvp/apps/server/dist/bin.mjs".to_string(),
+            ),
+            ..Default::default()
+        }));
+        assert!(node_script_runner.contains(
+            "T3_NODE_SCRIPT_PATH='/Users/julius/Development/Work/codething-mvp/apps/server/dist/bin.mjs'"
+        ));
+        assert!(node_script_runner.contains("exec node \"$T3_NODE_SCRIPT_PATH\" \"$@\""));
+
+        let launch = build_remote_launch_script(Some(&engine_options));
+        let default_launch = build_remote_launch_script(None);
+        assert!(launch.contains(
+            "[ -n \"$REMOTE_PID\" ] && [ -n \"$REMOTE_PORT\" ] && kill -0 \"$REMOTE_PID\" 2>/dev/null"
+        ));
+        assert!(default_launch.contains("RUNNER_CHANGED=1"));
+        assert!(default_launch.contains("ensure_remote_node_path()"));
+        assert!(default_launch.contains("if ! ensure_remote_node_path; then"));
+        assert!(launch.contains(&format!("T3_NODE_ENGINE_RANGE='{TEST_NODE_ENGINE_RANGE}'")));
+        assert!(launch.contains("does not satisfy required range "));
+        assert!(default_launch.contains("kill \"$REMOTE_PID\" 2>/dev/null || true"));
+        assert!(default_launch.contains("wait_ready"));
+        assert!(default_launch.contains("\"$RUNNER_FILE\" serve --host 127.0.0.1"));
+        assert!(default_launch.contains("--base-dir \"$DEFAULT_SERVER_HOME\""));
+        assert!(!default_launch.contains("server-home"));
+        assert!(default_launch.contains("Remote T3 server did not become ready"));
+        assert!(
+            build_remote_launch_script(Some(&RemoteT3RunnerOptions {
+                package_spec: Some("t3@nightly".to_string()),
+                ..Default::default()
+            }))
+            .contains("t3@nightly")
+        );
+
+        let pairing = build_remote_pairing_script(&target, None);
+        assert!(pairing.contains(
+            "\"$RUNNER_FILE\" auth pairing create --base-dir \"$PAIRING_BASE_DIR\" --json"
+        ));
+        assert!(pairing.contains("PAIRING_BASE_DIR=\"$DEFAULT_SERVER_HOME\""));
+        assert!(!pairing.contains("server-home"));
+        assert!(
+            build_remote_pairing_script(
+                &target,
+                Some(&RemoteT3RunnerOptions {
+                    package_spec: Some("t3@nightly".to_string()),
+                    ..Default::default()
+                })
+            )
+            .contains("t3@nightly")
+        );
+
+        let stop = build_remote_stop_script(&target);
+        assert!(
+            stop.contains("if [ \"$REMOTE_MANAGED\" != \"external\" ] && [ -n \"$REMOTE_PID\" ]")
+        );
+        assert!(stop.contains("kill \"$REMOTE_PID\" 2>/dev/null || true"));
+        assert!(stop.contains("rm -f \"$PID_FILE\" \"$PORT_FILE\" \"$MANAGED_FILE\""));
+
+        assert!(default_launch.contains(
+            "DEFAULT_RUNTIME_FILE=\"$DEFAULT_SERVER_HOME/userdata/server-runtime.json\""
+        ));
+        assert!(default_launch.contains("resolve_default_runtime_port()"));
+        assert!(default_launch.contains("DEFAULT_RUNTIME_INFO=\"$(resolve_default_runtime_port"));
+        assert!(
+            default_launch
+                .contains("if (!Number.isInteger(pid) || pid <= 0 || !Number.isInteger(port))")
+        );
+        assert!(default_launch.contains("PID_TO_STOP=\"${REMOTE_PID:-$DEFAULT_RUNTIME_PID}\""));
+        assert!(default_launch.contains("REMOTE_PORT=\"$DEFAULT_REMOTE_PORT\""));
+        assert!(default_launch.contains("rm -f \"$PID_FILE\""));
+        assert!(default_launch.contains("printf 'external\\n' >\"$MANAGED_FILE\""));
+        assert!(default_launch.contains("if [ -z \"$REMOTE_PORT\" ]; then"));
+        assert!(
+            default_launch
+                .find("if [ \"$REMOTE_MANAGED\" = \"managed\" ]")
+                .unwrap()
+                < default_launch
+                    .find("printf 'external\\n' >\"$MANAGED_FILE\"")
+                    .unwrap()
+        );
+        assert!(
+            default_launch
+                .find("DEFAULT_RUNTIME_INFO=\"$(resolve_default_runtime_port")
+                .unwrap()
+                < default_launch.find("elif [ -n \"$REMOTE_PID\" ]").unwrap()
+        );
+        assert!(REMOTE_PICK_PORT_SCRIPT.contains("const filePath = process.argv[2] ?? \"\";"));
+        assert!(build_remote_log_tail_script(&target).contains("tail -n 80 \"$LOG_FILE\""));
     }
 
     #[test]
