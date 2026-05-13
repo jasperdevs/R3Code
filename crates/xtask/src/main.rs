@@ -1810,6 +1810,31 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core web_branding`",
             "Wire helper into live GPUI hosted/desktop branding initialization.",
         )
+    } else if path == "apps/web/src/rightPanelLayout.ts" {
+        (
+            "right panel inline-layout media query and sheet class constants in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core right_panel_and_terminal_focus`",
+            "Wire constants into the live GPUI right-panel layout.",
+        )
+    } else if path == "apps/web/src/lib/terminalFocus.ts"
+        || path == "apps/web/src/lib/terminalFocus.test.ts"
+    {
+        (
+            "terminal focus helper class/selector constants and active-element focus decision in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core right_panel_and_terminal_focus`",
+            "Wire helper into live GPUI/xterm focus tracking.",
+        )
+    } else if path == "apps/web/src/terminalActivity.ts"
+        || path == "apps/web/src/terminalActivity.test.ts"
+    {
+        (
+            "terminal running-subprocess event projection and pending event filters in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core terminal_activity_and_event_filters`",
+            "Wire event projection into live GPUI terminal activity updates.",
+        )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
             "logical project path normalization, physical/grouping/order keys, repository-scoped keys, settings override resolution, ref fallback, and group-label helpers in crates/r3_core/src/lib.rs",

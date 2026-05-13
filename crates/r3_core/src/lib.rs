@@ -196,6 +196,10 @@ pub enum DraftThreadEnvMode {
 }
 
 pub const INLINE_TERMINAL_CONTEXT_PLACEHOLDER: char = '\u{FFFC}';
+pub const RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY: &str = "(max-width: 980px)";
+pub const RIGHT_PANEL_SHEET_CLASS_NAME: &str = "w-[min(42vw,28rem)] min-w-80 max-w-[28rem] p-0 max-[760px]:w-[min(88vw,24rem)] max-[760px]:min-w-0 wco:mt-[env(titlebar-area-height)] wco:h-[calc(100%-env(titlebar-area-height))] wco:max-h-[calc(100%-env(titlebar-area-height))]";
+pub const TERMINAL_HELPER_TEXTAREA_CLASS: &str = "xterm-helper-textarea";
+pub const THREAD_TERMINAL_DRAWER_XTERM_SELECTOR: &str = ".thread-terminal-drawer .xterm";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalContextSelection {
@@ -16883,6 +16887,18 @@ pub fn terminal_running_subprocess_from_event(event: &TerminalEvent) -> Option<b
     }
 }
 
+pub fn is_terminal_focused_from_active_element(
+    active_element_is_html_element: bool,
+    active_element_is_connected: bool,
+    has_helper_textarea_class: bool,
+    has_thread_terminal_drawer_xterm_ancestor: bool,
+) -> bool {
+    if !active_element_is_html_element || !active_element_is_connected {
+        return false;
+    }
+    has_helper_textarea_class || has_thread_terminal_drawer_xterm_ancestor
+}
+
 pub fn select_terminal_event_entries_after_snapshot(
     entries: &[TerminalEventEntry],
     snapshot_updated_at: &str,
@@ -28439,6 +28455,36 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![2, 3]
         );
+    }
+
+    #[test]
+    fn right_panel_and_terminal_focus_helpers_match_upstream_constants() {
+        assert_eq!(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY, "(max-width: 980px)");
+        assert_eq!(
+            RIGHT_PANEL_SHEET_CLASS_NAME,
+            "w-[min(42vw,28rem)] min-w-80 max-w-[28rem] p-0 max-[760px]:w-[min(88vw,24rem)] max-[760px]:min-w-0 wco:mt-[env(titlebar-area-height)] wco:h-[calc(100%-env(titlebar-area-height))] wco:max-h-[calc(100%-env(titlebar-area-height))]"
+        );
+        assert_eq!(TERMINAL_HELPER_TEXTAREA_CLASS, "xterm-helper-textarea");
+        assert_eq!(
+            THREAD_TERMINAL_DRAWER_XTERM_SELECTOR,
+            ".thread-terminal-drawer .xterm"
+        );
+
+        assert!(!is_terminal_focused_from_active_element(
+            false, true, true, true
+        ));
+        assert!(!is_terminal_focused_from_active_element(
+            true, false, true, true
+        ));
+        assert!(is_terminal_focused_from_active_element(
+            true, true, true, false
+        ));
+        assert!(is_terminal_focused_from_active_element(
+            true, true, false, true
+        ));
+        assert!(!is_terminal_focused_from_active_element(
+            true, true, false, false
+        ));
     }
 
     #[test]
