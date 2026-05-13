@@ -2441,6 +2441,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace websocket_connection_state_matches_upstream_reconnect_logic`; `cargo test --workspace request_latency_state_matches_upstream_ack_tracking`",
             "Wire live GPUI toast lifecycle, browser online/focus listeners, debounce timers, manual reconnect action, and slow request expandable details.",
         )
+    } else if path == "apps/web/src/components/ChatView.logic.test.ts"
+        || path == "apps/web/src/components/ChatView.logic.ts"
+    {
+        (
+            "ChatView composer send-state trimming for expired terminal pills, expired-context toast copy, send env-mode resolution, mounted terminal thread reconciliation, local-dispatch acknowledgement, and current-thread error routing in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace composer_send_state_and_expired_terminal_copy_match_upstream`; `cargo test --workspace terminal_split_and_new_group_behaviors_match_upstream_store`; `cargo test --workspace chat_thread_action_plans_match_upstream_context_resolution`",
+            "Wire remaining async wait-for-started-thread behavior, live store subscription race handling, local dispatch lifecycle, and exact GPUI ChatView rendering.",
+        )
     } else if path == "apps/web/src/components/BranchToolbar.logic.test.ts"
         || path == "apps/web/src/components/BranchToolbar.logic.ts"
     {
@@ -2522,6 +2531,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace composer_provider_state_matches_upstream_descriptor_contracts`",
             "Wire traits picker/menu controls into live GPUI composer targets, prompt mutation, draft/thread routing, and exact traits UI rendering.",
         )
+    } else if path == "apps/web/src/components/chat/ComposerPendingTerminalContexts.test.tsx"
+        || path == "apps/web/src/components/chat/ComposerPendingTerminalContexts.tsx"
+    {
+        (
+            "Composer pending terminal-context expiry detection, preview title, range labels, inline labels, and expired-send filtering in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace terminal_context_expiry_and_preview_match_upstream_contract`; `cargo test --workspace composer_send_state_and_expired_terminal_copy_match_upstream`",
+            "Wire exact GPUI chip data attributes, expired styling, removal interactions, and composer chip layout.",
+        )
     } else if path == "apps/web/src/components/chat/composerSlashCommandSearch.test.ts"
         || path == "apps/web/src/components/chat/composerSlashCommandSearch.ts"
     {
@@ -2539,6 +2557,24 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "partial",
             "`cargo test --workspace model_picker_search_sorting_and_selection_match_upstream_logic`; `cargo test --workspace model_picker_trigger_filtering_and_locking_match_upstream_logic`",
             "Wire remaining live GPUI picker search input, provider rail, focus management, and exact popup rendering.",
+        )
+    } else if path == "apps/web/src/components/chat/userMessageTerminalContexts.test.ts"
+        || path == "apps/web/src/components/chat/userMessageTerminalContexts.ts"
+    {
+        (
+            "user message inline terminal-context label formatting, joined plain-text labels, and embedded label detection in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace terminal_context_formatting_matches_upstream_contract`",
+            "Wire exact GPUI user-message terminal context rendering and rich text spans.",
+        )
+    } else if path == "apps/web/src/components/settings/KeybindingsSettings.logic.test.ts"
+        || path == "apps/web/src/components/settings/KeybindingsSettings.logic.ts"
+    {
+        (
+            "KeybindingsSettings searchable rows, keyboard event capture, shortcut serialization, when-expression parsing/printing, command labels, variable/command options, unknown variable reporting, default-source marking, conflict labels, and editor draft helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace keybinding_rows_options_and_conflicts_match_upstream_logic`; `cargo test --workspace keybinding_default_rows_match_upstream_settings_projection`; `cargo test --workspace keybinding_editor_draft_helpers_match_upstream_panel_state`",
+            "Wire live GPUI keybinding editor controls, add/remove persistence, conflict display, and exact settings panel rendering.",
         )
     } else if path == "apps/web/src/components/settings/SettingsPanels.logic.test.ts"
         || path == "apps/web/src/components/settings/SettingsPanels.logic.ts"

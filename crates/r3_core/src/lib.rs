@@ -1526,6 +1526,31 @@ pub fn format_inline_terminal_context_label(selection: &TerminalContextSelection
     format!("@{terminal_label}:{range}")
 }
 
+pub fn format_inline_terminal_context_label_from_header(header: &str) -> String {
+    let normalized = header
+        .trim()
+        .to_ascii_lowercase()
+        .replace(" lines ", ":")
+        .replace(" line ", ":")
+        .replace(' ', "-");
+    format!("@{normalized}")
+}
+
+pub fn build_inline_terminal_context_text_from_headers(headers: &[String]) -> String {
+    headers
+        .iter()
+        .map(|header| format_inline_terminal_context_label_from_header(header))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub fn text_contains_inline_terminal_context_labels(text: &str, headers: &[String]) -> bool {
+    headers
+        .iter()
+        .map(|header| format_inline_terminal_context_label_from_header(header))
+        .any(|label| text.contains(&label))
+}
+
 pub fn build_terminal_context_preview_title(
     contexts: &[TerminalContextSelection],
 ) -> Option<String> {
@@ -41262,6 +41287,31 @@ mod tests {
             ]
             .join("\n")
         );
+
+        let headers = vec![
+            "Terminal 1 lines 12-13".to_string(),
+            "Terminal 2 line 4".to_string(),
+        ];
+        assert_eq!(
+            build_inline_terminal_context_text_from_headers(&headers),
+            "@terminal-1:12-13 @terminal-2:4"
+        );
+        assert_eq!(
+            format_inline_terminal_context_label_from_header("Terminal 1 lines 12-13"),
+            "@terminal-1:12-13"
+        );
+        assert_eq!(
+            format_inline_terminal_context_label_from_header("Terminal 2 line 4"),
+            "@terminal-2:4"
+        );
+        assert!(text_contains_inline_terminal_context_labels(
+            "yo @terminal-1:12-13 whats up",
+            &["Terminal 1 lines 12-13".to_string()],
+        ));
+        assert!(!text_contains_inline_terminal_context_labels(
+            "yo whats up",
+            &["Terminal 1 lines 12-13".to_string()],
+        ));
     }
 
     #[test]
