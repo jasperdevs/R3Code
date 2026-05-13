@@ -22,6 +22,14 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         "icons/arrow-up.svg",
         include_bytes!("../assets/icons/arrow-up.svg"),
     ),
+    (
+        "icons/azure-devops.svg",
+        include_bytes!("../assets/icons/azure-devops.svg"),
+    ),
+    (
+        "icons/bitbucket.svg",
+        include_bytes!("../assets/icons/bitbucket.svg"),
+    ),
     ("icons/bot.svg", include_bytes!("../assets/icons/bot.svg")),
     ("icons/bug.svg", include_bytes!("../assets/icons/bug.svg")),
     (
@@ -251,8 +259,16 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/triangle-alert.svg"),
     ),
     (
+        "icons/visual-studio-code-insiders.svg",
+        include_bytes!("../assets/icons/visual-studio-code-insiders.svg"),
+    ),
+    (
         "icons/visual-studio-code.svg",
         include_bytes!("../assets/icons/visual-studio-code.svg"),
+    ),
+    (
+        "icons/vscodium.svg",
+        include_bytes!("../assets/icons/vscodium.svg"),
     ),
     (
         "icons/wrench.svg",
@@ -321,6 +337,8 @@ mod tests {
         for icon in [
             "check.svg",
             "bug.svg",
+            "azure-devops.svg",
+            "bitbucket.svg",
             "chevron-left.svg",
             "claude-ai.svg",
             "clock-3.svg",
@@ -369,7 +387,9 @@ mod tests {
             "trae.svg",
             "triangle-alert.svg",
             "trash-2.svg",
+            "visual-studio-code-insiders.svg",
             "visual-studio-code.svg",
+            "vscodium.svg",
             "wrench.svg",
             "x.svg",
             "zed.svg",

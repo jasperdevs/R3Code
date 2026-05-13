@@ -214,7 +214,7 @@ pub const UPSTREAM_WEB_ICON_CONTRACTS: &[UpstreamWebIconContract] = &[
     },
     UpstreamWebIconContract {
         export_name: "AzureDevOpsIcon",
-        native_asset_path: None,
+        native_asset_path: Some("icons/azure-devops.svg"),
         view_box: "0 0 96 96",
         generated_id_suffixes: &["azure-a", "azure-b", "azure-c"],
         themed_class_name: None,
@@ -222,7 +222,7 @@ pub const UPSTREAM_WEB_ICON_CONTRACTS: &[UpstreamWebIconContract] = &[
     },
     UpstreamWebIconContract {
         export_name: "BitbucketIcon",
-        native_asset_path: None,
+        native_asset_path: Some("icons/bitbucket.svg"),
         view_box: "8.4 14.39 2481.29 2231.21",
         generated_id_suffixes: &["bitbucket-a"],
         themed_class_name: None,
@@ -262,7 +262,7 @@ pub const UPSTREAM_WEB_ICON_CONTRACTS: &[UpstreamWebIconContract] = &[
     },
     UpstreamWebIconContract {
         export_name: "VisualStudioCodeInsiders",
-        native_asset_path: None,
+        native_asset_path: Some("icons/visual-studio-code-insiders.svg"),
         view_box: "0 0 100 100",
         generated_id_suffixes: &[
             "vscode-insiders-a",
@@ -275,7 +275,7 @@ pub const UPSTREAM_WEB_ICON_CONTRACTS: &[UpstreamWebIconContract] = &[
     },
     UpstreamWebIconContract {
         export_name: "VSCodium",
-        native_asset_path: None,
+        native_asset_path: Some("icons/vscodium.svg"),
         view_box: "0 0 100 100",
         generated_id_suffixes: &["vscodium-gradient"],
         themed_class_name: None,
@@ -47184,15 +47184,7 @@ mod tests {
 
         assert_eq!(
             upstream_web_icon_exports_missing_native_assets(),
-            vec![
-                "JujutsuIcon",
-                "AzureDevOpsIcon",
-                "BitbucketIcon",
-                "VisualStudioCodeInsiders",
-                "VSCodium",
-                "AntigravityIcon",
-                "ACPRegistryIcon",
-            ]
+            vec!["JujutsuIcon", "AntigravityIcon", "ACPRegistryIcon",]
         );
     }
 
