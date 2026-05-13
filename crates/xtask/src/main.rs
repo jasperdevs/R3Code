@@ -2443,6 +2443,22 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace` for selected route parsers",
             "Port real routing, history, deep links, and route-driven state.",
         )
+    } else if matches!(
+        path,
+        "apps/web/package.json"
+            | "apps/web/tsconfig.json"
+            | "apps/web/components.json"
+            | "apps/web/index.html"
+            | "apps/web/vite.config.ts"
+            | "apps/web/vitest.browser.config.ts"
+            | "apps/web/vercel.ts"
+    ) {
+        (
+            "web package metadata, dependency/version maps, tsconfig/plugin settings, components registry, boot HTML shell, Vite/Vitest build-test config, and Vercel channel routing contracts in crates/r3_core/src/package_surfaces.rs",
+            "partial",
+            "`cargo test -p r3_core package_surfaces`",
+            "Wire the Rust/GPUI app packaging, hosted web deployment, brand asset application, and browser-test launch path to these contracts instead of the upstream Vite/Vercel toolchain.",
+        )
     } else if path.starts_with("apps/web/") {
         (
             "crates/r3_ui/src/shell.rs",

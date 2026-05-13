@@ -97,6 +97,154 @@ pub struct SharedPackageSurface {
     pub tsconfig_include: Vec<&'static str>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebPackageSurface {
+    pub metadata: PackageSurfaceMetadata,
+    pub scripts: BTreeMap<&'static str, &'static str>,
+    pub dependencies: BTreeMap<&'static str, &'static str>,
+    pub dev_dependencies: BTreeMap<&'static str, &'static str>,
+    pub tsconfig: WebTsConfigSurface,
+    pub components: WebComponentsRegistrySurface,
+    pub index_html: WebIndexHtmlSurface,
+    pub vite: WebViteConfigSurface,
+    pub vitest_browser: WebVitestBrowserConfigSurface,
+    pub vercel: WebVercelConfigSurface,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebTsConfigSurface {
+    pub extends: &'static str,
+    pub composite: bool,
+    pub module: &'static str,
+    pub module_resolution: &'static str,
+    pub erasable_syntax_only: bool,
+    pub verbatim_module_syntax: bool,
+    pub jsx: &'static str,
+    pub lib: Vec<&'static str>,
+    pub types: Vec<&'static str>,
+    pub paths: BTreeMap<&'static str, Vec<&'static str>>,
+    pub effect_plugin_name: &'static str,
+    pub effect_namespace_import_packages: Vec<&'static str>,
+    pub effect_diagnostic_severity: BTreeMap<&'static str, &'static str>,
+    pub include: Vec<&'static str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebComponentsRegistrySurface {
+    pub schema: &'static str,
+    pub style: &'static str,
+    pub rsc: bool,
+    pub tsx: bool,
+    pub tailwind_css: &'static str,
+    pub base_color: &'static str,
+    pub css_variables: bool,
+    pub icon_library: &'static str,
+    pub rtl: bool,
+    pub menu_color: &'static str,
+    pub menu_accent: &'static str,
+    pub aliases: BTreeMap<&'static str, &'static str>,
+    pub registries: BTreeMap<&'static str, &'static str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebIndexHtmlSurface {
+    pub lang: &'static str,
+    pub charset: &'static str,
+    pub viewport: &'static str,
+    pub theme_colors: Vec<(&'static str, Option<&'static str>)>,
+    pub icon_href: &'static str,
+    pub apple_touch_icon_href: &'static str,
+    pub light_background: &'static str,
+    pub dark_background: &'static str,
+    pub theme_storage_key: &'static str,
+    pub upstream_theme_storage_key: &'static str,
+    pub default_theme: &'static str,
+    pub font_stylesheet_href: &'static str,
+    pub title: &'static str,
+    pub upstream_title: &'static str,
+    pub root_id: &'static str,
+    pub boot_shell_id: &'static str,
+    pub boot_shell_card_id: &'static str,
+    pub boot_shell_logo_id: &'static str,
+    pub boot_shell_card_size_px: u32,
+    pub boot_shell_logo_size_px: u32,
+    pub splash_aria_label: &'static str,
+    pub upstream_splash_aria_label: &'static str,
+    pub logo_src: &'static str,
+    pub logo_alt: &'static str,
+    pub upstream_logo_alt: &'static str,
+    pub main_script: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WebBuildSourcemap {
+    Enabled,
+    Disabled,
+    Hidden,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebViteConfigSurface {
+    pub default_port: u16,
+    pub default_host: &'static str,
+    pub ws_url_env: &'static str,
+    pub hosted_app_url_env: &'static str,
+    pub hosted_app_channel_env: &'static str,
+    pub app_version_env: &'static str,
+    pub upstream_sourcemap_env: &'static str,
+    pub sourcemap_env: &'static str,
+    pub plugins: Vec<&'static str>,
+    pub babel_parser_plugins: Vec<&'static str>,
+    pub babel_preset: &'static str,
+    pub optimize_deps_include: Vec<&'static str>,
+    pub define_keys: Vec<&'static str>,
+    pub tsconfig_paths: bool,
+    pub server_strict_port: bool,
+    pub proxy_paths: Vec<&'static str>,
+    pub proxy_change_origin: bool,
+    pub hmr_protocol: &'static str,
+    pub build_out_dir: &'static str,
+    pub build_empty_out_dir: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebVitestBrowserConfigSurface {
+    pub merged_from_vite_config: bool,
+    pub src_alias: &'static str,
+    pub src_alias_target: &'static str,
+    pub server_strict_port: bool,
+    pub include: Vec<&'static str>,
+    pub browser_enabled: bool,
+    pub provider: &'static str,
+    pub instances: Vec<&'static str>,
+    pub headless: bool,
+    pub api_strict_port: bool,
+    pub test_timeout_ms: u64,
+    pub hook_timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebVercelConfigSurface {
+    pub build_command: &'static str,
+    pub install_command: &'static str,
+    pub deployment_enabled: bool,
+    pub router_host: &'static str,
+    pub upstream_router_host: &'static str,
+    pub hosted_web_channel_cookie: &'static str,
+    pub upstream_hosted_web_channel_cookie: &'static str,
+    pub latest_origin: &'static str,
+    pub upstream_latest_origin: &'static str,
+    pub nightly_origin: &'static str,
+    pub upstream_nightly_origin: &'static str,
+    pub channel_route: &'static str,
+    pub channel_query_key: &'static str,
+    pub channels: Vec<&'static str>,
+    pub clean_channel_query_transform: (&'static str, &'static str, &'static str),
+    pub channel_cookie_parts: Vec<&'static str>,
+    pub app_rewrite_source: &'static str,
+    pub app_rewrite_destination: &'static str,
+}
+
 pub fn desktop_package_metadata() -> PackageSurfaceMetadata {
     PackageSurfaceMetadata {
         name: "@r3tools/desktop",
@@ -260,6 +408,339 @@ pub fn marketing_release_surface() -> MarketingReleaseSurface {
         cache_key: "r3code-latest-release",
         caches_only_when_assets_exist: true,
     }
+}
+
+pub fn web_package_surface() -> WebPackageSurface {
+    WebPackageSurface {
+        metadata: PackageSurfaceMetadata {
+            name: "@r3tools/web",
+            upstream_name: "@t3tools/web",
+            version: "0.0.23",
+            private: true,
+            module_type: "module",
+            main: None,
+            product_name: None,
+            files: Vec::new(),
+        },
+        scripts: BTreeMap::from([
+            ("dev", "vite"),
+            ("build", "vite build"),
+            ("preview", "vite preview"),
+            ("typecheck", "tsc --noEmit"),
+            ("test", "vitest run --passWithNoTests"),
+            (
+                "test:browser",
+                "vitest run --config vitest.browser.config.ts",
+            ),
+            (
+                "test:browser:install",
+                "playwright install --with-deps chromium",
+            ),
+        ]),
+        dependencies: BTreeMap::from([
+            ("@base-ui/react", "^1.4.1"),
+            ("@dnd-kit/core", "^6.3.1"),
+            ("@dnd-kit/modifiers", "^9.0.0"),
+            ("@dnd-kit/sortable", "^10.0.0"),
+            ("@dnd-kit/utilities", "^3.2.2"),
+            ("@effect/atom-react", "catalog:"),
+            ("@formkit/auto-animate", "^0.9.0"),
+            ("@legendapp/list", "3.0.0-beta.44"),
+            ("@lexical/react", "^0.41.0"),
+            ("@pierre/diffs", "catalog:"),
+            ("@t3tools/client-runtime", "workspace:*"),
+            ("@t3tools/contracts", "workspace:*"),
+            ("@t3tools/shared", "workspace:*"),
+            ("@tanstack/react-pacer", "^0.19.4"),
+            ("@tanstack/react-query", "^5.90.0"),
+            ("@tanstack/react-router", "^1.160.2"),
+            ("@xterm/addon-fit", "^0.11.0"),
+            ("@xterm/xterm", "^6.0.0"),
+            ("class-variance-authority", "^0.7.1"),
+            ("effect", "catalog:"),
+            ("lexical", "^0.41.0"),
+            ("lucide-react", "^0.564.0"),
+            ("react", "19.2.6"),
+            ("react-dom", "19.2.6"),
+            ("react-markdown", "^10.1.0"),
+            ("remark-gfm", "^4.0.1"),
+            ("tailwind-merge", "^3.4.0"),
+            ("zustand", "^5.0.11"),
+        ]),
+        dev_dependencies: BTreeMap::from([
+            ("@effect/language-service", "catalog:"),
+            ("@rolldown/plugin-babel", "^0.2.0"),
+            ("@tailwindcss/vite", "^4.0.0"),
+            ("@tanstack/router-plugin", "^1.161.0"),
+            ("@types/babel__core", "^7.20.5"),
+            ("@types/react", "~19.2.14"),
+            ("@types/react-dom", "~19.2.3"),
+            ("@vercel/config", "^0.3.0"),
+            ("@vitejs/plugin-react", "^6.0.0"),
+            ("@vitest/browser-playwright", "^4.0.18"),
+            ("babel-plugin-react-compiler", "1.0.0"),
+            ("msw", "2.12.11"),
+            ("playwright", "^1.58.2"),
+            ("tailwindcss", "^4.0.0"),
+            ("typescript", "catalog:"),
+            ("vite", "^8.0.0"),
+            ("vitest", "catalog:"),
+            ("vitest-browser-react", "^2.0.5"),
+        ]),
+        tsconfig: web_tsconfig_surface(),
+        components: web_components_registry_surface(),
+        index_html: web_index_html_surface(),
+        vite: web_vite_config_surface(),
+        vitest_browser: web_vitest_browser_config_surface(),
+        vercel: web_vercel_config_surface(),
+    }
+}
+
+pub fn web_tsconfig_surface() -> WebTsConfigSurface {
+    WebTsConfigSurface {
+        extends: "../../tsconfig.base.json",
+        composite: true,
+        module: "Preserve",
+        module_resolution: "Bundler",
+        erasable_syntax_only: false,
+        verbatim_module_syntax: false,
+        jsx: "react-jsx",
+        lib: vec!["ES2023", "DOM", "DOM.Iterable"],
+        types: vec!["vite/client"],
+        paths: BTreeMap::from([("~/*", vec!["./src/*"])]),
+        effect_plugin_name: "@effect/language-service",
+        effect_namespace_import_packages: vec!["@effect/platform-node", "effect"],
+        effect_diagnostic_severity: BTreeMap::from([
+            ("importFromBarrel", "error"),
+            ("anyUnknownInErrorContext", "error"),
+            ("unsafeEffectTypeAssertion", "error"),
+            ("instanceOfSchema", "error"),
+            ("deterministicKeys", "error"),
+            ("strictEffectProvide", "off"),
+            ("missingEffectServiceDependency", "error"),
+            ("leakingRequirements", "error"),
+            ("globalErrorInEffectCatch", "error"),
+            ("globalErrorInEffectFailure", "error"),
+            ("unknownInEffectCatch", "error"),
+            ("strictBooleanExpressions", "off"),
+            ("preferSchemaOverJson", "error"),
+            ("schemaSyncInEffect", "error"),
+        ]),
+        include: vec!["src", "vite.config.ts", "vercel.ts", "test"],
+    }
+}
+
+pub fn web_components_registry_surface() -> WebComponentsRegistrySurface {
+    WebComponentsRegistrySurface {
+        schema: "https://ui.shadcn.com/schema.json",
+        style: "base-mira",
+        rsc: false,
+        tsx: true,
+        tailwind_css: "src/index.css",
+        base_color: "zinc",
+        css_variables: true,
+        icon_library: "lucide",
+        rtl: false,
+        menu_color: "default",
+        menu_accent: "bold",
+        aliases: BTreeMap::from([
+            ("components", "~/components"),
+            ("utils", "~/lib/utils"),
+            ("ui", "~/components/ui"),
+            ("lib", "~/lib"),
+            ("hooks", "~/hooks"),
+        ]),
+        registries: BTreeMap::from([("@coss", "https://coss.com/ui/r/{name}.json")]),
+    }
+}
+
+pub fn web_index_html_surface() -> WebIndexHtmlSurface {
+    WebIndexHtmlSurface {
+        lang: "en",
+        charset: "UTF-8",
+        viewport: "width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content",
+        theme_colors: vec![
+            ("#ffffff", Some("(prefers-color-scheme: light)")),
+            ("#161616", Some("(prefers-color-scheme: dark)")),
+            ("#161616", None),
+        ],
+        icon_href: "/favicon.ico",
+        apple_touch_icon_href: "/apple-touch-icon.png",
+        light_background: "#ffffff",
+        dark_background: "#161616",
+        theme_storage_key: "r3code:theme",
+        upstream_theme_storage_key: "t3code:theme",
+        default_theme: "system",
+        font_stylesheet_href: "https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300..800;1,9..40,300..800&display=swap",
+        title: "R3 Code (Alpha)",
+        upstream_title: "T3 Code (Alpha)",
+        root_id: "root",
+        boot_shell_id: "boot-shell",
+        boot_shell_card_id: "boot-shell-card",
+        boot_shell_logo_id: "boot-shell-logo",
+        boot_shell_card_size_px: 96,
+        boot_shell_logo_size_px: 64,
+        splash_aria_label: "R3 Code splash screen",
+        upstream_splash_aria_label: "T3 Code splash screen",
+        logo_src: "/apple-touch-icon.png",
+        logo_alt: "R3 Code",
+        upstream_logo_alt: "T3 Code",
+        main_script: "/src/main.tsx",
+    }
+}
+
+pub fn web_vite_config_surface() -> WebViteConfigSurface {
+    WebViteConfigSurface {
+        default_port: 5733,
+        default_host: "localhost",
+        ws_url_env: "VITE_WS_URL",
+        hosted_app_url_env: "VITE_HOSTED_APP_URL",
+        hosted_app_channel_env: "VITE_HOSTED_APP_CHANNEL",
+        app_version_env: "APP_VERSION",
+        upstream_sourcemap_env: "T3CODE_WEB_SOURCEMAP",
+        sourcemap_env: "R3CODE_WEB_SOURCEMAP",
+        plugins: vec![
+            "tanstackRouter",
+            "@vitejs/plugin-react",
+            "@rolldown/plugin-babel",
+            "@tailwindcss/vite",
+        ],
+        babel_parser_plugins: vec!["typescript", "jsx"],
+        babel_preset: "reactCompilerPreset",
+        optimize_deps_include: vec![
+            "@pierre/diffs",
+            "@pierre/diffs/react",
+            "@pierre/diffs/worker/worker.js",
+            "effect/Array",
+            "effect/Order",
+        ],
+        define_keys: vec![
+            "import.meta.env.VITE_WS_URL",
+            "import.meta.env.VITE_HOSTED_APP_URL",
+            "import.meta.env.VITE_HOSTED_APP_CHANNEL",
+            "import.meta.env.APP_VERSION",
+        ],
+        tsconfig_paths: true,
+        server_strict_port: true,
+        proxy_paths: vec!["/.well-known", "/api", "/attachments"],
+        proxy_change_origin: true,
+        hmr_protocol: "ws",
+        build_out_dir: "dist",
+        build_empty_out_dir: true,
+    }
+}
+
+pub fn web_vitest_browser_config_surface() -> WebVitestBrowserConfigSurface {
+    WebVitestBrowserConfigSurface {
+        merged_from_vite_config: true,
+        src_alias: "~",
+        src_alias_target: "./src",
+        server_strict_port: false,
+        include: vec!["src/components/**/*.browser.tsx"],
+        browser_enabled: true,
+        provider: "playwright",
+        instances: vec!["chromium"],
+        headless: true,
+        api_strict_port: false,
+        test_timeout_ms: 30_000,
+        hook_timeout_ms: 30_000,
+    }
+}
+
+pub fn web_vercel_config_surface() -> WebVercelConfigSurface {
+    WebVercelConfigSurface {
+        build_command: "turbo build --filter @r3tools/web && bun ../../scripts/apply-web-brand-assets.ts --channel \"${VITE_HOSTED_APP_CHANNEL:-latest}\"",
+        install_command: "bun add -g turbo && bun install --filter '@t3tools/contracts' --filter '@t3tools/client-runtime' --filter '@t3tools/scripts' --filter '@r3tools/web'",
+        deployment_enabled: false,
+        router_host: "app.r3.codes",
+        upstream_router_host: "app.t3.codes",
+        hosted_web_channel_cookie: "r3code_web_channel",
+        upstream_hosted_web_channel_cookie: "t3code_web_channel",
+        latest_origin: "https://latest.app.r3.codes",
+        upstream_latest_origin: "https://latest.app.t3.codes",
+        nightly_origin: "https://nightly.app.r3.codes",
+        upstream_nightly_origin: "https://nightly.app.t3.codes",
+        channel_route: "/__r3code/channel",
+        channel_query_key: "channel",
+        channels: vec!["latest", "nightly"],
+        clean_channel_query_transform: ("request.query", "delete", "channel"),
+        channel_cookie_parts: vec![
+            "Path=/",
+            "Max-Age=31536000",
+            "HttpOnly",
+            "Secure",
+            "SameSite=Lax",
+        ],
+        app_rewrite_source: "/(.*)",
+        app_rewrite_destination: "/index.html",
+    }
+}
+
+pub fn resolve_web_build_sourcemap(env: Option<&str>) -> WebBuildSourcemap {
+    match env.map(|value| value.trim().to_ascii_lowercase()) {
+        Some(value) if value == "0" || value == "false" => WebBuildSourcemap::Disabled,
+        Some(value) if value == "hidden" => WebBuildSourcemap::Hidden,
+        _ => WebBuildSourcemap::Enabled,
+    }
+}
+
+pub fn resolve_web_dev_proxy_target(ws_url: Option<&str>) -> Option<String> {
+    let ws_url = ws_url?.trim();
+    if ws_url.is_empty() {
+        return None;
+    }
+    let protocol_end = ws_url.find("://")?;
+    let protocol = match &ws_url[..protocol_end] {
+        "ws" => "http",
+        "wss" => "https",
+        other => other,
+    };
+    let rest = &ws_url[protocol_end + 3..];
+    let authority_end = rest
+        .find(|ch| ch == '/' || ch == '?' || ch == '#')
+        .unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    if authority.is_empty() {
+        return None;
+    }
+    Some(format!("{protocol}://{authority}/"))
+}
+
+pub fn resolve_web_hosted_app_url(
+    explicit_hosted_app_url: Option<&str>,
+    vercel_env: Option<&str>,
+    vercel_project_production_url: Option<&str>,
+    vercel_url: Option<&str>,
+) -> Option<String> {
+    if let Some(explicit_hosted_app_url) = trim_non_empty(explicit_hosted_app_url) {
+        return Some(explicit_hosted_app_url.to_string());
+    }
+    if vercel_env == Some("production") {
+        if let Some(production_url) = trim_non_empty(vercel_project_production_url) {
+            return Some(format!("https://{production_url}"));
+        }
+    }
+    trim_non_empty(vercel_url).map(|url| format!("https://{url}"))
+}
+
+pub fn resolve_web_host_and_port<'a>(host: Option<&'a str>, port: Option<&str>) -> (&'a str, u16) {
+    let host = trim_non_empty(host).unwrap_or("localhost");
+    let port = port
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(5733);
+    (host, port)
+}
+
+pub fn web_channel_cookie(channel: &str) -> String {
+    let prefix = format!("r3code_web_channel={channel}");
+    std::iter::once(prefix.as_str())
+        .chain(web_vercel_config_surface().channel_cookie_parts)
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+fn trim_non_empty(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
 }
 
 pub fn contracts_package_surface() -> ContractsPackageSurface {
@@ -460,6 +941,178 @@ mod tests {
         );
         assert_eq!(contracts.tsconfig_extends, "../../tsconfig.base.json");
         assert_eq!(contracts.tsconfig_include, vec!["src"]);
+    }
+
+    #[test]
+    fn ports_web_package_build_and_deploy_surface() {
+        let web = web_package_surface();
+        assert_eq!(web.metadata.name, "@r3tools/web");
+        assert_eq!(web.metadata.upstream_name, "@t3tools/web");
+        assert_eq!(web.metadata.version, "0.0.23");
+        assert_eq!(web.scripts["dev"], "vite");
+        assert_eq!(
+            web.scripts["test:browser"],
+            "vitest run --config vitest.browser.config.ts"
+        );
+        assert_eq!(web.dependencies["react"], "19.2.6");
+        assert_eq!(web.dependencies["@tanstack/react-router"], "^1.160.2");
+        assert_eq!(web.dependencies["@t3tools/shared"], "workspace:*");
+        assert_eq!(web.dev_dependencies["vite"], "^8.0.0");
+        assert_eq!(web.dev_dependencies["@vitejs/plugin-react"], "^6.0.0");
+        assert_eq!(web.dev_dependencies["babel-plugin-react-compiler"], "1.0.0");
+
+        assert_eq!(web.tsconfig.extends, "../../tsconfig.base.json");
+        assert_eq!(web.tsconfig.module, "Preserve");
+        assert_eq!(web.tsconfig.module_resolution, "Bundler");
+        assert_eq!(web.tsconfig.lib, vec!["ES2023", "DOM", "DOM.Iterable"]);
+        assert_eq!(web.tsconfig.paths["~/*"], vec!["./src/*"]);
+        assert_eq!(
+            web.tsconfig.effect_diagnostic_severity["unsafeEffectTypeAssertion"],
+            "error"
+        );
+        assert_eq!(
+            web.tsconfig.include,
+            vec!["src", "vite.config.ts", "vercel.ts", "test"]
+        );
+
+        assert_eq!(web.components.style, "base-mira");
+        assert_eq!(web.components.tailwind_css, "src/index.css");
+        assert_eq!(web.components.icon_library, "lucide");
+        assert_eq!(web.components.aliases["ui"], "~/components/ui");
+        assert_eq!(
+            web.components.registries["@coss"],
+            "https://coss.com/ui/r/{name}.json"
+        );
+
+        assert_eq!(
+            web.index_html.viewport,
+            "width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content"
+        );
+        assert_eq!(web.index_html.theme_storage_key, "r3code:theme");
+        assert_eq!(web.index_html.upstream_theme_storage_key, "t3code:theme");
+        assert_eq!(web.index_html.title, "R3 Code (Alpha)");
+        assert_eq!(web.index_html.upstream_title, "T3 Code (Alpha)");
+        assert_eq!(web.index_html.boot_shell_card_size_px, 96);
+        assert_eq!(web.index_html.boot_shell_logo_size_px, 64);
+        assert_eq!(web.index_html.splash_aria_label, "R3 Code splash screen");
+        assert_eq!(web.index_html.logo_alt, "R3 Code");
+
+        assert_eq!(web.vite.default_port, 5733);
+        assert_eq!(
+            web.vite.plugins,
+            vec![
+                "tanstackRouter",
+                "@vitejs/plugin-react",
+                "@rolldown/plugin-babel",
+                "@tailwindcss/vite"
+            ]
+        );
+        assert_eq!(web.vite.babel_parser_plugins, vec!["typescript", "jsx"]);
+        assert_eq!(
+            web.vite.optimize_deps_include,
+            vec![
+                "@pierre/diffs",
+                "@pierre/diffs/react",
+                "@pierre/diffs/worker/worker.js",
+                "effect/Array",
+                "effect/Order"
+            ]
+        );
+        assert_eq!(
+            web.vite.proxy_paths,
+            vec!["/.well-known", "/api", "/attachments"]
+        );
+        assert_eq!(web.vite.hmr_protocol, "ws");
+        assert_eq!(web.vite.upstream_sourcemap_env, "T3CODE_WEB_SOURCEMAP");
+        assert_eq!(web.vite.sourcemap_env, "R3CODE_WEB_SOURCEMAP");
+
+        assert!(web.vitest_browser.merged_from_vite_config);
+        assert_eq!(web.vitest_browser.src_alias, "~");
+        assert_eq!(
+            web.vitest_browser.include,
+            vec!["src/components/**/*.browser.tsx"]
+        );
+        assert_eq!(web.vitest_browser.provider, "playwright");
+        assert_eq!(web.vitest_browser.instances, vec!["chromium"]);
+        assert_eq!(web.vitest_browser.test_timeout_ms, 30_000);
+
+        assert_eq!(web.vercel.router_host, "app.r3.codes");
+        assert_eq!(web.vercel.upstream_router_host, "app.t3.codes");
+        assert_eq!(web.vercel.channel_route, "/__r3code/channel");
+        assert_eq!(
+            web.vercel.clean_channel_query_transform,
+            ("request.query", "delete", "channel")
+        );
+        assert_eq!(web.vercel.channels, vec!["latest", "nightly"]);
+        assert_eq!(web.vercel.app_rewrite_destination, "/index.html");
+    }
+
+    #[test]
+    fn ports_web_vite_runtime_resolution_helpers() {
+        assert_eq!(
+            resolve_web_dev_proxy_target(Some("ws://localhost:3773/ws?token=1#frag")),
+            Some("http://localhost:3773/".to_string())
+        );
+        assert_eq!(
+            resolve_web_dev_proxy_target(Some("wss://example.test/api/socket")),
+            Some("https://example.test/".to_string())
+        );
+        assert_eq!(resolve_web_dev_proxy_target(Some("not a url")), None);
+        assert_eq!(resolve_web_dev_proxy_target(None), None);
+
+        assert_eq!(
+            resolve_web_build_sourcemap(None),
+            WebBuildSourcemap::Enabled
+        );
+        assert_eq!(
+            resolve_web_build_sourcemap(Some(" false ")),
+            WebBuildSourcemap::Disabled
+        );
+        assert_eq!(
+            resolve_web_build_sourcemap(Some("0")),
+            WebBuildSourcemap::Disabled
+        );
+        assert_eq!(
+            resolve_web_build_sourcemap(Some("hidden")),
+            WebBuildSourcemap::Hidden
+        );
+
+        assert_eq!(
+            resolve_web_hosted_app_url(
+                Some(" https://explicit.example "),
+                Some("production"),
+                Some("prod.example"),
+                Some("preview.example"),
+            ),
+            Some("https://explicit.example".to_string())
+        );
+        assert_eq!(
+            resolve_web_hosted_app_url(None, Some("production"), Some("prod.example"), None),
+            Some("https://prod.example".to_string())
+        );
+        assert_eq!(
+            resolve_web_hosted_app_url(
+                None,
+                Some("preview"),
+                Some("prod.example"),
+                Some("vercel.example")
+            ),
+            Some("https://vercel.example".to_string())
+        );
+        assert_eq!(resolve_web_hosted_app_url(None, None, None, None), None);
+
+        assert_eq!(
+            resolve_web_host_and_port(Some(" 0.0.0.0 "), Some("5734")),
+            ("0.0.0.0", 5734)
+        );
+        assert_eq!(
+            resolve_web_host_and_port(Some(" "), Some("invalid")),
+            ("localhost", 5733)
+        );
+        assert_eq!(
+            web_channel_cookie("nightly"),
+            "r3code_web_channel=nightly; Path=/; Max-Age=31536000; HttpOnly; Secure; SameSite=Lax"
+        );
     }
 
     #[test]
