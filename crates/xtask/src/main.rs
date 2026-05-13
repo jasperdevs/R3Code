@@ -2496,6 +2496,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace branch_toolbar_branch_selector_render_contract_matches_upstream_component`; `cargo test --workspace branch_picker_helpers_match_upstream_filtering`; `cargo test --workspace branch_selection_target_matches_upstream_worktree_rules`",
             "Wire remaining live git ref queries, optimistic branch mutation, draft/server branch persistence, PR checkout item actions, query invalidation, and exact combobox rendering.",
         )
+    } else if path == "apps/web/src/components/BranchToolbarEnvModeSelector.tsx"
+        || path == "apps/web/src/components/BranchToolbarEnvironmentSelector.tsx"
+    {
+        (
+            "BranchToolbar env-mode/environment selector locked spans, select trigger classes and aria labels, group labels, active icon/label fallbacks, and item contracts in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace branch_toolbar_selectors_match_upstream_component_contracts`; `cargo test --workspace branch_toolbar_labels_match_upstream_logic`",
+            "Wire exact GPUI select primitives, popup positioning, selection callbacks, and desktop toolbar integration.",
+        )
     } else if path == "apps/web/src/components/CommandPalette.logic.test.ts"
         || path == "apps/web/src/components/CommandPalette.logic.ts"
     {

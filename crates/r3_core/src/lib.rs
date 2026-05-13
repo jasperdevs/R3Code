@@ -3768,6 +3768,9 @@ pub const BRANCH_TOOLBAR_MOBILE_TRIGGER_CLASS_NAME: &str = "min-w-0 max-w-[48%] 
 pub const BRANCH_TOOLBAR_MOBILE_MENU_CLASS_NAME: &str = "w-64";
 pub const BRANCH_TOOLBAR_RUN_ON_LABEL: &str = "Run on";
 pub const BRANCH_TOOLBAR_WORKSPACE_LABEL: &str = "Workspace";
+pub const BRANCH_TOOLBAR_SELECTOR_LOCKED_CLASS_NAME: &str = "inline-flex items-center gap-1 border border-transparent px-[calc(--spacing(3)-1px)] text-sm font-medium text-muted-foreground/70 sm:text-xs";
+pub const BRANCH_TOOLBAR_SELECTOR_TRIGGER_CLASS_NAME: &str = "font-medium";
+pub const BRANCH_TOOLBAR_SELECTOR_ITEM_CLASS_NAME: &str = "inline-flex items-center gap-1.5";
 pub const BRANCH_SELECTOR_TRIGGER_CLASS_NAME: &str =
     "min-w-0 text-muted-foreground/70 hover:text-foreground/80";
 pub const BRANCH_SELECTOR_TRIGGER_LABEL_CLASS_NAME: &str = "min-w-0 max-w-[240px] truncate";
@@ -3813,12 +3816,128 @@ pub struct BranchSelectorRenderContract {
     pub status_text: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchToolbarEnvModeSelectorContract {
+    pub locked: bool,
+    pub locked_class_name: Option<&'static str>,
+    pub trigger_class_name: Option<&'static str>,
+    pub trigger_aria_label: Option<&'static str>,
+    pub group_label: Option<&'static str>,
+    pub current_icon: &'static str,
+    pub current_label: &'static str,
+    pub items: Vec<BranchToolbarSelectorItemContract>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchToolbarEnvironmentSelectorContract {
+    pub locked: bool,
+    pub locked_class_name: Option<&'static str>,
+    pub trigger_class_name: Option<&'static str>,
+    pub trigger_aria_label: Option<&'static str>,
+    pub group_label: Option<&'static str>,
+    pub current_icon: &'static str,
+    pub current_label: String,
+    pub items: Vec<BranchToolbarSelectorItemContract>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchToolbarSelectorItemContract {
+    pub value: String,
+    pub label: String,
+    pub icon: &'static str,
+    pub class_name: &'static str,
+}
+
 impl DraftThreadEnvMode {
     pub fn toggled(self) -> Self {
         match self {
             Self::Local => Self::Worktree,
             Self::Worktree => Self::Local,
         }
+    }
+}
+
+pub fn derive_branch_toolbar_env_mode_selector_contract(
+    env_locked: bool,
+    effective_env_mode: DraftThreadEnvMode,
+    active_worktree_path: Option<&str>,
+) -> BranchToolbarEnvModeSelectorContract {
+    let current_icon =
+        branch_toolbar_mobile_workspace_icon(effective_env_mode, active_worktree_path);
+    let current_label = if env_locked {
+        resolve_locked_workspace_label(active_worktree_path)
+    } else if effective_env_mode == DraftThreadEnvMode::Worktree {
+        resolve_env_mode_label(DraftThreadEnvMode::Worktree)
+    } else {
+        resolve_current_workspace_label(active_worktree_path)
+    };
+
+    BranchToolbarEnvModeSelectorContract {
+        locked: env_locked,
+        locked_class_name: env_locked.then_some(BRANCH_TOOLBAR_SELECTOR_LOCKED_CLASS_NAME),
+        trigger_class_name: (!env_locked).then_some(BRANCH_TOOLBAR_SELECTOR_TRIGGER_CLASS_NAME),
+        trigger_aria_label: (!env_locked).then_some(BRANCH_TOOLBAR_WORKSPACE_LABEL),
+        group_label: (!env_locked).then_some(BRANCH_TOOLBAR_WORKSPACE_LABEL),
+        current_icon,
+        current_label,
+        items: if env_locked {
+            Vec::new()
+        } else {
+            vec![
+                BranchToolbarSelectorItemContract {
+                    value: "local".to_string(),
+                    label: resolve_current_workspace_label(active_worktree_path).to_string(),
+                    icon: branch_toolbar_mobile_workspace_icon(
+                        DraftThreadEnvMode::Local,
+                        active_worktree_path,
+                    ),
+                    class_name: BRANCH_TOOLBAR_SELECTOR_ITEM_CLASS_NAME,
+                },
+                BranchToolbarSelectorItemContract {
+                    value: "worktree".to_string(),
+                    label: resolve_env_mode_label(DraftThreadEnvMode::Worktree).to_string(),
+                    icon: "FolderGit2Icon",
+                    class_name: BRANCH_TOOLBAR_SELECTOR_ITEM_CLASS_NAME,
+                },
+            ]
+        },
+    }
+}
+
+pub fn derive_branch_toolbar_environment_selector_contract(
+    env_locked: bool,
+    environment_id: &str,
+    available_environments: &[BranchToolbarEnvironmentOption],
+) -> BranchToolbarEnvironmentSelectorContract {
+    let active_environment = available_environments
+        .iter()
+        .find(|environment| environment.environment_id == environment_id);
+    let current_is_primary = active_environment.is_some_and(|environment| environment.is_primary);
+    let current_label = active_environment
+        .map(|environment| environment.label.clone())
+        .unwrap_or_else(|| BRANCH_TOOLBAR_RUN_ON_LABEL.to_string());
+
+    BranchToolbarEnvironmentSelectorContract {
+        locked: env_locked,
+        locked_class_name: env_locked.then_some(BRANCH_TOOLBAR_SELECTOR_LOCKED_CLASS_NAME),
+        trigger_class_name: (!env_locked).then_some(BRANCH_TOOLBAR_SELECTOR_TRIGGER_CLASS_NAME),
+        trigger_aria_label: (!env_locked).then_some(BRANCH_TOOLBAR_RUN_ON_LABEL),
+        group_label: (!env_locked).then_some(BRANCH_TOOLBAR_RUN_ON_LABEL),
+        current_icon: branch_toolbar_mobile_environment_icon(current_is_primary),
+        current_label,
+        items: if env_locked {
+            Vec::new()
+        } else {
+            available_environments
+                .iter()
+                .map(|environment| BranchToolbarSelectorItemContract {
+                    value: environment.environment_id.clone(),
+                    label: environment.label.clone(),
+                    icon: branch_toolbar_mobile_environment_icon(environment.is_primary),
+                    class_name: BRANCH_TOOLBAR_SELECTOR_ITEM_CLASS_NAME,
+                })
+                .collect()
+        },
     }
 }
 
@@ -35930,6 +36049,110 @@ mod tests {
             branch_selector_badge(&vcs_ref("main", true, None), Some("/repo")),
             Some("default")
         );
+    }
+
+    #[test]
+    fn branch_toolbar_selectors_match_upstream_component_contracts() {
+        let env_mode_unlocked = derive_branch_toolbar_env_mode_selector_contract(
+            false,
+            DraftThreadEnvMode::Local,
+            Some("/repo/.t3/worktrees/feature-a"),
+        );
+        assert_eq!(env_mode_unlocked.locked_class_name, None);
+        assert_eq!(
+            env_mode_unlocked.trigger_class_name,
+            Some(BRANCH_TOOLBAR_SELECTOR_TRIGGER_CLASS_NAME)
+        );
+        assert_eq!(
+            env_mode_unlocked.trigger_aria_label,
+            Some(BRANCH_TOOLBAR_WORKSPACE_LABEL)
+        );
+        assert_eq!(env_mode_unlocked.group_label, Some("Workspace"));
+        assert_eq!(env_mode_unlocked.current_icon, "FolderGitIcon");
+        assert_eq!(env_mode_unlocked.current_label, "Current worktree");
+        assert_eq!(
+            env_mode_unlocked.items,
+            vec![
+                BranchToolbarSelectorItemContract {
+                    value: "local".to_string(),
+                    label: "Current worktree".to_string(),
+                    icon: "FolderGitIcon",
+                    class_name: BRANCH_TOOLBAR_SELECTOR_ITEM_CLASS_NAME,
+                },
+                BranchToolbarSelectorItemContract {
+                    value: "worktree".to_string(),
+                    label: "New worktree".to_string(),
+                    icon: "FolderGit2Icon",
+                    class_name: BRANCH_TOOLBAR_SELECTOR_ITEM_CLASS_NAME,
+                },
+            ]
+        );
+
+        let env_mode_locked =
+            derive_branch_toolbar_env_mode_selector_contract(true, DraftThreadEnvMode::Local, None);
+        assert_eq!(
+            env_mode_locked.locked_class_name,
+            Some(BRANCH_TOOLBAR_SELECTOR_LOCKED_CLASS_NAME)
+        );
+        assert_eq!(env_mode_locked.trigger_class_name, None);
+        assert_eq!(env_mode_locked.current_icon, "FolderIcon");
+        assert_eq!(env_mode_locked.current_label, "Local checkout");
+        assert!(env_mode_locked.items.is_empty());
+
+        let environments = vec![
+            BranchToolbarEnvironmentOption {
+                environment_id: "environment-local".to_string(),
+                project_id: "project-1".to_string(),
+                label: "This device".to_string(),
+                is_primary: true,
+            },
+            BranchToolbarEnvironmentOption {
+                environment_id: "environment-remote".to_string(),
+                project_id: "project-1".to_string(),
+                label: "Build box".to_string(),
+                is_primary: false,
+            },
+        ];
+        let environment_unlocked = derive_branch_toolbar_environment_selector_contract(
+            false,
+            "environment-remote",
+            &environments,
+        );
+        assert_eq!(
+            environment_unlocked.trigger_aria_label,
+            Some(BRANCH_TOOLBAR_RUN_ON_LABEL)
+        );
+        assert_eq!(environment_unlocked.group_label, Some("Run on"));
+        assert_eq!(environment_unlocked.current_icon, "CloudIcon");
+        assert_eq!(environment_unlocked.current_label, "Build box");
+        assert_eq!(
+            environment_unlocked.items,
+            vec![
+                BranchToolbarSelectorItemContract {
+                    value: "environment-local".to_string(),
+                    label: "This device".to_string(),
+                    icon: "MonitorIcon",
+                    class_name: BRANCH_TOOLBAR_SELECTOR_ITEM_CLASS_NAME,
+                },
+                BranchToolbarSelectorItemContract {
+                    value: "environment-remote".to_string(),
+                    label: "Build box".to_string(),
+                    icon: "CloudIcon",
+                    class_name: BRANCH_TOOLBAR_SELECTOR_ITEM_CLASS_NAME,
+                },
+            ]
+        );
+
+        let environment_locked =
+            derive_branch_toolbar_environment_selector_contract(true, "missing", &environments);
+        assert_eq!(
+            environment_locked.locked_class_name,
+            Some(BRANCH_TOOLBAR_SELECTOR_LOCKED_CLASS_NAME)
+        );
+        assert_eq!(environment_locked.trigger_class_name, None);
+        assert_eq!(environment_locked.current_icon, "CloudIcon");
+        assert_eq!(environment_locked.current_label, "Run on");
+        assert!(environment_locked.items.is_empty());
     }
 
     #[test]
