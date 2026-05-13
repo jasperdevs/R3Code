@@ -3055,6 +3055,81 @@ pub const DEFAULT_MODEL: &str = "gpt-5.4";
 pub const DEFAULT_GIT_TEXT_GENERATION_MODEL: &str = "gpt-5.4-mini";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProviderClientDefinition {
+    pub value: &'static str,
+    pub label: &'static str,
+    pub icon: &'static str,
+    pub settings_schema: &'static str,
+    pub badge_label: Option<&'static str>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProviderOption {
+    pub value: &'static str,
+    pub label: &'static str,
+    pub available: bool,
+    pub picker_sidebar_badge: Option<&'static str>,
+}
+
+pub const PROVIDER_CLIENT_DEFINITIONS: [ProviderClientDefinition; 4] = [
+    ProviderClientDefinition {
+        value: "codex",
+        label: "Codex",
+        icon: "OpenAI",
+        settings_schema: "CodexSettings",
+        badge_label: None,
+    },
+    ProviderClientDefinition {
+        value: "claudeAgent",
+        label: "Claude",
+        icon: "ClaudeAI",
+        settings_schema: "ClaudeSettings",
+        badge_label: None,
+    },
+    ProviderClientDefinition {
+        value: "cursor",
+        label: "Cursor",
+        icon: "CursorIcon",
+        settings_schema: "CursorSettings",
+        badge_label: Some("Early Access"),
+    },
+    ProviderClientDefinition {
+        value: "opencode",
+        label: "OpenCode",
+        icon: "OpenCodeIcon",
+        settings_schema: "OpenCodeSettings",
+        badge_label: None,
+    },
+];
+
+pub const PROVIDER_OPTIONS: [ProviderOption; 4] = [
+    ProviderOption {
+        value: "codex",
+        label: "Codex",
+        available: true,
+        picker_sidebar_badge: None,
+    },
+    ProviderOption {
+        value: "claudeAgent",
+        label: "Claude",
+        available: true,
+        picker_sidebar_badge: None,
+    },
+    ProviderOption {
+        value: "opencode",
+        label: "OpenCode",
+        available: true,
+        picker_sidebar_badge: Some("new"),
+    },
+    ProviderOption {
+        value: "cursor",
+        label: "Cursor",
+        available: true,
+        picker_sidebar_badge: Some("new"),
+    },
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ServerProviderState {
     Ready,
     Warning,
@@ -3261,6 +3336,37 @@ pub fn default_git_text_generation_model_by_provider(provider: &str) -> Option<&
     }
 }
 
+pub fn provider_client_definition_by_value(
+    driver: Option<&str>,
+) -> Option<&'static ProviderClientDefinition> {
+    let driver = driver?;
+    PROVIDER_CLIENT_DEFINITIONS
+        .iter()
+        .find(|definition| definition.value == driver)
+}
+
+pub fn get_driver_option(driver: Option<&str>) -> Option<&'static ProviderClientDefinition> {
+    provider_client_definition_by_value(driver)
+}
+
+pub fn provider_icon_by_provider(driver: &str) -> Option<&'static str> {
+    match driver {
+        "codex" => Some("OpenAI"),
+        "claudeAgent" => Some("ClaudeAI"),
+        "opencode" => Some("OpenCodeIcon"),
+        "cursor" => Some("CursorIcon"),
+        _ => None,
+    }
+}
+
+pub fn available_provider_options() -> Vec<ProviderOption> {
+    PROVIDER_OPTIONS
+        .iter()
+        .copied()
+        .filter(|option| option.available)
+        .collect()
+}
+
 pub fn provider_display_name(driver: &str) -> String {
     match driver {
         "codex" => "Codex".to_string(),
@@ -3268,6 +3374,15 @@ pub fn provider_display_name(driver: &str) -> String {
         "cursor" => "Cursor".to_string(),
         "opencode" => "OpenCode".to_string(),
         _ => format_provider_driver_kind_label(driver),
+    }
+}
+
+pub fn provider_status_dot_style(status: ServerProviderState) -> &'static str {
+    match status {
+        ServerProviderState::Disabled => "bg-amber-400",
+        ServerProviderState::Error => "bg-destructive",
+        ServerProviderState::Ready => "bg-success",
+        ServerProviderState::Warning => "bg-warning",
     }
 }
 
@@ -20845,6 +20960,82 @@ mod tests {
             provider.auth.status = ServerProviderAuthStatus::Unknown;
         });
         assert_eq!(get_provider_summary(Some(&error)).headline, "Unavailable");
+    }
+
+    #[test]
+    fn provider_presentation_metadata_matches_upstream_tables() {
+        assert_eq!(
+            PROVIDER_CLIENT_DEFINITIONS
+                .iter()
+                .map(|definition| (
+                    definition.value,
+                    definition.label,
+                    definition.icon,
+                    definition.settings_schema,
+                    definition.badge_label
+                ))
+                .collect::<Vec<_>>(),
+            vec![
+                ("codex", "Codex", "OpenAI", "CodexSettings", None),
+                ("claudeAgent", "Claude", "ClaudeAI", "ClaudeSettings", None),
+                (
+                    "cursor",
+                    "Cursor",
+                    "CursorIcon",
+                    "CursorSettings",
+                    Some("Early Access")
+                ),
+                (
+                    "opencode",
+                    "OpenCode",
+                    "OpenCodeIcon",
+                    "OpenCodeSettings",
+                    None
+                ),
+            ]
+        );
+        assert_eq!(
+            get_driver_option(Some("cursor")).map(|definition| definition.badge_label),
+            Some(Some("Early Access"))
+        );
+        assert_eq!(get_driver_option(Some("forked")), None);
+        assert_eq!(get_driver_option(None), None);
+
+        assert_eq!(provider_icon_by_provider("codex"), Some("OpenAI"));
+        assert_eq!(provider_icon_by_provider("claudeAgent"), Some("ClaudeAI"));
+        assert_eq!(provider_icon_by_provider("opencode"), Some("OpenCodeIcon"));
+        assert_eq!(provider_icon_by_provider("cursor"), Some("CursorIcon"));
+        assert_eq!(provider_icon_by_provider("forked"), None);
+
+        assert_eq!(
+            available_provider_options()
+                .iter()
+                .map(|option| (option.value, option.label, option.picker_sidebar_badge))
+                .collect::<Vec<_>>(),
+            vec![
+                ("codex", "Codex", None),
+                ("claudeAgent", "Claude", None),
+                ("opencode", "OpenCode", Some("new")),
+                ("cursor", "Cursor", Some("new")),
+            ]
+        );
+
+        assert_eq!(
+            provider_status_dot_style(ServerProviderState::Disabled),
+            "bg-amber-400"
+        );
+        assert_eq!(
+            provider_status_dot_style(ServerProviderState::Error),
+            "bg-destructive"
+        );
+        assert_eq!(
+            provider_status_dot_style(ServerProviderState::Ready),
+            "bg-success"
+        );
+        assert_eq!(
+            provider_status_dot_style(ServerProviderState::Warning),
+            "bg-warning"
+        );
     }
 
     #[test]

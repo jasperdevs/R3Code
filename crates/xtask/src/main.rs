@@ -1775,6 +1775,27 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core model_picker_open_state`",
             "Wire helper into the live GPUI model picker open/close store.",
         )
+    } else if path == "apps/web/src/components/settings/providerDriverMeta.ts" {
+        (
+            "provider driver client metadata, settings schema names, badge labels, and lookup helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core provider_presentation_metadata`",
+            "Wire metadata into the live GPUI provider settings renderer.",
+        )
+    } else if path == "apps/web/src/components/settings/providerStatus.ts" {
+        (
+            "provider status summary/version helpers plus exact status dot styles in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core provider_status_summary`; `cargo test -p r3_core provider_presentation_metadata`",
+            "Wire styles and summaries into the live GPUI provider settings cards.",
+        )
+    } else if path == "apps/web/src/components/chat/providerIconUtils.ts" {
+        (
+            "provider icon mapping, available picker options, and model display-label helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core provider_presentation_metadata`; `cargo test -p r3_core model_picker`",
+            "Wire icon mapping into live GPUI model picker/provider trigger rendering.",
+        )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
             "logical project path normalization, physical/grouping/order keys, repository-scoped keys, settings override resolution, ref fallback, and group-label helpers in crates/r3_core/src/lib.rs",
