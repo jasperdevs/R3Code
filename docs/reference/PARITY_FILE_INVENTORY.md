@@ -12,8 +12,8 @@ Do not edit individual rows by hand; update `crates/xtask/src/main.rs` classific
 
 | Status | Files |
 | --- | ---: |
-| `covered` | 10 |
-| `partial` | 988 |
+| `covered` | 11 |
+| `partial` | 987 |
 
 ## Files
 
@@ -647,7 +647,7 @@ Do not edit individual rows by hand; update `crates/xtask/src/main.rs` classific
 | `apps/web/src/components/ui/alert.tsx` | crates/r3_core/src/lib.rs; crates/r3_ui/src/shell.rs | `partial` | `cargo test --workspace`; current screenshot gates where captured | Replace seeded/static state with live GPUI state and port remaining component behavior. |
 | `apps/web/src/components/ui/autocomplete.tsx` | crates/r3_core/src/lib.rs; crates/r3_ui/src/shell.rs | `partial` | `cargo test --workspace`; current screenshot gates where captured | Replace seeded/static state with live GPUI state and port remaining component behavior. |
 | `apps/web/src/components/ui/badge.tsx` | Badge primitive data slot, base class, default variant settings, size variants, and visual variant class matrix in crates/r3_core/src/lib.rs | `covered` | `cargo test --workspace badge_primitive_contract_matches_upstream_component`; current screenshot gates where captured | Maintain this primitive contract if upstream changes Badge styling, sizes, variants, or render defaults. |
-| `apps/web/src/components/ui/button.tsx` | crates/r3_core/src/lib.rs; crates/r3_ui/src/shell.rs | `partial` | `cargo test --workspace`; current screenshot gates where captured | Replace seeded/static state with live GPUI state and port remaining component behavior. |
+| `apps/web/src/components/ui/button.tsx` | Button primitive data slot, default tag/type behavior, base class, default variant settings, size variants, and visual variant class matrix in crates/r3_core/src/lib.rs | `covered` | `cargo test --workspace button_primitive_contract_matches_upstream_component`; current screenshot gates where captured | Maintain this primitive contract if upstream changes Button styling, sizes, variants, or render defaults. |
 | `apps/web/src/components/ui/card.tsx` | crates/r3_core/src/lib.rs; crates/r3_ui/src/shell.rs | `partial` | `cargo test --workspace`; current screenshot gates where captured | Replace seeded/static state with live GPUI state and port remaining component behavior. |
 | `apps/web/src/components/ui/checkbox.tsx` | crates/r3_core/src/lib.rs; crates/r3_ui/src/shell.rs | `partial` | `cargo test --workspace`; current screenshot gates where captured | Replace seeded/static state with live GPUI state and port remaining component behavior. |
 | `apps/web/src/components/ui/collapsible.tsx` | crates/r3_core/src/lib.rs; crates/r3_ui/src/shell.rs | `partial` | `cargo test --workspace`; current screenshot gates where captured | Replace seeded/static state with live GPUI state and port remaining component behavior. |
