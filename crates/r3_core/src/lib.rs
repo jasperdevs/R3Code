@@ -5989,6 +5989,15 @@ pub struct DesktopSshEnvironmentTarget {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DesktopDiscoveredSshHost {
+    pub alias: String,
+    pub hostname: String,
+    pub username: Option<String>,
+    pub port: Option<u16>,
+    pub source: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SshAskpassFile {
     pub path: String,
     pub contents: &'static str,
@@ -6184,6 +6193,188 @@ pub fn is_ssh_auth_failure(message: &str) -> bool {
         .any(|method| normalized.contains(method)))
         || normalized.contains("authentication failed")
         || normalized.contains("too many authentication failures")
+}
+
+fn strip_ssh_inline_comment(line: &str) -> &str {
+    line.split_once('#')
+        .map(|(before_comment, _)| before_comment)
+        .unwrap_or(line)
+        .trim()
+}
+
+fn split_ssh_directive_args(value: &str) -> Vec<String> {
+    value
+        .replace('=', " ")
+        .split_whitespace()
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn expand_ssh_home_path(input: &str, home_dir: &str) -> String {
+    if input == "~" {
+        return home_dir.to_string();
+    }
+    input
+        .strip_prefix("~/")
+        .or_else(|| input.strip_prefix("~\\"))
+        .map(|rest| format!("{}/{}", home_dir.trim_end_matches(['/', '\\']), rest))
+        .unwrap_or_else(|| input.to_string())
+}
+
+fn is_ssh_path_absolute(path: &str) -> bool {
+    path.starts_with('/')
+        || path.starts_with('\\')
+        || path.as_bytes().get(1).is_some_and(|byte| *byte == b':')
+}
+
+pub fn resolve_ssh_config_include_pattern(include_pattern: &str, home_dir: &str) -> String {
+    let expanded = expand_ssh_home_path(include_pattern, home_dir);
+    if is_ssh_path_absolute(&expanded) {
+        expanded
+    } else {
+        format!(
+            "{}/.ssh/{}",
+            home_dir.trim_end_matches(['/', '\\']),
+            expanded.trim_start_matches(['/', '\\'])
+        )
+    }
+}
+
+fn has_ssh_pattern(value: &str) -> bool {
+    value.contains('*') || value.contains('?') || value.starts_with('!')
+}
+
+fn compare_like_js_locale(left: &str, right: &str) -> Ordering {
+    let left_group = left
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_alphanumeric()) as u8;
+    let right_group = right
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_alphanumeric()) as u8;
+    left_group.cmp(&right_group).then_with(|| left.cmp(right))
+}
+
+fn sort_strings_like_js_locale(values: &mut [String]) {
+    values.sort_by(|left, right| compare_like_js_locale(left, right));
+}
+
+pub fn collect_ssh_config_aliases(raw: &str) -> Vec<String> {
+    let mut aliases = BTreeSet::new();
+    for line in raw.lines() {
+        let stripped = strip_ssh_inline_comment(line);
+        if stripped.is_empty() {
+            continue;
+        }
+        let args = split_ssh_directive_args(stripped);
+        let Some((directive, raw_args)) = args.split_first() else {
+            continue;
+        };
+        if directive.to_ascii_lowercase() != "host" {
+            continue;
+        }
+        for alias in raw_args {
+            if alias.is_empty() || has_ssh_pattern(alias) {
+                continue;
+            }
+            aliases.insert(alias.clone());
+        }
+    }
+    let mut aliases = aliases.into_iter().collect::<Vec<_>>();
+    sort_strings_like_js_locale(&mut aliases);
+    aliases
+}
+
+fn normalize_known_hosts_hostname(raw_host: &str) -> String {
+    if let Some(rest) = raw_host.strip_prefix('[') {
+        if let Some((host, port_suffix)) = rest.split_once("]:") {
+            if !host.is_empty() && port_suffix.chars().all(|ch| ch.is_ascii_digit()) {
+                return host.to_string();
+            }
+        }
+    }
+    if !raw_host.contains(':') {
+        return raw_host.to_string();
+    }
+    let first_colon = raw_host.find(':');
+    let last_colon = raw_host.rfind(':');
+    if first_colon == last_colon {
+        raw_host
+            .rsplit_once(':')
+            .map(|(host, _)| host.to_string())
+            .unwrap_or_else(|| raw_host.to_string())
+    } else {
+        raw_host.to_string()
+    }
+}
+
+pub fn parse_known_hosts_hostnames(raw: &str) -> Vec<String> {
+    let mut hostnames = BTreeSet::new();
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let without_marker = if trimmed.starts_with('@') {
+            trimmed
+                .split_whitespace()
+                .skip(1)
+                .collect::<Vec<_>>()
+                .join(" ")
+        } else {
+            trimmed.to_string()
+        };
+        let host_field = without_marker.split_whitespace().next().unwrap_or("");
+        if host_field.is_empty() || host_field.starts_with('|') {
+            continue;
+        }
+        for raw_host in host_field.split(',') {
+            let host = normalize_known_hosts_hostname(raw_host).trim().to_string();
+            if host.is_empty() || has_ssh_pattern(&host) {
+                continue;
+            }
+            hostnames.insert(host);
+        }
+    }
+    let mut hostnames = hostnames.into_iter().collect::<Vec<_>>();
+    sort_strings_like_js_locale(&mut hostnames);
+    hostnames
+}
+
+pub fn merge_discovered_ssh_hosts(
+    config_aliases: &[String],
+    known_hosts: &[String],
+) -> Vec<DesktopDiscoveredSshHost> {
+    let mut discovered = BTreeMap::new();
+    for alias in config_aliases {
+        discovered.insert(
+            alias.clone(),
+            DesktopDiscoveredSshHost {
+                alias: alias.clone(),
+                hostname: alias.clone(),
+                username: None,
+                port: None,
+                source: "ssh-config".to_string(),
+            },
+        );
+    }
+    for hostname in known_hosts {
+        discovered
+            .entry(hostname.clone())
+            .or_insert_with(|| DesktopDiscoveredSshHost {
+                alias: hostname.clone(),
+                hostname: hostname.clone(),
+                username: None,
+                port: None,
+                source: "known-hosts".to_string(),
+            });
+    }
+    let mut discovered = discovered.into_values().collect::<Vec<_>>();
+    discovered.sort_by(|left, right| compare_like_js_locale(&left.alias, &right.alias));
+    discovered
 }
 
 pub fn build_ssh_host_spec(target: &DesktopSshEnvironmentTarget) -> Result<String, String> {
@@ -11663,6 +11854,67 @@ mod tests {
             env_plan.askpass.as_ref().unwrap().files[0]
                 .contents
                 .contains("R3Code ssh-askpass")
+        );
+        assert_eq!(
+            collect_ssh_config_aliases(
+                [
+                    "Host devbox",
+                    "  HostName devbox.example.com",
+                    "Host=equalsbox",
+                    "Host *",
+                    "Host !blocked",
+                    "Host staging?",
+                    "",
+                ]
+                .join("\n")
+                .as_str()
+            ),
+            vec!["devbox".to_string(), "equalsbox".to_string()]
+        );
+        assert_eq!(
+            resolve_ssh_config_include_pattern("~/.ssh/config.d/*.conf", "/tmp/home"),
+            "/tmp/home/.ssh/config.d/*.conf"
+        );
+        assert_eq!(
+            resolve_ssh_config_include_pattern("config.d/*.conf", "/tmp/home"),
+            "/tmp/home/.ssh/config.d/*.conf"
+        );
+        let known_hosts = parse_known_hosts_hostnames(
+            [
+                "github.com ssh-ed25519 AAAA",
+                "gitlab.com,gitlab-alias ssh-ed25519 BBBB",
+                "|1|hashed|entry ssh-ed25519 CCCC",
+                "@cert-authority *.example.com ssh-ed25519 DDDD",
+                "[ssh.example.com]:2200 ssh-ed25519 EEEE",
+                "port.example.com:22 ssh-ed25519 HHHH",
+                "::1 ssh-ed25519 FFFF",
+                "2001:db8::1 ssh-ed25519 GGGG",
+                "",
+            ]
+            .join("\n")
+            .as_str(),
+        );
+        assert_eq!(
+            known_hosts,
+            vec![
+                "::1".to_string(),
+                "2001:db8::1".to_string(),
+                "github.com".to_string(),
+                "gitlab-alias".to_string(),
+                "gitlab.com".to_string(),
+                "port.example.com".to_string(),
+                "ssh.example.com".to_string(),
+            ]
+        );
+        assert_eq!(
+            merge_discovered_ssh_hosts(&["devbox".to_string()], &known_hosts)[0],
+            DesktopDiscoveredSshHost {
+                alias: "::1".to_string(),
+                hostname: "::1".to_string(),
+                username: None,
+                port: None,
+                source: "known-hosts".to_string(),
+            }
         );
 
         let target = parse_manual_desktop_ssh_target("alice@example.com:2222", "", "").unwrap();
