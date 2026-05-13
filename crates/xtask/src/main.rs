@@ -3117,6 +3117,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core shared`; `cargo test -p r3_core process`; selected r3_core model/search/keybinding tests",
             "Wire actual Effect queue fibers, Effect Schema runtime integration, logging/observability runtime layers with filesystem append/rename IO, generated package exports, and live network/service integration.",
         )
+    } else if path == "packages/client-runtime/package.json"
+        || path == "packages/client-runtime/tsconfig.json"
+    {
+        (
+            "client-runtime package metadata, scripts, export map, dependency/version map, and tsconfig include/extends contracts in crates/r3_core/src/package_surfaces.rs",
+            "partial",
+            "`cargo test -p r3_core package_surfaces`",
+            "Wire browser AtomRegistry/reactivity runtime, async refresh deduplication with real RPC clients, generated contract types, and native package export generation.",
+        )
     } else if path.starts_with("packages/client-runtime/") {
         (
             "client-runtime advertised endpoint, known-environment, scoped-ref, pairing URL get/strip/set, and source-control discovery state/refresh/reset decision helpers in crates/r3_core/src/lib.rs",

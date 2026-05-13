@@ -1120,6 +1120,34 @@ fn shared_export(
     (key, BTreeMap::from([("types", source), ("import", source)]))
 }
 
+pub fn client_runtime_package_surface() -> UtilityPackageSurface {
+    UtilityPackageSurface {
+        metadata: PackageSurfaceMetadata {
+            name: "@r3tools/client-runtime",
+            upstream_name: "@t3tools/client-runtime",
+            version: "0.0.0-alpha.1",
+            private: true,
+            module_type: "module",
+            main: None,
+            product_name: None,
+            files: Vec::new(),
+        },
+        exports: BTreeMap::from([shared_export(".", "./src/index.ts")]),
+        scripts: BTreeMap::from([("typecheck", "tsc --noEmit"), ("test", "vitest run")]),
+        dependencies: BTreeMap::from([
+            ("@t3tools/contracts", "workspace:*"),
+            ("effect", "catalog:"),
+        ]),
+        dev_dependencies: BTreeMap::from([
+            ("@effect/language-service", "catalog:"),
+            ("typescript", "catalog:"),
+            ("vitest", "catalog:"),
+        ]),
+        tsconfig_extends: "../../tsconfig.base.json",
+        tsconfig_include: vec!["src"],
+    }
+}
+
 pub fn ssh_package_surface() -> UtilityPackageSurface {
     UtilityPackageSurface {
         metadata: PackageSurfaceMetadata {
@@ -1578,6 +1606,36 @@ mod tests {
         assert!(shared.dev_dependencies.contains(&"@types/node"));
         assert_eq!(shared.tsconfig_extends, "../../tsconfig.base.json");
         assert_eq!(shared.tsconfig_include, vec!["src"]);
+    }
+
+    #[test]
+    fn ports_client_runtime_package_surface() {
+        let client_runtime = client_runtime_package_surface();
+        assert_eq!(client_runtime.metadata.name, "@r3tools/client-runtime");
+        assert_eq!(
+            client_runtime.metadata.upstream_name,
+            "@t3tools/client-runtime"
+        );
+        assert_eq!(client_runtime.metadata.version, "0.0.0-alpha.1");
+        assert!(client_runtime.metadata.private);
+        assert_eq!(client_runtime.metadata.module_type, "module");
+        assert_eq!(client_runtime.exports["."]["types"], "./src/index.ts");
+        assert_eq!(client_runtime.exports["."]["import"], "./src/index.ts");
+        assert_eq!(client_runtime.scripts["typecheck"], "tsc --noEmit");
+        assert_eq!(client_runtime.scripts["test"], "vitest run");
+        assert_eq!(
+            client_runtime.dependencies["@t3tools/contracts"],
+            "workspace:*"
+        );
+        assert_eq!(client_runtime.dependencies["effect"], "catalog:");
+        assert_eq!(
+            client_runtime.dev_dependencies["@effect/language-service"],
+            "catalog:"
+        );
+        assert_eq!(client_runtime.dev_dependencies["typescript"], "catalog:");
+        assert_eq!(client_runtime.dev_dependencies["vitest"], "catalog:");
+        assert_eq!(client_runtime.tsconfig_extends, "../../tsconfig.base.json");
+        assert_eq!(client_runtime.tsconfig_include, vec!["src"]);
     }
 
     #[test]
