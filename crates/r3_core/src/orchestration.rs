@@ -77,6 +77,32 @@ pub enum DomainEventClassification {
     Apply,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OrchestrationBatchEvent {
+    ThreadTurnDiffCompleted,
+    ThreadReverted,
+    ThreadCreated { thread_id: String },
+    ThreadDeleted { thread_id: String },
+    ThreadArchived { thread_id: String },
+    ThreadUnarchived { thread_id: String },
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ThreadLifecycleEffect {
+    clear_promoted_draft: bool,
+    clear_deleted_thread: bool,
+    remove_terminal_state: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrchestrationBatchEffects {
+    pub promote_draft_thread_ids: Vec<String>,
+    pub clear_deleted_thread_ids: Vec<String>,
+    pub remove_terminal_state_thread_ids: Vec<String>,
+    pub needs_provider_invalidation: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct OrchestrationRecoveryCoordinator {
     state: OrchestrationRecoveryState,
@@ -252,6 +278,105 @@ pub fn derive_replay_retry_decision(
             latest_sequence: recovery_state.latest_sequence,
             highest_observed_sequence: recovery_state.highest_observed_sequence,
         }),
+    }
+}
+
+fn upsert_thread_lifecycle_effect(
+    effects: &mut Vec<(String, ThreadLifecycleEffect)>,
+    thread_id: String,
+    effect: ThreadLifecycleEffect,
+) {
+    if let Some((_, existing)) = effects
+        .iter_mut()
+        .find(|(existing_thread_id, _)| *existing_thread_id == thread_id)
+    {
+        *existing = effect;
+    } else {
+        effects.push((thread_id, effect));
+    }
+}
+
+pub fn derive_orchestration_batch_effects(
+    events: &[OrchestrationBatchEvent],
+) -> OrchestrationBatchEffects {
+    let mut thread_lifecycle_effects = Vec::<(String, ThreadLifecycleEffect)>::new();
+    let mut needs_provider_invalidation = false;
+
+    for event in events {
+        match event {
+            OrchestrationBatchEvent::ThreadTurnDiffCompleted
+            | OrchestrationBatchEvent::ThreadReverted => {
+                needs_provider_invalidation = true;
+            }
+            OrchestrationBatchEvent::ThreadCreated { thread_id } => {
+                upsert_thread_lifecycle_effect(
+                    &mut thread_lifecycle_effects,
+                    thread_id.clone(),
+                    ThreadLifecycleEffect {
+                        clear_promoted_draft: true,
+                        clear_deleted_thread: false,
+                        remove_terminal_state: false,
+                    },
+                );
+            }
+            OrchestrationBatchEvent::ThreadDeleted { thread_id } => {
+                upsert_thread_lifecycle_effect(
+                    &mut thread_lifecycle_effects,
+                    thread_id.clone(),
+                    ThreadLifecycleEffect {
+                        clear_promoted_draft: false,
+                        clear_deleted_thread: true,
+                        remove_terminal_state: true,
+                    },
+                );
+            }
+            OrchestrationBatchEvent::ThreadArchived { thread_id } => {
+                upsert_thread_lifecycle_effect(
+                    &mut thread_lifecycle_effects,
+                    thread_id.clone(),
+                    ThreadLifecycleEffect {
+                        clear_promoted_draft: false,
+                        clear_deleted_thread: false,
+                        remove_terminal_state: true,
+                    },
+                );
+            }
+            OrchestrationBatchEvent::ThreadUnarchived { thread_id } => {
+                upsert_thread_lifecycle_effect(
+                    &mut thread_lifecycle_effects,
+                    thread_id.clone(),
+                    ThreadLifecycleEffect {
+                        clear_promoted_draft: false,
+                        clear_deleted_thread: false,
+                        remove_terminal_state: false,
+                    },
+                );
+            }
+            OrchestrationBatchEvent::Other => {}
+        }
+    }
+
+    let mut promote_draft_thread_ids = Vec::new();
+    let mut clear_deleted_thread_ids = Vec::new();
+    let mut remove_terminal_state_thread_ids = Vec::new();
+
+    for (thread_id, effect) in thread_lifecycle_effects {
+        if effect.clear_promoted_draft {
+            promote_draft_thread_ids.push(thread_id.clone());
+        }
+        if effect.clear_deleted_thread {
+            clear_deleted_thread_ids.push(thread_id.clone());
+        }
+        if effect.remove_terminal_state {
+            remove_terminal_state_thread_ids.push(thread_id);
+        }
+    }
+
+    OrchestrationBatchEffects {
+        promote_draft_thread_ids,
+        clear_deleted_thread_ids,
+        remove_terminal_state_thread_ids,
+        needs_provider_invalidation,
     }
 }
 
@@ -4906,6 +5031,75 @@ mod tests {
                     highest_observed_sequence: 6,
                 }),
             }
+        );
+    }
+
+    #[test]
+    fn orchestration_batch_effects_match_upstream_lifecycle_rules() {
+        let effects = derive_orchestration_batch_effects(&[
+            OrchestrationBatchEvent::ThreadCreated {
+                thread_id: "thread-created".to_string(),
+            },
+            OrchestrationBatchEvent::ThreadDeleted {
+                thread_id: "thread-deleted".to_string(),
+            },
+            OrchestrationBatchEvent::ThreadArchived {
+                thread_id: "thread-archived".to_string(),
+            },
+        ]);
+        assert_eq!(
+            effects,
+            OrchestrationBatchEffects {
+                promote_draft_thread_ids: vec!["thread-created".to_string()],
+                clear_deleted_thread_ids: vec!["thread-deleted".to_string()],
+                remove_terminal_state_thread_ids: vec![
+                    "thread-deleted".to_string(),
+                    "thread-archived".to_string()
+                ],
+                needs_provider_invalidation: false,
+            }
+        );
+
+        let recreated = derive_orchestration_batch_effects(&[
+            OrchestrationBatchEvent::ThreadDeleted {
+                thread_id: "thread-1".to_string(),
+            },
+            OrchestrationBatchEvent::ThreadCreated {
+                thread_id: "thread-1".to_string(),
+            },
+            OrchestrationBatchEvent::ThreadTurnDiffCompleted,
+        ]);
+        assert_eq!(
+            recreated,
+            OrchestrationBatchEffects {
+                promote_draft_thread_ids: vec!["thread-1".to_string()],
+                clear_deleted_thread_ids: Vec::new(),
+                remove_terminal_state_thread_ids: Vec::new(),
+                needs_provider_invalidation: true,
+            }
+        );
+
+        let unarchived = derive_orchestration_batch_effects(&[
+            OrchestrationBatchEvent::ThreadArchived {
+                thread_id: "thread-1".to_string(),
+            },
+            OrchestrationBatchEvent::ThreadUnarchived {
+                thread_id: "thread-1".to_string(),
+            },
+        ]);
+        assert_eq!(
+            unarchived,
+            OrchestrationBatchEffects {
+                promote_draft_thread_ids: Vec::new(),
+                clear_deleted_thread_ids: Vec::new(),
+                remove_terminal_state_thread_ids: Vec::new(),
+                needs_provider_invalidation: false,
+            }
+        );
+
+        assert!(
+            derive_orchestration_batch_effects(&[OrchestrationBatchEvent::ThreadReverted])
+                .needs_provider_invalidation
         );
     }
 

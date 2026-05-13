@@ -1804,6 +1804,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core orchestration_recovery`",
             "Wire the coordinator into live GPUI websocket shell subscriptions, snapshot/replay RPC calls, and retry timers.",
         )
+    } else if path == "apps/web/src/orchestrationEventEffects.ts"
+        || path == "apps/web/src/orchestrationEventEffects.test.ts"
+    {
+        (
+            "orchestration batch effects for draft promotion, deleted-thread clearing, terminal state removal, provider invalidation on turn-diff/revert events, final lifecycle outcome wins, and insertion-order preservation in crates/r3_core/src/orchestration.rs",
+            "partial",
+            "`cargo test -p r3_core orchestration_batch_effects_match_upstream_lifecycle_rules`",
+            "Wire effects into live GPUI store updates, provider query invalidation, draft promotion, deleted-thread cleanup, and terminal state cleanup after websocket replay batches.",
+        )
     } else if path == "apps/web/src/markdown-links.ts"
         || path == "apps/web/src/markdown-links.test.ts"
     {
