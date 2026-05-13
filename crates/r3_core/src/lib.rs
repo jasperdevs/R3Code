@@ -6058,6 +6058,63 @@ pub struct SourceControlProviderErrorContract {
     pub detail: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChangeRequestState {
+    Open,
+    Closed,
+    Merged,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChangeRequest {
+    pub provider: SourceControlProviderKind,
+    pub number: u32,
+    pub title: String,
+    pub url: String,
+    pub base_ref_name: String,
+    pub head_ref_name: String,
+    pub state: ChangeRequestState,
+    pub updated_at: Option<String>,
+    pub is_cross_repository: Option<bool>,
+    pub head_repository_name_with_owner: Option<Option<String>>,
+    pub head_repository_owner_login: Option<Option<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlRepositoryCloneUrls {
+    pub name_with_owner: String,
+    pub url: String,
+    pub ssh_url: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceControlRepositoryVisibility {
+    Private,
+    Public,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlRepositoryInfo {
+    pub provider: SourceControlProviderKind,
+    pub name_with_owner: String,
+    pub url: String,
+    pub ssh_url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlChangeRequestSummary {
+    pub number: u32,
+    pub title: String,
+    pub url: String,
+    pub base_ref_name: String,
+    pub head_ref_name: String,
+    pub state: Option<ChangeRequestState>,
+    pub updated_at: Option<String>,
+    pub is_cross_repository: Option<bool>,
+    pub head_repository_name_with_owner: Option<Option<String>>,
+    pub head_repository_owner_login: Option<Option<String>>,
+}
+
 impl SourceControlProviderErrorContract {
     pub fn message(&self) -> String {
         format!(
@@ -6189,6 +6246,101 @@ pub fn source_control_provider_kind_contract_value(
     }
 }
 
+pub fn change_request_state_contract_value(state: ChangeRequestState) -> &'static str {
+    match state {
+        ChangeRequestState::Open => "open",
+        ChangeRequestState::Closed => "closed",
+        ChangeRequestState::Merged => "merged",
+    }
+}
+
+pub fn source_control_repository_visibility_contract_value(
+    visibility: SourceControlRepositoryVisibility,
+) -> &'static str {
+    match visibility {
+        SourceControlRepositoryVisibility::Private => "private",
+        SourceControlRepositoryVisibility::Public => "public",
+    }
+}
+
+fn source_control_change_request(
+    provider: SourceControlProviderKind,
+    summary: &SourceControlChangeRequestSummary,
+    state: ChangeRequestState,
+    updated_at: Option<String>,
+    force_cross_repository: Option<bool>,
+) -> ChangeRequest {
+    ChangeRequest {
+        provider,
+        number: summary.number,
+        title: summary.title.clone(),
+        url: summary.url.clone(),
+        base_ref_name: summary.base_ref_name.clone(),
+        head_ref_name: summary.head_ref_name.clone(),
+        state,
+        updated_at,
+        is_cross_repository: force_cross_repository.or(summary.is_cross_repository),
+        head_repository_name_with_owner: summary.head_repository_name_with_owner.clone(),
+        head_repository_owner_login: summary.head_repository_owner_login.clone(),
+    }
+}
+
+pub fn github_change_request_from_summary(
+    summary: &SourceControlChangeRequestSummary,
+) -> ChangeRequest {
+    source_control_change_request(
+        SourceControlProviderKind::Github,
+        summary,
+        summary.state.unwrap_or(ChangeRequestState::Open),
+        None,
+        None,
+    )
+}
+
+pub fn github_list_change_request_from_summary(
+    summary: &SourceControlChangeRequestSummary,
+) -> ChangeRequest {
+    let mut change_request = github_change_request_from_summary(summary);
+    change_request.updated_at = summary.updated_at.clone();
+    change_request
+}
+
+pub fn gitlab_change_request_from_summary(
+    summary: &SourceControlChangeRequestSummary,
+) -> ChangeRequest {
+    source_control_change_request(
+        SourceControlProviderKind::Gitlab,
+        summary,
+        summary.state.unwrap_or(ChangeRequestState::Open),
+        summary.updated_at.clone(),
+        None,
+    )
+}
+
+pub fn azure_devops_change_request_from_summary(
+    summary: &SourceControlChangeRequestSummary,
+) -> ChangeRequest {
+    source_control_change_request(
+        SourceControlProviderKind::AzureDevops,
+        summary,
+        summary.state.unwrap_or(ChangeRequestState::Open),
+        summary.updated_at.clone(),
+        Some(false),
+    )
+}
+
+pub fn bitbucket_change_request_from_summary(
+    summary: &SourceControlChangeRequestSummary,
+) -> ChangeRequest {
+    source_control_change_request(
+        SourceControlProviderKind::Bitbucket,
+        summary,
+        summary.state.unwrap_or(ChangeRequestState::Open),
+        summary.updated_at.clone(),
+        None,
+    )
+}
+
 pub fn parse_source_control_owner_ref(head_selector: &str) -> Option<SourceControlRefSelector> {
     let trimmed = head_selector.trim();
     let separator_index = trimmed.find(':')?;
@@ -6267,6 +6419,253 @@ pub fn source_control_provider_detection_error(
 fn trimmed_optional_string(value: Option<&str>) -> Option<String> {
     let trimmed = value?.trim();
     (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+fn json_object_value<'a>(value: &'a serde_json::Value, key: &str) -> Option<&'a serde_json::Value> {
+    value.as_object()?.get(key)
+}
+
+fn json_trimmed_string(value: &serde_json::Value, key: &str) -> Option<String> {
+    trimmed_optional_string(json_object_value(value, key)?.as_str())
+}
+
+fn json_positive_u32(value: &serde_json::Value, key: &str) -> Option<u32> {
+    let number = json_object_value(value, key)?.as_u64()?;
+    (number > 0 && number <= u32::MAX as u64).then_some(number as u32)
+}
+
+fn json_optional_date_time_string(value: &serde_json::Value, key: &str) -> Option<String> {
+    json_trimmed_string(value, key)
+}
+
+fn nested_json_trimmed_string(value: &serde_json::Value, path: &[&str]) -> Option<String> {
+    let mut current = value;
+    for key in path {
+        current = json_object_value(current, key)?;
+    }
+    trimmed_optional_string(current.as_str())
+}
+
+fn optional_null_string(value: Option<String>) -> Option<Option<String>> {
+    value.map(Some)
+}
+
+fn normalize_github_change_request_state(
+    state: Option<&str>,
+    merged_at: Option<&str>,
+) -> ChangeRequestState {
+    if trimmed_optional_string(merged_at).is_some()
+        || state
+            .map(str::trim)
+            .is_some_and(|state| state.eq_ignore_ascii_case("MERGED"))
+    {
+        return ChangeRequestState::Merged;
+    }
+    if state
+        .map(str::trim)
+        .is_some_and(|state| state.eq_ignore_ascii_case("CLOSED"))
+    {
+        return ChangeRequestState::Closed;
+    }
+    ChangeRequestState::Open
+}
+
+pub fn normalize_github_pull_request_record(
+    raw: &serde_json::Value,
+) -> Option<SourceControlChangeRequestSummary> {
+    let head_repository_name_with_owner =
+        nested_json_trimmed_string(raw, &["headRepository", "nameWithOwner"]);
+    let head_repository_owner_login =
+        nested_json_trimmed_string(raw, &["headRepositoryOwner", "login"]).or_else(|| {
+            head_repository_name_with_owner.as_ref().and_then(|name| {
+                name.split_once('/')
+                    .and_then(|(owner, _)| trimmed_optional_string(Some(owner)))
+            })
+        });
+
+    Some(SourceControlChangeRequestSummary {
+        number: json_positive_u32(raw, "number")?,
+        title: json_trimmed_string(raw, "title")?,
+        url: json_trimmed_string(raw, "url")?,
+        base_ref_name: json_trimmed_string(raw, "baseRefName")?,
+        head_ref_name: json_trimmed_string(raw, "headRefName")?,
+        state: Some(normalize_github_change_request_state(
+            json_object_value(raw, "state").and_then(serde_json::Value::as_str),
+            json_object_value(raw, "mergedAt").and_then(serde_json::Value::as_str),
+        )),
+        updated_at: json_optional_date_time_string(raw, "updatedAt"),
+        is_cross_repository: json_object_value(raw, "isCrossRepository")
+            .and_then(serde_json::Value::as_bool),
+        head_repository_name_with_owner: optional_null_string(head_repository_name_with_owner),
+        head_repository_owner_login: optional_null_string(head_repository_owner_login),
+    })
+}
+
+pub fn normalize_github_pull_request_list_json(
+    raw: &str,
+) -> Result<Vec<SourceControlChangeRequestSummary>, String> {
+    let value: serde_json::Value = serde_json::from_str(raw)
+        .map_err(|error| format!("GitHub CLI returned invalid change request JSON: {error}"))?;
+    let Some(items) = value.as_array() else {
+        return Err("GitHub CLI returned invalid change request JSON: expected array".to_string());
+    };
+    Ok(items
+        .iter()
+        .filter_map(normalize_github_pull_request_record)
+        .collect())
+}
+
+fn normalize_gitlab_change_request_state(state: Option<&str>) -> ChangeRequestState {
+    match state.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
+        Some("merged") => ChangeRequestState::Merged,
+        Some("closed") => ChangeRequestState::Closed,
+        _ => ChangeRequestState::Open,
+    }
+}
+
+fn gitlab_project_path_with_namespace(project: Option<&serde_json::Value>) -> Option<String> {
+    let project = project?;
+    json_trimmed_string(project, "path_with_namespace")
+        .or_else(|| json_trimmed_string(project, "pathWithNamespace"))
+        .or_else(|| nested_json_trimmed_string(project, &["namespace", "full_path"]))
+        .or_else(|| nested_json_trimmed_string(project, &["namespace", "fullPath"]))
+        .or_else(|| nested_json_trimmed_string(project, &["namespace", "path"]))
+}
+
+fn owner_login_from_path_with_namespace(path_with_namespace: Option<&str>) -> Option<String> {
+    path_with_namespace.and_then(|path| {
+        path.split('/')
+            .next()
+            .and_then(|owner| trimmed_optional_string(Some(owner)))
+    })
+}
+
+pub fn normalize_gitlab_merge_request_record(
+    raw: &serde_json::Value,
+) -> Option<SourceControlChangeRequestSummary> {
+    let source_project_path =
+        gitlab_project_path_with_namespace(json_object_value(raw, "source_project"));
+    let target_project_path =
+        gitlab_project_path_with_namespace(json_object_value(raw, "target_project"));
+    let source_project_id =
+        json_object_value(raw, "source_project_id").and_then(serde_json::Value::as_i64);
+    let target_project_id =
+        json_object_value(raw, "target_project_id").and_then(serde_json::Value::as_i64);
+    let is_cross_repository = match (source_project_id, target_project_id) {
+        (Some(source_project_id), Some(target_project_id)) => {
+            Some(source_project_id != target_project_id)
+        }
+        _ => match (&source_project_path, &target_project_path) {
+            (Some(source), Some(target)) => Some(!source.eq_ignore_ascii_case(target)),
+            _ => None,
+        },
+    };
+    let head_repository_owner_login =
+        owner_login_from_path_with_namespace(source_project_path.as_deref());
+
+    Some(SourceControlChangeRequestSummary {
+        number: json_positive_u32(raw, "iid")?,
+        title: json_trimmed_string(raw, "title")?,
+        url: json_trimmed_string(raw, "web_url")?,
+        base_ref_name: json_trimmed_string(raw, "target_branch")?,
+        head_ref_name: json_trimmed_string(raw, "source_branch")?,
+        state: Some(normalize_gitlab_change_request_state(
+            json_object_value(raw, "state").and_then(serde_json::Value::as_str),
+        )),
+        updated_at: json_optional_date_time_string(raw, "updated_at"),
+        is_cross_repository,
+        head_repository_name_with_owner: optional_null_string(source_project_path),
+        head_repository_owner_login: optional_null_string(head_repository_owner_login),
+    })
+}
+
+fn normalize_ref_name(ref_name: &str) -> String {
+    ref_name
+        .trim()
+        .strip_prefix("refs/heads/")
+        .unwrap_or(ref_name.trim())
+        .to_string()
+}
+
+fn normalize_azure_devops_change_request_state(status: &str) -> ChangeRequestState {
+    match status.trim().to_ascii_lowercase().as_str() {
+        "completed" => ChangeRequestState::Merged,
+        "abandoned" => ChangeRequestState::Closed,
+        _ => ChangeRequestState::Open,
+    }
+}
+
+pub fn normalize_azure_devops_pull_request_record(
+    raw: &serde_json::Value,
+) -> Option<SourceControlChangeRequestSummary> {
+    let web_url = nested_json_trimmed_string(raw, &["_links", "web", "href"])
+        .or_else(|| json_trimmed_string(raw, "url"))
+        .unwrap_or_default();
+    Some(SourceControlChangeRequestSummary {
+        number: json_positive_u32(raw, "pullRequestId")?,
+        title: json_trimmed_string(raw, "title")?,
+        url: web_url,
+        base_ref_name: normalize_ref_name(&json_trimmed_string(raw, "targetRefName")?),
+        head_ref_name: normalize_ref_name(&json_trimmed_string(raw, "sourceRefName")?),
+        state: Some(normalize_azure_devops_change_request_state(
+            &json_trimmed_string(raw, "status")?,
+        )),
+        updated_at: json_optional_date_time_string(raw, "closedDate")
+            .or_else(|| json_optional_date_time_string(raw, "creationDate")),
+        is_cross_repository: None,
+        head_repository_name_with_owner: None,
+        head_repository_owner_login: None,
+    })
+}
+
+fn normalize_bitbucket_change_request_state(state: Option<&str>) -> ChangeRequestState {
+    match state.map(str::trim).map(str::to_ascii_uppercase).as_deref() {
+        Some("MERGED") => ChangeRequestState::Merged,
+        Some("DECLINED") | Some("SUPERSEDED") => ChangeRequestState::Closed,
+        _ => ChangeRequestState::Open,
+    }
+}
+
+fn bitbucket_repository_owner(repository: Option<&serde_json::Value>) -> Option<String> {
+    let repository = repository?;
+    nested_json_trimmed_string(repository, &["workspace", "slug"]).or_else(|| {
+        json_trimmed_string(repository, "full_name").and_then(|full_name| {
+            full_name
+                .split_once('/')
+                .and_then(|(owner, _)| trimmed_optional_string(Some(owner)))
+        })
+    })
+}
+
+pub fn normalize_bitbucket_pull_request_record(
+    raw: &serde_json::Value,
+) -> Option<SourceControlChangeRequestSummary> {
+    let source_repository = nested_json_trimmed_string(raw, &["source", "repository", "full_name"]);
+    let destination_repository =
+        nested_json_trimmed_string(raw, &["destination", "repository", "full_name"]);
+    let is_cross_repository = match (&source_repository, &destination_repository) {
+        (Some(source), Some(destination)) if source != destination => Some(true),
+        _ => None,
+    };
+    let source_repository_value =
+        json_object_value(raw, "source").and_then(|source| json_object_value(source, "repository"));
+
+    Some(SourceControlChangeRequestSummary {
+        number: json_positive_u32(raw, "id")?,
+        title: json_trimmed_string(raw, "title")?,
+        url: nested_json_trimmed_string(raw, &["links", "html", "href"])?,
+        base_ref_name: nested_json_trimmed_string(raw, &["destination", "branch", "name"])?,
+        head_ref_name: nested_json_trimmed_string(raw, &["source", "branch", "name"])?,
+        state: Some(normalize_bitbucket_change_request_state(
+            json_object_value(raw, "state").and_then(serde_json::Value::as_str),
+        )),
+        updated_at: json_optional_date_time_string(raw, "updated_on"),
+        is_cross_repository,
+        head_repository_name_with_owner: optional_null_string(source_repository),
+        head_repository_owner_login: optional_null_string(bitbucket_repository_owner(
+            source_repository_value,
+        )),
+    })
 }
 
 pub fn source_control_provider_auth(
@@ -17670,6 +18069,184 @@ mod tests {
                 .map(|option| option.label)
                 .collect::<Vec<_>>(),
             vec!["VS Code Insiders", "VSCodium", "Explorer"]
+        );
+    }
+
+    #[test]
+    fn source_control_change_request_contracts_match_upstream_mappers() {
+        assert_eq!(
+            change_request_state_contract_value(ChangeRequestState::Merged),
+            "merged"
+        );
+        assert_eq!(
+            source_control_repository_visibility_contract_value(
+                SourceControlRepositoryVisibility::Private
+            ),
+            "private"
+        );
+
+        let github_summary = SourceControlChangeRequestSummary {
+            number: 42,
+            title: "Add composer refs".to_string(),
+            url: "https://github.com/pingdotgg/t3code/pull/42".to_string(),
+            base_ref_name: "main".to_string(),
+            head_ref_name: "feature/composer".to_string(),
+            state: None,
+            updated_at: Some("2026-05-13T00:00:00Z".to_string()),
+            is_cross_repository: Some(true),
+            head_repository_name_with_owner: Some(Some("fork/t3code".to_string())),
+            head_repository_owner_login: Some(Some("fork".to_string())),
+        };
+        assert_eq!(
+            github_change_request_from_summary(&github_summary),
+            ChangeRequest {
+                provider: SourceControlProviderKind::Github,
+                number: 42,
+                title: "Add composer refs".to_string(),
+                url: "https://github.com/pingdotgg/t3code/pull/42".to_string(),
+                base_ref_name: "main".to_string(),
+                head_ref_name: "feature/composer".to_string(),
+                state: ChangeRequestState::Open,
+                updated_at: None,
+                is_cross_repository: Some(true),
+                head_repository_name_with_owner: Some(Some("fork/t3code".to_string())),
+                head_repository_owner_login: Some(Some("fork".to_string())),
+            }
+        );
+        assert_eq!(
+            github_list_change_request_from_summary(&github_summary).updated_at,
+            Some("2026-05-13T00:00:00Z".to_string())
+        );
+
+        let gitlab_summary = SourceControlChangeRequestSummary {
+            state: None,
+            updated_at: Some("2026-05-12T23:59:00Z".to_string()),
+            ..github_summary.clone()
+        };
+        let gitlab_change_request = gitlab_change_request_from_summary(&gitlab_summary);
+        assert_eq!(
+            gitlab_change_request.provider,
+            SourceControlProviderKind::Gitlab
+        );
+        assert_eq!(gitlab_change_request.state, ChangeRequestState::Open);
+        assert_eq!(
+            gitlab_change_request.updated_at.as_deref(),
+            Some("2026-05-12T23:59:00Z")
+        );
+
+        let azure_change_request = azure_devops_change_request_from_summary(&gitlab_summary);
+        assert_eq!(
+            azure_change_request.provider,
+            SourceControlProviderKind::AzureDevops
+        );
+        assert_eq!(azure_change_request.is_cross_repository, Some(false));
+
+        let bitbucket_change_request = bitbucket_change_request_from_summary(&gitlab_summary);
+        assert_eq!(
+            bitbucket_change_request.provider,
+            SourceControlProviderKind::Bitbucket
+        );
+        assert_eq!(bitbucket_change_request.is_cross_repository, Some(true));
+
+        let github_raw = serde_json::json!({
+            "number": 7,
+            "title": "Fix session",
+            "url": "https://github.com/pingdotgg/t3code/pull/7",
+            "baseRefName": "main",
+            "headRefName": "patch",
+            "state": "CLOSED",
+            "mergedAt": "2026-05-12T20:00:00Z",
+            "updatedAt": "2026-05-12T20:01:00Z",
+            "isCrossRepository": true,
+            "headRepository": { "nameWithOwner": "octo/t3code" },
+            "headRepositoryOwner": { "login": " " }
+        });
+        let github_normalized = normalize_github_pull_request_record(&github_raw).unwrap();
+        assert_eq!(github_normalized.state, Some(ChangeRequestState::Merged));
+        assert_eq!(
+            github_normalized.head_repository_owner_login,
+            Some(Some("octo".to_string()))
+        );
+        assert_eq!(
+            normalize_github_pull_request_list_json(
+                r#"[{"number":1,"title":"One","url":"u","baseRefName":"main","headRefName":"h"},{"number":0},{"number":2,"title":"Two","url":"u","baseRefName":"main","headRefName":"h","state":"CLOSED"}]"#
+            )
+            .unwrap()
+            .iter()
+            .map(|summary| (summary.number, summary.state))
+            .collect::<Vec<_>>(),
+            vec![
+                (1, Some(ChangeRequestState::Open)),
+                (2, Some(ChangeRequestState::Closed))
+            ]
+        );
+
+        let gitlab_raw = serde_json::json!({
+            "iid": 8,
+            "title": "MR",
+            "web_url": "https://gitlab.com/group/project/-/merge_requests/8",
+            "source_branch": "feature",
+            "target_branch": "main",
+            "state": "closed",
+            "updated_at": "2026-05-12T21:00:00Z",
+            "source_project_id": 1,
+            "target_project_id": 2,
+            "source_project": { "pathWithNamespace": "Group/Fork" },
+            "target_project": { "path_with_namespace": "group/project" }
+        });
+        let gitlab_normalized = normalize_gitlab_merge_request_record(&gitlab_raw).unwrap();
+        assert_eq!(gitlab_normalized.state, Some(ChangeRequestState::Closed));
+        assert_eq!(gitlab_normalized.is_cross_repository, Some(true));
+        assert_eq!(
+            gitlab_normalized.head_repository_owner_login,
+            Some(Some("Group".to_string()))
+        );
+
+        let azure_raw = serde_json::json!({
+            "pullRequestId": 9,
+            "title": "Azure PR",
+            "url": "https://dev.azure.com/acme/project/_git/repo/pullrequest/9",
+            "sourceRefName": "refs/heads/users/jasper/feature",
+            "targetRefName": "refs/heads/main",
+            "status": "completed",
+            "creationDate": "2026-05-12T18:00:00Z",
+            "closedDate": "2026-05-12T19:00:00Z",
+            "_links": { "web": { "href": "https://dev.azure.com/acme/project/_git/repo/pullrequest/9/web" } }
+        });
+        let azure_normalized = normalize_azure_devops_pull_request_record(&azure_raw).unwrap();
+        assert_eq!(azure_normalized.state, Some(ChangeRequestState::Merged));
+        assert_eq!(azure_normalized.base_ref_name, "main");
+        assert_eq!(azure_normalized.head_ref_name, "users/jasper/feature");
+        assert_eq!(
+            azure_normalized.updated_at.as_deref(),
+            Some("2026-05-12T19:00:00Z")
+        );
+
+        let bitbucket_raw = serde_json::json!({
+            "id": 10,
+            "title": "BB PR",
+            "state": "DECLINED",
+            "updated_on": "2026-05-12T17:00:00Z",
+            "links": { "html": { "href": "https://bitbucket.org/team/repo/pull-requests/10" } },
+            "source": {
+                "repository": { "full_name": "fork/repo", "workspace": { "slug": "fork" } },
+                "branch": { "name": "feature" }
+            },
+            "destination": {
+                "repository": { "full_name": "team/repo" },
+                "branch": { "name": "main" }
+            }
+        });
+        let bitbucket_normalized = normalize_bitbucket_pull_request_record(&bitbucket_raw).unwrap();
+        assert_eq!(bitbucket_normalized.state, Some(ChangeRequestState::Closed));
+        assert_eq!(bitbucket_normalized.is_cross_repository, Some(true));
+        assert_eq!(
+            bitbucket_normalized.head_repository_name_with_owner,
+            Some(Some("fork/repo".to_string()))
+        );
+        assert_eq!(
+            bitbucket_normalized.head_repository_owner_login,
+            Some(Some("fork".to_string()))
         );
     }
 
