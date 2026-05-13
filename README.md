@@ -11,6 +11,13 @@ cargo check --workspace
 cargo run -p r3_app
 ```
 
+On macOS, GPUI compiles Metal shaders during the build. If `cargo check` fails
+with a missing Metal Toolchain error, install Apple’s Metal toolchain:
+
+```text
+xcodebuild -downloadComponent MetalToolchain
+```
+
 Theme follows the OS by default. For screenshots or manual checks, set `R3CODE_THEME` to `light`, `dark`, or `system`.
 
 ## Parity

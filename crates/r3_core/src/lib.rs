@@ -8667,6 +8667,18 @@ pub fn is_linux_platform(platform: &str) -> bool {
     platform.to_ascii_lowercase().contains("linux")
 }
 
+pub fn current_platform_name() -> &'static str {
+    if cfg!(target_os = "macos") {
+        "macOS"
+    } else if cfg!(target_os = "windows") {
+        "Windows"
+    } else if cfg!(target_os = "linux") {
+        "Linux"
+    } else {
+        std::env::consts::OS
+    }
+}
+
 pub fn keybinding_from_keyboard_event(
     event: KeybindingKeyboardEvent<'_>,
     platform: &str,
@@ -17528,14 +17540,18 @@ pub fn resolve_and_persist_preferred_editor(
     }
 }
 
-fn editor_options(platform: &str) -> Vec<EditorOption> {
-    let file_manager_label = if platform.to_ascii_lowercase().contains("win") {
+pub fn file_manager_label_for_platform(platform: &str) -> &'static str {
+    if platform.to_ascii_lowercase().contains("win") {
         "Explorer"
-    } else if platform.to_ascii_lowercase().contains("mac") {
+    } else if is_mac_platform(platform) {
         "Finder"
     } else {
         "Files"
-    };
+    }
+}
+
+fn editor_options(platform: &str) -> Vec<EditorOption> {
+    let file_manager_label = file_manager_label_for_platform(platform);
 
     vec![
         EditorOption {
@@ -39452,6 +39468,15 @@ mod tests {
                 .map(|option| option.label)
                 .collect::<Vec<_>>(),
             vec!["VS Code Insiders", "VSCodium", "Explorer"]
+        );
+
+        let mac_options = resolve_editor_options("macOS", &[EditorId::FileManager]);
+        assert_eq!(
+            mac_options
+                .iter()
+                .map(|option| option.label)
+                .collect::<Vec<_>>(),
+            vec!["Finder"]
         );
     }
 

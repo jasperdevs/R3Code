@@ -206,7 +206,8 @@ pub fn resolve_relative_path_within_root(
             detail: "path must be non-empty and at most 512 characters".to_string(),
         });
     }
-    let input_path = Path::new(trimmed);
+    let normalized_input = trimmed.replace('\\', "/");
+    let input_path = Path::new(&normalized_input);
     if input_path.is_absolute() {
         return Err(WorkspaceError::PathOutsideRoot {
             workspace_root: workspace_root.to_string_lossy().to_string(),
