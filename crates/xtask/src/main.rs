@@ -1792,6 +1792,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core provider_instance_helpers_match_upstream_contract`; `cargo test -p r3_core provider_instance_projection_matches_upstream_logic`",
             "Wire helpers into every live GPUI provider instance picker, settings row, model list, and composer routing path.",
         )
+    } else if path == "apps/web/src/providerModels.ts" {
+        (
+            "provider model helpers for driver label formatting, default-instance model lookup, provider display fallback, interaction toggle defaulting, enabled checks, selectable-provider fallback, model capabilities, and default server model selection in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core provider_models_helpers_match_upstream_contract`",
+            "Wire helpers into live GPUI provider settings, composer provider state, provider model capability descriptors, and picker defaults.",
+        )
     } else if path == "apps/web/src/pendingUserInput.ts"
         || path == "apps/web/src/pendingUserInput.test.ts"
     {

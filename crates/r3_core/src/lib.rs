@@ -3981,12 +3981,44 @@ pub struct ServerProviderAuth {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderOptionChoice {
+    pub id: String,
+    pub label: String,
+    pub description: Option<String>,
+    pub is_default: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderOptionDescriptor {
+    Select {
+        id: String,
+        label: String,
+        description: Option<String>,
+        options: Vec<ProviderOptionChoice>,
+        current_value: Option<String>,
+        prompt_injected_values: Vec<String>,
+    },
+    Boolean {
+        id: String,
+        label: String,
+        description: Option<String>,
+        current_value: Option<bool>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ModelCapabilities {
+    pub option_descriptors: Vec<ProviderOptionDescriptor>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerProviderModel {
     pub slug: String,
     pub name: String,
     pub short_name: Option<String>,
     pub sub_provider: Option<String>,
     pub is_custom: bool,
+    pub capabilities: Option<ModelCapabilities>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -5427,6 +5459,30 @@ pub fn get_provider_models(
         .unwrap_or_default()
 }
 
+pub fn get_provider_display_name(providers: &[ServerProvider], provider: &str) -> String {
+    get_provider_snapshot(providers, provider)
+        .and_then(|snapshot| snapshot.display_name.as_deref())
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| format_provider_driver_kind_label(provider))
+}
+
+pub fn get_provider_interaction_mode_toggle(providers: &[ServerProvider], provider: &str) -> bool {
+    get_provider_snapshot(providers, provider)
+        .map(|snapshot| snapshot.show_interaction_mode_toggle)
+        .unwrap_or(true)
+}
+
+pub fn is_provider_enabled(providers: &[ServerProvider], provider: &str) -> bool {
+    if providers.is_empty() {
+        return true;
+    }
+    get_provider_snapshot(providers, provider)
+        .map(|snapshot| snapshot.enabled)
+        .unwrap_or(false)
+}
+
 pub fn resolve_selectable_provider(providers: &[ServerProvider], provider: Option<&str>) -> String {
     if let Some(requested) = provider.and_then(|provider| {
         providers
@@ -5454,6 +5510,21 @@ pub fn get_default_server_model(providers: &[ServerProvider], provider: &str) ->
         .map(|model| model.slug.clone())
         .or_else(|| default_model_by_provider(provider).map(str::to_string))
         .unwrap_or_else(|| DEFAULT_MODEL.to_string())
+}
+
+pub fn get_provider_model_capabilities(
+    models: &[ServerProviderModel],
+    model: Option<&str>,
+    provider: &str,
+) -> ModelCapabilities {
+    let Some(slug) = normalize_model_slug(model, provider) else {
+        return ModelCapabilities::default();
+    };
+    models
+        .iter()
+        .find(|candidate| candidate.slug == slug)
+        .and_then(|candidate| candidate.capabilities.clone())
+        .unwrap_or_default()
 }
 
 pub fn resolve_selectable_provider_instance(
@@ -21678,6 +21749,7 @@ impl AppSnapshot {
                         short_name: None,
                         sub_provider: None,
                         is_custom: false,
+                        capabilities: None,
                     },
                     ServerProviderModel {
                         slug: "gpt-5.4".to_string(),
@@ -21685,6 +21757,7 @@ impl AppSnapshot {
                         short_name: None,
                         sub_provider: None,
                         is_custom: false,
+                        capabilities: None,
                     },
                     ServerProviderModel {
                         slug: "gpt-5.4-mini".to_string(),
@@ -21692,6 +21765,7 @@ impl AppSnapshot {
                         short_name: None,
                         sub_provider: None,
                         is_custom: false,
+                        capabilities: None,
                     },
                     ServerProviderModel {
                         slug: "gpt-5.3-codex".to_string(),
@@ -21699,6 +21773,7 @@ impl AppSnapshot {
                         short_name: None,
                         sub_provider: None,
                         is_custom: false,
+                        capabilities: None,
                     },
                     ServerProviderModel {
                         slug: "gpt-5.3-codex-spark".to_string(),
@@ -21706,6 +21781,7 @@ impl AppSnapshot {
                         short_name: None,
                         sub_provider: None,
                         is_custom: false,
+                        capabilities: None,
                     },
                     ServerProviderModel {
                         slug: "gpt-5.2".to_string(),
@@ -21713,6 +21789,7 @@ impl AppSnapshot {
                         short_name: None,
                         sub_provider: None,
                         is_custom: false,
+                        capabilities: None,
                     },
                 ],
                 version_advisory: Some(ServerProviderVersionAdvisory {
@@ -21755,6 +21832,7 @@ impl AppSnapshot {
                         short_name: Some("5.4".to_string()),
                         sub_provider: None,
                         is_custom: false,
+                        capabilities: None,
                     },
                     ServerProviderModel {
                         slug: "internal-review".to_string(),
@@ -21762,6 +21840,7 @@ impl AppSnapshot {
                         short_name: None,
                         sub_provider: Some("OpenAI".to_string()),
                         is_custom: true,
+                        capabilities: None,
                     },
                 ],
                 version_advisory: Some(ServerProviderVersionAdvisory {
@@ -21804,6 +21883,7 @@ impl AppSnapshot {
                         short_name: Some("Sonnet 4.6".to_string()),
                         sub_provider: None,
                         is_custom: false,
+                        capabilities: None,
                     },
                     ServerProviderModel {
                         slug: "claude-haiku-4-5".to_string(),
@@ -21811,6 +21891,7 @@ impl AppSnapshot {
                         short_name: Some("Haiku 4.5".to_string()),
                         sub_provider: None,
                         is_custom: false,
+                        capabilities: None,
                     },
                 ],
                 version_advisory: None,
@@ -21844,6 +21925,7 @@ impl AppSnapshot {
                     short_name: Some("Composer".to_string()),
                     sub_provider: None,
                     is_custom: false,
+                    capabilities: None,
                 }],
                 version_advisory: None,
                 update_state: None,
@@ -21876,6 +21958,7 @@ impl AppSnapshot {
                     short_name: Some("GPT-5".to_string()),
                     sub_provider: Some("OpenAI".to_string()),
                     is_custom: false,
+                    capabilities: None,
                 }],
                 version_advisory: None,
                 update_state: None,
@@ -31254,6 +31337,7 @@ mod tests {
                 short_name: Some("Sonnet".to_string()),
                 sub_provider: None,
                 is_custom: false,
+                capabilities: None,
             }];
         });
         let unavailable = make_server_provider(|provider| {
@@ -31327,6 +31411,110 @@ mod tests {
         assert_eq!(
             resolve_selectable_provider_instance(&no_sendable, Some("removed_instance")),
             None
+        );
+    }
+
+    #[test]
+    fn provider_models_helpers_match_upstream_contract() {
+        let effort_descriptor = ProviderOptionDescriptor::Boolean {
+            id: "fastMode".to_string(),
+            label: "Fast Mode".to_string(),
+            description: None,
+            current_value: Some(true),
+        };
+        let providers = vec![
+            make_server_provider(|provider| {
+                provider.instance_id = "codex".to_string();
+                provider.driver = "codex".to_string();
+                provider.display_name = Some("  Codex Work  ".to_string());
+                provider.show_interaction_mode_toggle = false;
+                provider.models = vec![
+                    ServerProviderModel {
+                        slug: "custom-first".to_string(),
+                        name: "Custom First".to_string(),
+                        short_name: None,
+                        sub_provider: None,
+                        is_custom: true,
+                        capabilities: None,
+                    },
+                    ServerProviderModel {
+                        slug: "gpt-5.4".to_string(),
+                        name: "GPT-5.4".to_string(),
+                        short_name: Some("5.4".to_string()),
+                        sub_provider: None,
+                        is_custom: false,
+                        capabilities: Some(ModelCapabilities {
+                            option_descriptors: vec![effort_descriptor.clone()],
+                        }),
+                    },
+                ];
+            }),
+            make_server_provider(|provider| {
+                provider.instance_id = "codex_personal".to_string();
+                provider.driver = "codex".to_string();
+                provider.display_name = Some("Personal".to_string());
+                provider.enabled = true;
+            }),
+            make_server_provider(|provider| {
+                provider.instance_id = "claudeAgent".to_string();
+                provider.driver = "claudeAgent".to_string();
+                provider.display_name = Some("   ".to_string());
+                provider.enabled = false;
+            }),
+        ];
+
+        assert_eq!(
+            format_provider_driver_kind_label("claudeAgent"),
+            "Claude Agent"
+        );
+        assert_eq!(
+            get_provider_snapshot(&providers, "codex")
+                .map(|provider| provider.instance_id.as_str()),
+            Some("codex")
+        );
+        assert_eq!(
+            get_provider_models(&providers, "codex")
+                .into_iter()
+                .map(|model| model.slug)
+                .collect::<Vec<_>>(),
+            vec!["custom-first", "gpt-5.4"]
+        );
+        assert_eq!(get_provider_display_name(&providers, "codex"), "Codex Work");
+        assert_eq!(
+            get_provider_display_name(&providers, "claudeAgent"),
+            "Claude Agent"
+        );
+        assert!(!get_provider_interaction_mode_toggle(&providers, "codex"));
+        assert!(get_provider_interaction_mode_toggle(&providers, "missing"));
+        assert!(is_provider_enabled(&[], "codex"));
+        assert!(!is_provider_enabled(&providers, "claudeAgent"));
+        assert_eq!(
+            resolve_selectable_provider(&providers, Some("codex_personal")),
+            "codex"
+        );
+        assert_eq!(
+            resolve_selectable_provider(&providers, Some("missing")),
+            "codex"
+        );
+        assert_eq!(get_default_server_model(&providers, "codex"), "gpt-5.4");
+        assert_eq!(get_default_server_model(&[], "opencode"), "openai/gpt-5");
+        assert_eq!(
+            get_provider_model_capabilities(
+                &get_provider_models(&providers, "codex"),
+                Some("5.4"),
+                "codex",
+            )
+            .option_descriptors,
+            vec![effort_descriptor]
+        );
+        assert!(
+            get_provider_model_capabilities(
+                &get_provider_models(&providers, "codex"),
+                Some("missing"),
+                "codex",
+            )
+            .option_descriptors
+            .is_empty()
         );
     }
 
@@ -35100,6 +35288,7 @@ mod tests {
                     short_name: None,
                     sub_provider: None,
                     is_custom: false,
+                    capabilities: None,
                 })
                 .collect(),
             version_advisory: None,

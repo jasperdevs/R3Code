@@ -5086,6 +5086,7 @@ impl R3Shell {
                                         short_name: model.short_name.clone(),
                                         sub_provider: model.sub_provider.clone(),
                                         is_custom: false,
+                                        capabilities: None,
                                     },
                                     !state.is_locked,
                                 )),
