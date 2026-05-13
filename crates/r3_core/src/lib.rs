@@ -891,6 +891,61 @@ pub fn button_variant_class_name(variant: ButtonVariant) -> &'static str {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldControlSize {
+    Default,
+    Sm,
+    Lg,
+    Number,
+}
+
+pub const INPUT_CONTROL_SLOT: &str = "input-control";
+pub const INPUT_SLOT: &str = "input";
+pub const INPUT_DEFAULT_SIZE: FieldControlSize = FieldControlSize::Default;
+pub const INPUT_DEFAULT_UNSTYLED: bool = false;
+pub const INPUT_DEFAULT_NATIVE_INPUT: bool = false;
+pub const INPUT_CONTROL_CLASS_NAME: &str = "relative inline-flex w-full rounded-lg border border-input bg-background not-dark:bg-clip-padding text-base text-foreground shadow-xs/5 ring-ring/24 transition-shadow before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] not-has-disabled:not-has-focus-visible:not-has-aria-invalid:before:shadow-[0_1px_--theme(--color-black/4%)] has-focus-visible:has-aria-invalid:border-destructive/64 has-focus-visible:has-aria-invalid:ring-destructive/16 has-aria-invalid:border-destructive/36 has-focus-visible:border-ring has-autofill:bg-foreground/4 has-disabled:opacity-64 has-[:disabled,:focus-visible,[aria-invalid]]:shadow-none has-focus-visible:ring-[3px] sm:text-sm dark:bg-input/32 dark:has-autofill:bg-foreground/8 dark:has-aria-invalid:ring-destructive/24 dark:not-has-disabled:not-has-focus-visible:not-has-aria-invalid:before:shadow-[0_-1px_--theme(--color-white/6%)]";
+pub const INPUT_BASE_CLASS_NAME: &str = "h-8.5 w-full min-w-0 rounded-[inherit] px-[calc(--spacing(3)-1px)] leading-8.5 outline-none placeholder:text-muted-foreground/72 sm:h-7.5 sm:leading-7.5 [transition:background-color_5000000s_ease-in-out_0s]";
+pub const INPUT_SM_CLASS_NAME: &str =
+    "h-7.5 px-[calc(--spacing(2.5)-1px)] leading-7.5 sm:h-6.5 sm:leading-6.5";
+pub const INPUT_LG_CLASS_NAME: &str = "h-9.5 leading-9.5 sm:h-8.5 sm:leading-8.5";
+pub const INPUT_SEARCH_CLASS_NAME: &str = "[&::-webkit-search-cancel-button]:appearance-none [&::-webkit-search-decoration]:appearance-none [&::-webkit-search-results-button]:appearance-none [&::-webkit-search-results-decoration]:appearance-none";
+pub const INPUT_FILE_CLASS_NAME: &str = "text-muted-foreground file:me-3 file:bg-transparent file:font-medium file:text-foreground file:text-sm";
+
+pub fn input_size_class_name(size: FieldControlSize) -> Option<&'static str> {
+    match size {
+        FieldControlSize::Default | FieldControlSize::Number => None,
+        FieldControlSize::Sm => Some(INPUT_SM_CLASS_NAME),
+        FieldControlSize::Lg => Some(INPUT_LG_CLASS_NAME),
+    }
+}
+
+pub fn input_type_class_name(input_type: &str) -> Option<&'static str> {
+    match input_type {
+        "search" => Some(INPUT_SEARCH_CLASS_NAME),
+        "file" => Some(INPUT_FILE_CLASS_NAME),
+        _ => None,
+    }
+}
+
+pub const TEXTAREA_CONTROL_SLOT: &str = "textarea-control";
+pub const TEXTAREA_SLOT: &str = "textarea";
+pub const TEXTAREA_DEFAULT_SIZE: FieldControlSize = FieldControlSize::Default;
+pub const TEXTAREA_DEFAULT_UNSTYLED: bool = false;
+pub const TEXTAREA_CONTROL_CLASS_NAME: &str = "relative inline-flex w-full rounded-lg border border-input bg-background not-dark:bg-clip-padding text-base text-foreground shadow-xs/5 ring-ring/24 transition-shadow before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] has-focus-visible:has-aria-invalid:border-destructive/64 has-focus-visible:has-aria-invalid:ring-destructive/16 has-aria-invalid:border-destructive/36 has-focus-visible:border-ring has-disabled:opacity-64 has-[:disabled,:focus-visible,[aria-invalid]]:shadow-none has-focus-visible:ring-[3px] not-has-disabled:has-not-focus-visible:not-has-aria-invalid:before:shadow-[0_1px_--theme(--color-black/4%)] sm:text-sm dark:bg-input/32 dark:has-aria-invalid:ring-destructive/24 dark:not-has-disabled:has-not-focus-visible:not-has-aria-invalid:before:shadow-[0_-1px_--theme(--color-white/6%)]";
+pub const TEXTAREA_BASE_CLASS_NAME: &str = "field-sizing-content min-h-17.5 w-full rounded-[inherit] px-[calc(--spacing(3)-1px)] py-[calc(--spacing(1.5)-1px)] outline-none max-sm:min-h-20.5";
+pub const TEXTAREA_SM_CLASS_NAME: &str =
+    "min-h-16.5 px-[calc(--spacing(2.5)-1px)] py-[calc(--spacing(1)-1px)] max-sm:min-h-19.5";
+pub const TEXTAREA_LG_CLASS_NAME: &str = "min-h-18.5 py-[calc(--spacing(2)-1px)] max-sm:min-h-21.5";
+
+pub fn textarea_size_class_name(size: FieldControlSize) -> Option<&'static str> {
+    match size {
+        FieldControlSize::Default | FieldControlSize::Number => None,
+        FieldControlSize::Sm => Some(TEXTAREA_SM_CLASS_NAME),
+        FieldControlSize::Lg => Some(TEXTAREA_LG_CLASS_NAME),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmptyMediaVariant {
     Default,
     Icon,
@@ -36950,6 +37005,71 @@ mod tests {
             button_variant_class_name(ButtonVariant::Secondary),
             "border-transparent bg-secondary text-secondary-foreground [:active,[data-pressed]]:bg-secondary/80 [:hover,[data-pressed]]:bg-secondary/90"
         );
+    }
+
+    #[test]
+    fn input_and_textarea_primitive_contracts_match_upstream_components() {
+        assert_eq!(INPUT_CONTROL_SLOT, "input-control");
+        assert_eq!(INPUT_SLOT, "input");
+        assert_eq!(INPUT_DEFAULT_SIZE, FieldControlSize::Default);
+        assert!(!INPUT_DEFAULT_UNSTYLED);
+        assert!(!INPUT_DEFAULT_NATIVE_INPUT);
+        assert_eq!(
+            INPUT_CONTROL_CLASS_NAME,
+            "relative inline-flex w-full rounded-lg border border-input bg-background not-dark:bg-clip-padding text-base text-foreground shadow-xs/5 ring-ring/24 transition-shadow before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] not-has-disabled:not-has-focus-visible:not-has-aria-invalid:before:shadow-[0_1px_--theme(--color-black/4%)] has-focus-visible:has-aria-invalid:border-destructive/64 has-focus-visible:has-aria-invalid:ring-destructive/16 has-aria-invalid:border-destructive/36 has-focus-visible:border-ring has-autofill:bg-foreground/4 has-disabled:opacity-64 has-[:disabled,:focus-visible,[aria-invalid]]:shadow-none has-focus-visible:ring-[3px] sm:text-sm dark:bg-input/32 dark:has-autofill:bg-foreground/8 dark:has-aria-invalid:ring-destructive/24 dark:not-has-disabled:not-has-focus-visible:not-has-aria-invalid:before:shadow-[0_-1px_--theme(--color-white/6%)]"
+        );
+        assert_eq!(
+            INPUT_BASE_CLASS_NAME,
+            "h-8.5 w-full min-w-0 rounded-[inherit] px-[calc(--spacing(3)-1px)] leading-8.5 outline-none placeholder:text-muted-foreground/72 sm:h-7.5 sm:leading-7.5 [transition:background-color_5000000s_ease-in-out_0s]"
+        );
+        assert_eq!(
+            input_size_class_name(FieldControlSize::Sm),
+            Some("h-7.5 px-[calc(--spacing(2.5)-1px)] leading-7.5 sm:h-6.5 sm:leading-6.5")
+        );
+        assert_eq!(
+            input_size_class_name(FieldControlSize::Lg),
+            Some("h-9.5 leading-9.5 sm:h-8.5 sm:leading-8.5")
+        );
+        assert_eq!(input_size_class_name(FieldControlSize::Default), None);
+        assert_eq!(input_size_class_name(FieldControlSize::Number), None);
+        assert_eq!(
+            input_type_class_name("search"),
+            Some(
+                "[&::-webkit-search-cancel-button]:appearance-none [&::-webkit-search-decoration]:appearance-none [&::-webkit-search-results-button]:appearance-none [&::-webkit-search-results-decoration]:appearance-none"
+            )
+        );
+        assert_eq!(
+            input_type_class_name("file"),
+            Some(
+                "text-muted-foreground file:me-3 file:bg-transparent file:font-medium file:text-foreground file:text-sm"
+            )
+        );
+        assert_eq!(input_type_class_name("text"), None);
+
+        assert_eq!(TEXTAREA_CONTROL_SLOT, "textarea-control");
+        assert_eq!(TEXTAREA_SLOT, "textarea");
+        assert_eq!(TEXTAREA_DEFAULT_SIZE, FieldControlSize::Default);
+        assert!(!TEXTAREA_DEFAULT_UNSTYLED);
+        assert_eq!(
+            TEXTAREA_CONTROL_CLASS_NAME,
+            "relative inline-flex w-full rounded-lg border border-input bg-background not-dark:bg-clip-padding text-base text-foreground shadow-xs/5 ring-ring/24 transition-shadow before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] has-focus-visible:has-aria-invalid:border-destructive/64 has-focus-visible:has-aria-invalid:ring-destructive/16 has-aria-invalid:border-destructive/36 has-focus-visible:border-ring has-disabled:opacity-64 has-[:disabled,:focus-visible,[aria-invalid]]:shadow-none has-focus-visible:ring-[3px] not-has-disabled:has-not-focus-visible:not-has-aria-invalid:before:shadow-[0_1px_--theme(--color-black/4%)] sm:text-sm dark:bg-input/32 dark:has-aria-invalid:ring-destructive/24 dark:not-has-disabled:has-not-focus-visible:not-has-aria-invalid:before:shadow-[0_-1px_--theme(--color-white/6%)]"
+        );
+        assert_eq!(
+            TEXTAREA_BASE_CLASS_NAME,
+            "field-sizing-content min-h-17.5 w-full rounded-[inherit] px-[calc(--spacing(3)-1px)] py-[calc(--spacing(1.5)-1px)] outline-none max-sm:min-h-20.5"
+        );
+        assert_eq!(
+            textarea_size_class_name(FieldControlSize::Sm),
+            Some(
+                "min-h-16.5 px-[calc(--spacing(2.5)-1px)] py-[calc(--spacing(1)-1px)] max-sm:min-h-19.5"
+            )
+        );
+        assert_eq!(
+            textarea_size_class_name(FieldControlSize::Lg),
+            Some("min-h-18.5 py-[calc(--spacing(2)-1px)] max-sm:min-h-21.5")
+        );
+        assert_eq!(textarea_size_class_name(FieldControlSize::Default), None);
+        assert_eq!(textarea_size_class_name(FieldControlSize::Number), None);
     }
 
     #[test]

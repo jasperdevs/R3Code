@@ -2744,6 +2744,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace button_primitive_contract_matches_upstream_component`; current screenshot gates where captured",
             "Maintain this primitive contract if upstream changes Button styling, sizes, variants, or render defaults.",
         )
+    } else if path == "apps/web/src/components/ui/input.tsx"
+        || path == "apps/web/src/components/ui/textarea.tsx"
+    {
+        (
+            "Input and Textarea primitive control/field data slots, default props, wrapper classes, inner field classes, size class branches, and search/file type class branches in crates/r3_core/src/lib.rs",
+            "covered",
+            "`cargo test --workspace input_and_textarea_primitive_contracts_match_upstream_components`; current screenshot gates where captured",
+            "Maintain these primitive contracts if upstream changes Input or Textarea sizing, control styling, native-input behavior, or file/search branches.",
+        )
     } else if path == "apps/web/src/components/ui/kbd.tsx"
         || path == "apps/web/src/components/ui/label.tsx"
         || path == "apps/web/src/components/ui/separator.tsx"
