@@ -216,6 +216,32 @@ pub struct ThreadScopedToastData {
     pub thread_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ShortcutModifierState {
+    pub meta_key: bool,
+    pub ctrl_key: bool,
+    pub alt_key: bool,
+    pub shift_key: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShortcutModifierKey {
+    Meta,
+    Ctrl,
+    Alt,
+    Shift,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeyboardModifierEvent {
+    pub event_type: String,
+    pub key: String,
+    pub meta_key: bool,
+    pub ctrl_key: bool,
+    pub alt_key: bool,
+    pub shift_key: bool,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WsConnectionUiState {
     Connected,
@@ -2128,6 +2154,57 @@ pub fn should_render_thread_scoped_toast(
     };
     active_thread_ref
         .is_some_and(|active_thread_ref| active_thread_ref.thread_id == *toast_thread_id)
+}
+
+pub fn are_shortcut_modifier_states_equal(
+    left: ShortcutModifierState,
+    right: ShortcutModifierState,
+) -> bool {
+    left == right
+}
+
+pub fn normalize_modifier_key(key: &str) -> Option<ShortcutModifierKey> {
+    match key {
+        "Meta" | "OS" | "Command" => Some(ShortcutModifierKey::Meta),
+        "Control" => Some(ShortcutModifierKey::Ctrl),
+        "Alt" | "Option" => Some(ShortcutModifierKey::Alt),
+        "Shift" => Some(ShortcutModifierKey::Shift),
+        _ => None,
+    }
+}
+
+pub fn sync_shortcut_modifier_state_from_keyboard_event(
+    current: ShortcutModifierState,
+    event: &KeyboardModifierEvent,
+) -> ShortcutModifierState {
+    if let Some(modifier_key) = normalize_modifier_key(&event.key) {
+        let pressed = event.event_type == "keydown";
+        return match modifier_key {
+            ShortcutModifierKey::Meta => ShortcutModifierState {
+                meta_key: pressed,
+                ..current
+            },
+            ShortcutModifierKey::Ctrl => ShortcutModifierState {
+                ctrl_key: pressed,
+                ..current
+            },
+            ShortcutModifierKey::Alt => ShortcutModifierState {
+                alt_key: pressed,
+                ..current
+            },
+            ShortcutModifierKey::Shift => ShortcutModifierState {
+                shift_key: pressed,
+                ..current
+            },
+        };
+    }
+
+    ShortcutModifierState {
+        meta_key: event.meta_key,
+        ctrl_key: event.ctrl_key,
+        alt_key: event.alt_key,
+        shift_key: event.shift_key,
+    }
 }
 
 pub fn initial_ws_connection_status(online: bool) -> WsConnectionStatus {
@@ -26117,6 +26194,136 @@ mod tests {
             None,
             Some(&active_thread_ref)
         ));
+    }
+
+    #[test]
+    fn shortcut_modifier_state_matches_upstream_keyboard_logic() {
+        assert!(are_shortcut_modifier_states_equal(
+            ShortcutModifierState {
+                meta_key: false,
+                ctrl_key: true,
+                alt_key: false,
+                shift_key: true,
+            },
+            ShortcutModifierState {
+                meta_key: false,
+                ctrl_key: true,
+                alt_key: false,
+                shift_key: true,
+            }
+        ));
+        assert!(!are_shortcut_modifier_states_equal(
+            ShortcutModifierState {
+                meta_key: false,
+                ctrl_key: true,
+                alt_key: false,
+                shift_key: true,
+            },
+            ShortcutModifierState {
+                meta_key: false,
+                ctrl_key: false,
+                alt_key: false,
+                shift_key: true,
+            }
+        ));
+
+        assert_eq!(
+            normalize_modifier_key("Meta"),
+            Some(ShortcutModifierKey::Meta)
+        );
+        assert_eq!(
+            normalize_modifier_key("OS"),
+            Some(ShortcutModifierKey::Meta)
+        );
+        assert_eq!(
+            normalize_modifier_key("Command"),
+            Some(ShortcutModifierKey::Meta)
+        );
+        assert_eq!(
+            normalize_modifier_key("Control"),
+            Some(ShortcutModifierKey::Ctrl)
+        );
+        assert_eq!(
+            normalize_modifier_key("Alt"),
+            Some(ShortcutModifierKey::Alt)
+        );
+        assert_eq!(
+            normalize_modifier_key("Option"),
+            Some(ShortcutModifierKey::Alt)
+        );
+        assert_eq!(
+            normalize_modifier_key("Shift"),
+            Some(ShortcutModifierKey::Shift)
+        );
+        assert_eq!(normalize_modifier_key("Enter"), None);
+
+        let event = |event_type: &str,
+                     key: &str,
+                     meta_key: bool,
+                     ctrl_key: bool,
+                     alt_key: bool,
+                     shift_key: bool| KeyboardModifierEvent {
+            event_type: event_type.to_string(),
+            key: key.to_string(),
+            meta_key,
+            ctrl_key,
+            alt_key,
+            shift_key,
+        };
+        let mut state = ShortcutModifierState::default();
+        state = sync_shortcut_modifier_state_from_keyboard_event(
+            state,
+            &event("keydown", "Meta", false, false, false, false),
+        );
+        assert_eq!(
+            state,
+            ShortcutModifierState {
+                meta_key: true,
+                ..ShortcutModifierState::default()
+            }
+        );
+        state = sync_shortcut_modifier_state_from_keyboard_event(
+            state,
+            &event("keydown", "Shift", true, false, false, false),
+        );
+        assert_eq!(
+            state,
+            ShortcutModifierState {
+                meta_key: true,
+                shift_key: true,
+                ..ShortcutModifierState::default()
+            }
+        );
+        state = sync_shortcut_modifier_state_from_keyboard_event(
+            state,
+            &event("keyup", "Meta", true, false, false, true),
+        );
+        assert_eq!(
+            state,
+            ShortcutModifierState {
+                shift_key: true,
+                ..ShortcutModifierState::default()
+            }
+        );
+        state = sync_shortcut_modifier_state_from_keyboard_event(
+            state,
+            &event("keyup", "Shift", false, false, false, true),
+        );
+        assert_eq!(state, ShortcutModifierState::default());
+
+        let non_modifier = sync_shortcut_modifier_state_from_keyboard_event(
+            state,
+            &event("keydown", "a", true, false, true, false),
+        );
+        assert_eq!(
+            non_modifier,
+            ShortcutModifierState {
+                meta_key: true,
+                ctrl_key: false,
+                alt_key: true,
+                shift_key: false,
+            }
+        );
     }
 
     #[test]

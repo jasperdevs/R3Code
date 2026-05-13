@@ -1759,6 +1759,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core diagnostics_state_constants`",
             "Wire helpers into live GPUI diagnostics SWR loading and refresh controls.",
         )
+    } else if path == "apps/web/src/shortcutModifierState.ts"
+        || path == "apps/web/src/shortcutModifierState.test.ts"
+    {
+        (
+            "shortcut modifier equality, key normalization, and keyboard-event sync helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core shortcut_modifier_state`",
+            "Wire helpers into live GPUI keyboard modifier tracking.",
+        )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
             "logical project path normalization, physical/grouping/order keys, repository-scoped keys, settings override resolution, ref fallback, and group-label helpers in crates/r3_core/src/lib.rs",
