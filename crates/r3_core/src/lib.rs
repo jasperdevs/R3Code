@@ -6357,6 +6357,12 @@ pub struct SourceControlProviderDiscoveryItem {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlDiscoveryResult {
+    pub version_control_systems: Vec<VcsDiscoveryItem>,
+    pub source_control_providers: Vec<SourceControlProviderDiscoveryItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceControlProcessPlan {
     pub operation: &'static str,
     pub command: String,
@@ -8746,6 +8752,16 @@ pub fn source_control_vcs_probe_missing_item(
         version: None,
         install_hint: spec.install_hint.to_string(),
         detail: trimmed_optional_string(detail),
+    }
+}
+
+pub fn source_control_discovery_result(
+    version_control_systems: Vec<VcsDiscoveryItem>,
+    source_control_providers: Vec<SourceControlProviderDiscoveryItem>,
+) -> SourceControlDiscoveryResult {
+    SourceControlDiscoveryResult {
+        version_control_systems,
+        source_control_providers,
     }
 }
 
@@ -21317,6 +21333,47 @@ mod tests {
             host: None,
             detail: None,
         };
+        let discovery_result = source_control_discovery_result(
+            vec![
+                source_control_vcs_probe_available_item(&vcs_specs[0], "git version 2.51.0\n", ""),
+                source_control_vcs_probe_missing_item(&vcs_specs[1], Some("jj not found")),
+            ],
+            vec![source_control_api_provider_discovery_item(
+                &bitbucket_api_discovery_spec(),
+                authenticated.clone(),
+            )],
+        );
+        assert_eq!(
+            discovery_result
+                .version_control_systems
+                .iter()
+                .map(|item| (item.kind, item.implemented, item.status))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    VcsDriverKind::Git,
+                    true,
+                    SourceControlDiscoveryStatus::Available
+                ),
+                (
+                    VcsDriverKind::Jj,
+                    false,
+                    SourceControlDiscoveryStatus::Missing
+                ),
+            ]
+        );
+        assert_eq!(
+            discovery_result
+                .source_control_providers
+                .iter()
+                .map(|item| (item.kind, item.status, item.auth.status))
+                .collect::<Vec<_>>(),
+            vec![(
+                SourceControlProviderKind::Bitbucket,
+                SourceControlDiscoveryStatus::Available,
+                SourceControlProviderAuthStatus::Authenticated,
+            )]
+        );
         assert_eq!(
             source_control_auth_presentation(&authenticated),
             SourceControlAuthPresentation {
