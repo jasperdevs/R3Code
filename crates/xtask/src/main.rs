@@ -1845,6 +1845,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core ws_rpc_client`; `cargo test -p r3_core shared::tests::ports_shared_git_and_source_control_helpers`",
             "Wire facade bindings into the live GPUI websocket transport client and end-to-end subscription/request execution.",
         )
+    } else if path == "apps/web/src/rpc/wsTransport.ts"
+        || path == "apps/web/src/rpc/wsTransport.test.ts"
+    {
+        (
+            "websocket transport session lifecycle, disposed request/reconnect errors, reconnect tracked-request clearing, heartbeat freshness, active-session gating, intentional close detection, stream retry delay, transport-versus-application failure retry decisions, one-time disconnect warnings, listener-error swallowing, and onResubscribe tag gating in crates/r3_core/src/rpc.rs",
+            "partial",
+            "`cargo test -p r3_core ws_transport`; `cargo test -p r3_core transport_error_filtering_matches_upstream_patterns`; `cargo test -p r3_core ws_rpc_protocol`",
+            "Wire the pure transport state machine into live Effect ManagedRuntime sessions, Scope close/dispose ordering, websocket callbacks, and end-to-end RPC stream execution.",
+        )
     } else if path == "apps/web/src/markdown-links.ts"
         || path == "apps/web/src/markdown-links.test.ts"
     {

@@ -4,8 +4,9 @@ use crate::{
     WS_RECONNECT_MAX_RETRIES, WsConnectionMetadata, WsConnectionStatus, acknowledge_rpc_request,
     clear_all_tracked_rpc_requests, default_resolved_keybindings,
     get_ws_reconnect_delay_ms_for_retry, initial_rpc_ack_latency_state,
-    initial_ws_connection_status, record_ws_connection_attempt, record_ws_connection_closed_at,
-    record_ws_connection_errored_at, record_ws_connection_opened_at, track_rpc_request_sent_at,
+    initial_ws_connection_status, is_transport_connection_error_message,
+    record_ws_connection_attempt, record_ws_connection_closed_at, record_ws_connection_errored_at,
+    record_ws_connection_opened_at, track_rpc_request_sent_at,
 };
 use serde_json::{Value, json};
 
@@ -1660,6 +1661,244 @@ pub fn ws_rpc_client_git_stream_result<T: Clone>(result: Option<T>) -> Result<T,
     result.ok_or(GIT_ACTION_STREAM_MISSING_FINAL_RESULT_ERROR)
 }
 
+pub const DEFAULT_SUBSCRIPTION_RETRY_DELAY_MS: u64 = 250;
+pub const WS_TRANSPORT_DISPOSED_ERROR: &str = "Transport disposed";
+pub const WS_TRANSPORT_SUBSCRIPTION_FAILED_WARNING: &str = "WebSocket RPC subscription failed";
+pub const WS_TRANSPORT_SUBSCRIPTION_DISCONNECTED_WARNING: &str =
+    "WebSocket RPC subscription disconnected";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WsTransportState {
+    pub disposed: bool,
+    pub has_reported_transport_disconnect: bool,
+    pub intentional_close_depth: usize,
+    pub next_session_id: usize,
+    pub active_session_id: usize,
+    pub last_heartbeat_pong_at_ms: i64,
+    pub latency_state: RpcAckLatencyState,
+}
+
+impl WsTransportState {
+    pub fn new() -> Self {
+        Self {
+            disposed: false,
+            has_reported_transport_disconnect: false,
+            intentional_close_depth: 0,
+            next_session_id: 1,
+            active_session_id: 1,
+            last_heartbeat_pong_at_ms: 0,
+            latency_state: initial_rpc_ack_latency_state(),
+        }
+    }
+}
+
+impl Default for WsTransportState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WsTransportReconnectOutcome {
+    pub state: WsTransportState,
+    pub previous_session_id: usize,
+    pub new_session_id: usize,
+    pub clears_tracked_rpc_requests: bool,
+    pub closes_previous_session_before_dispose: bool,
+}
+
+pub fn ws_transport_request_allowed(state: &WsTransportState) -> Result<usize, &'static str> {
+    if state.disposed {
+        Err(WS_TRANSPORT_DISPOSED_ERROR)
+    } else {
+        Ok(state.active_session_id)
+    }
+}
+
+pub fn ws_transport_reconnect(
+    state: &WsTransportState,
+) -> Result<WsTransportReconnectOutcome, &'static str> {
+    if state.disposed {
+        return Err(WS_TRANSPORT_DISPOSED_ERROR);
+    }
+
+    let previous_session_id = state.active_session_id;
+    let new_session_id = state.next_session_id + 1;
+    let mut next = state.clone();
+    next.latency_state = clear_all_tracked_rpc_requests(&next.latency_state);
+    next.last_heartbeat_pong_at_ms = 0;
+    next.next_session_id = new_session_id;
+    next.active_session_id = new_session_id;
+
+    Ok(WsTransportReconnectOutcome {
+        state: next,
+        previous_session_id,
+        new_session_id,
+        clears_tracked_rpc_requests: true,
+        closes_previous_session_before_dispose: true,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WsTransportDisposeOutcome {
+    pub state: WsTransportState,
+    pub closed_session_id: Option<usize>,
+    pub idempotent_noop: bool,
+}
+
+pub fn ws_transport_dispose(state: &WsTransportState) -> WsTransportDisposeOutcome {
+    if state.disposed {
+        return WsTransportDisposeOutcome {
+            state: state.clone(),
+            closed_session_id: None,
+            idempotent_noop: true,
+        };
+    }
+
+    let mut next = state.clone();
+    next.disposed = true;
+    WsTransportDisposeOutcome {
+        state: next,
+        closed_session_id: Some(state.active_session_id),
+        idempotent_noop: false,
+    }
+}
+
+pub fn ws_transport_lifecycle_is_active(state: &WsTransportState, session_id: usize) -> bool {
+    !state.disposed && state.active_session_id == session_id
+}
+
+pub fn ws_transport_close_is_intentional(
+    state: &WsTransportState,
+    custom_handler_intentional: bool,
+) -> bool {
+    state.disposed || state.intentional_close_depth > 0 || custom_handler_intentional
+}
+
+pub fn ws_transport_record_heartbeat_pong(
+    state: &WsTransportState,
+    now_ms: i64,
+) -> WsTransportState {
+    let mut next = state.clone();
+    next.last_heartbeat_pong_at_ms = now_ms;
+    next
+}
+
+pub fn ws_transport_is_heartbeat_fresh(
+    state: &WsTransportState,
+    now_ms: i64,
+    max_age_ms: i64,
+) -> bool {
+    state.last_heartbeat_pong_at_ms > 0 && now_ms - state.last_heartbeat_pong_at_ms <= max_age_ms
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WsTransportSubscriptionAction {
+    ContinueWithCurrentSession,
+    RetryAfterDelay,
+    StopAfterApplicationFailure,
+    StopInactive,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WsTransportSubscriptionFailureOutcome {
+    pub state: WsTransportState,
+    pub action: WsTransportSubscriptionAction,
+    pub warning: Option<&'static str>,
+    pub retry_delay_ms: Option<u64>,
+}
+
+pub fn ws_transport_subscription_failure(
+    state: &WsTransportState,
+    failed_session_id: usize,
+    active: bool,
+    error_message: &str,
+    retry_delay_ms: Option<u64>,
+) -> WsTransportSubscriptionFailureOutcome {
+    if !active || state.disposed {
+        return WsTransportSubscriptionFailureOutcome {
+            state: state.clone(),
+            action: WsTransportSubscriptionAction::StopInactive,
+            warning: None,
+            retry_delay_ms: None,
+        };
+    }
+
+    if failed_session_id != state.active_session_id {
+        return WsTransportSubscriptionFailureOutcome {
+            state: state.clone(),
+            action: WsTransportSubscriptionAction::ContinueWithCurrentSession,
+            warning: None,
+            retry_delay_ms: None,
+        };
+    }
+
+    if !is_transport_connection_error_message(Some(error_message)) {
+        return WsTransportSubscriptionFailureOutcome {
+            state: state.clone(),
+            action: WsTransportSubscriptionAction::StopAfterApplicationFailure,
+            warning: Some(WS_TRANSPORT_SUBSCRIPTION_FAILED_WARNING),
+            retry_delay_ms: None,
+        };
+    }
+
+    let mut next = state.clone();
+    let warning = if next.has_reported_transport_disconnect {
+        None
+    } else {
+        next.has_reported_transport_disconnect = true;
+        Some(WS_TRANSPORT_SUBSCRIPTION_DISCONNECTED_WARNING)
+    };
+
+    WsTransportSubscriptionFailureOutcome {
+        state: next,
+        action: WsTransportSubscriptionAction::RetryAfterDelay,
+        warning,
+        retry_delay_ms: Some(retry_delay_ms.unwrap_or(DEFAULT_SUBSCRIPTION_RETRY_DELAY_MS)),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WsTransportStreamValueOutcome {
+    pub state: WsTransportState,
+    pub mark_value_received: bool,
+    pub deliver_to_listener: bool,
+    pub listener_errors_are_swallowed: bool,
+}
+
+pub fn ws_transport_stream_value_received(
+    state: &WsTransportState,
+    active: bool,
+) -> WsTransportStreamValueOutcome {
+    if !active || state.disposed {
+        return WsTransportStreamValueOutcome {
+            state: state.clone(),
+            mark_value_received: false,
+            deliver_to_listener: false,
+            listener_errors_are_swallowed: true,
+        };
+    }
+
+    let mut next = state.clone();
+    next.has_reported_transport_disconnect = false;
+    WsTransportStreamValueOutcome {
+        state: next,
+        mark_value_received: true,
+        deliver_to_listener: true,
+        listener_errors_are_swallowed: true,
+    }
+}
+
+pub fn ws_transport_should_fire_on_resubscribe(
+    active: bool,
+    has_received_value: bool,
+    request_tag: Option<&str>,
+    info_stream: bool,
+    info_tag: &str,
+) -> bool {
+    active && has_received_value && info_stream && request_tag.is_none_or(|tag| tag == info_tag)
+}
+
 pub const WS_RPC_PROTOCOL_SOCKET_PATH: &str = "/ws";
 pub const WS_RPC_PROTOCOL_SERIALIZATION_LAYER: &str = "RpcSerialization.layerJson";
 pub const WS_RPC_PROTOCOL_RETRY_TRANSIENT_ERRORS: bool = true;
@@ -2962,6 +3201,189 @@ mod tests {
             ws_rpc_client_git_stream_result::<&str>(None),
             Err("Git action stream completed without a final result.")
         );
+    }
+
+    #[test]
+    fn ws_transport_session_reconnect_dispose_and_heartbeat_match_upstream() {
+        let mut state = WsTransportState::new();
+        assert_eq!(state.active_session_id, 1);
+        assert_eq!(state.next_session_id, 1);
+        assert_eq!(ws_transport_request_allowed(&state), Ok(1));
+        assert!(ws_transport_lifecycle_is_active(&state, 1));
+        assert!(!ws_transport_lifecycle_is_active(&state, 2));
+
+        state.latency_state = track_rpc_request_sent_at(
+            &state.latency_state,
+            "rpc-1",
+            "server.getConfig",
+            0,
+            "2026-05-13T07:00:00.000Z",
+        );
+        state = ws_transport_record_heartbeat_pong(&state, 1_000);
+        assert!(ws_transport_is_heartbeat_fresh(&state, 10_000, 15_000));
+        assert!(!ws_transport_is_heartbeat_fresh(&state, 20_001, 15_000));
+
+        let reconnected = ws_transport_reconnect(&state).unwrap();
+        assert_eq!(reconnected.previous_session_id, 1);
+        assert_eq!(reconnected.new_session_id, 2);
+        assert!(reconnected.clears_tracked_rpc_requests);
+        assert!(reconnected.closes_previous_session_before_dispose);
+        assert_eq!(reconnected.state.latency_state.pending_requests, Vec::new());
+        assert_eq!(reconnected.state.last_heartbeat_pong_at_ms, 0);
+        assert!(ws_transport_lifecycle_is_active(&reconnected.state, 2));
+        assert!(!ws_transport_lifecycle_is_active(&reconnected.state, 1));
+
+        let mut closing = reconnected.state.clone();
+        closing.intentional_close_depth = 1;
+        assert!(ws_transport_close_is_intentional(&closing, false));
+        closing.intentional_close_depth = 0;
+        assert!(ws_transport_close_is_intentional(&closing, true));
+        assert!(!ws_transport_close_is_intentional(&closing, false));
+
+        let disposed = ws_transport_dispose(&closing);
+        assert_eq!(disposed.closed_session_id, Some(2));
+        assert!(!disposed.idempotent_noop);
+        assert_eq!(
+            ws_transport_request_allowed(&disposed.state),
+            Err("Transport disposed")
+        );
+        assert!(ws_transport_close_is_intentional(&disposed.state, false));
+        assert_eq!(
+            ws_transport_reconnect(&disposed.state),
+            Err("Transport disposed")
+        );
+        let disposed_again = ws_transport_dispose(&disposed.state);
+        assert!(disposed_again.idempotent_noop);
+        assert_eq!(disposed_again.closed_session_id, None);
+    }
+
+    #[test]
+    fn ws_transport_subscription_retry_logic_matches_upstream() {
+        let state = WsTransportState::new();
+
+        let app_failure =
+            ws_transport_subscription_failure(&state, 1, true, "Schema decode failed", None);
+        assert_eq!(
+            app_failure.action,
+            WsTransportSubscriptionAction::StopAfterApplicationFailure
+        );
+        assert_eq!(
+            app_failure.warning,
+            Some("WebSocket RPC subscription failed")
+        );
+        assert_eq!(app_failure.retry_delay_ms, None);
+
+        let first_transport_failure =
+            ws_transport_subscription_failure(&state, 1, true, "SocketCloseError: closed", None);
+        assert_eq!(
+            first_transport_failure.action,
+            WsTransportSubscriptionAction::RetryAfterDelay
+        );
+        assert_eq!(
+            first_transport_failure.warning,
+            Some("WebSocket RPC subscription disconnected")
+        );
+        assert_eq!(
+            first_transport_failure.retry_delay_ms,
+            Some(DEFAULT_SUBSCRIPTION_RETRY_DELAY_MS)
+        );
+        assert!(
+            first_transport_failure
+                .state
+                .has_reported_transport_disconnect
+        );
+
+        let repeated_transport_failure = ws_transport_subscription_failure(
+            &first_transport_failure.state,
+            1,
+            true,
+            "SocketOpenError: failed",
+            Some(750),
+        );
+        assert_eq!(
+            repeated_transport_failure.action,
+            WsTransportSubscriptionAction::RetryAfterDelay
+        );
+        assert_eq!(repeated_transport_failure.warning, None);
+        assert_eq!(repeated_transport_failure.retry_delay_ms, Some(750));
+
+        let stale = ws_transport_subscription_failure(
+            &repeated_transport_failure.state,
+            0,
+            true,
+            "SocketCloseError: stale",
+            None,
+        );
+        assert_eq!(
+            stale.action,
+            WsTransportSubscriptionAction::ContinueWithCurrentSession
+        );
+
+        let inactive = ws_transport_subscription_failure(
+            &repeated_transport_failure.state,
+            1,
+            false,
+            "SocketCloseError: inactive",
+            None,
+        );
+        assert_eq!(inactive.action, WsTransportSubscriptionAction::StopInactive);
+
+        let value = ws_transport_stream_value_received(&repeated_transport_failure.state, true);
+        assert!(value.mark_value_received);
+        assert!(value.deliver_to_listener);
+        assert!(value.listener_errors_are_swallowed);
+        assert!(!value.state.has_reported_transport_disconnect);
+
+        let ignored_value = ws_transport_stream_value_received(&value.state, false);
+        assert!(!ignored_value.mark_value_received);
+        assert!(!ignored_value.deliver_to_listener);
+        assert!(ignored_value.listener_errors_are_swallowed);
+    }
+
+    #[test]
+    fn ws_transport_resubscribe_callback_gating_matches_upstream() {
+        assert!(!ws_transport_should_fire_on_resubscribe(
+            true,
+            false,
+            Some("subscribeServerConfig"),
+            true,
+            "subscribeServerConfig",
+        ));
+        assert!(!ws_transport_should_fire_on_resubscribe(
+            true,
+            true,
+            Some("subscribeServerConfig"),
+            false,
+            "subscribeServerConfig",
+        ));
+        assert!(!ws_transport_should_fire_on_resubscribe(
+            true,
+            true,
+            Some("subscribeServerConfig"),
+            true,
+            "subscribeTerminalEvents",
+        ));
+        assert!(!ws_transport_should_fire_on_resubscribe(
+            false,
+            true,
+            Some("subscribeServerConfig"),
+            true,
+            "subscribeServerConfig",
+        ));
+        assert!(ws_transport_should_fire_on_resubscribe(
+            true,
+            true,
+            Some("subscribeServerConfig"),
+            true,
+            "subscribeServerConfig",
+        ));
+        assert!(ws_transport_should_fire_on_resubscribe(
+            true,
+            true,
+            None,
+            true,
+            "subscribeTerminalEvents",
+        ));
     }
 
     #[test]
