@@ -2477,6 +2477,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace sidebar_project_grouping_matches_upstream_contract`; `cargo test --workspace logical_project_helpers_match_upstream_grouping_rules`; `cargo test --workspace environment_grouping_selectors_match_upstream_contract`",
             "Wire remaining live sidebar rendering, drag/reorder persistence, context menus, thread previews, and exact GPUI navigation states.",
         )
+    } else if path == "apps/web/src/components/ThreadTerminalDrawer.test.ts"
+        || path == "apps/web/src/components/ThreadTerminalDrawer.tsx"
+    {
+        (
+            "ThreadTerminalDrawer terminal selection action positioning, multi-click delay, mouseup gate, snapshot replay filtering, and pending-event replay filtering in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace thread_terminal_drawer_selection_actions_match_upstream_contract`; `cargo test --workspace terminal_activity_and_event_filters_match_upstream_helpers`",
+            "Wire remaining live xterm selection capture, helper textarea behavior, terminal drawer rendering, and exact GPUI action chip placement.",
+        )
     } else if path == "apps/web/src/components/chat/ComposerPrimaryActions.test.ts"
         || path == "apps/web/src/components/chat/ComposerPrimaryActions.tsx"
     {

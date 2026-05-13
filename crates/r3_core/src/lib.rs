@@ -24683,6 +24683,66 @@ pub struct TerminalEventEntry {
     pub event: TerminalEvent,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TerminalSelectionActionBounds {
+    pub left: f64,
+    pub top: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TerminalSelectionRect {
+    pub right: f64,
+    pub bottom: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TerminalSelectionPointer {
+    pub x: f64,
+    pub y: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TerminalSelectionActionPosition {
+    pub x: f64,
+    pub y: f64,
+}
+
+pub const TERMINAL_SELECTION_MULTI_CLICK_ACTION_DELAY_MS: u64 = 260;
+
+pub fn resolve_terminal_selection_action_position(
+    bounds: TerminalSelectionActionBounds,
+    selection_rect: Option<TerminalSelectionRect>,
+    pointer: TerminalSelectionPointer,
+) -> TerminalSelectionActionPosition {
+    if let Some(selection_rect) = selection_rect {
+        return TerminalSelectionActionPosition {
+            x: selection_rect.right,
+            y: selection_rect.bottom + 4.0,
+        };
+    }
+    TerminalSelectionActionPosition {
+        x: pointer.x.clamp(bounds.left, bounds.left + bounds.width),
+        y: pointer.y.clamp(bounds.top, bounds.top + bounds.height),
+    }
+}
+
+pub fn terminal_selection_action_delay_for_click_count(click_count: u32) -> u64 {
+    if click_count > 1 {
+        TERMINAL_SELECTION_MULTI_CLICK_ACTION_DELAY_MS
+    } else {
+        0
+    }
+}
+
+pub fn should_handle_terminal_selection_mouse_up(
+    selection_started_in_terminal: bool,
+    button: u16,
+) -> bool {
+    selection_started_in_terminal && button == 0
+}
+
 pub fn terminal_group_id(terminal_id: &str) -> String {
     format!("group-{terminal_id}")
 }
@@ -43736,6 +43796,59 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![2, 3]
         );
+    }
+
+    #[test]
+    fn thread_terminal_drawer_selection_actions_match_upstream_contract() {
+        let bounds = TerminalSelectionActionBounds {
+            left: 100.0,
+            top: 50.0,
+            width: 500.0,
+            height: 220.0,
+        };
+        assert_eq!(
+            resolve_terminal_selection_action_position(
+                bounds,
+                Some(TerminalSelectionRect {
+                    right: 260.0,
+                    bottom: 140.0,
+                }),
+                TerminalSelectionPointer { x: 520.0, y: 200.0 },
+            ),
+            TerminalSelectionActionPosition { x: 260.0, y: 144.0 }
+        );
+        assert_eq!(
+            resolve_terminal_selection_action_position(
+                bounds,
+                None,
+                TerminalSelectionPointer { x: 180.0, y: 130.0 },
+            ),
+            TerminalSelectionActionPosition { x: 180.0, y: 130.0 }
+        );
+        assert_eq!(
+            resolve_terminal_selection_action_position(
+                bounds,
+                None,
+                TerminalSelectionPointer { x: 720.0, y: 340.0 },
+            ),
+            TerminalSelectionActionPosition { x: 600.0, y: 270.0 }
+        );
+        assert_eq!(
+            resolve_terminal_selection_action_position(
+                bounds,
+                None,
+                TerminalSelectionPointer { x: 40.0, y: 20.0 },
+            ),
+            TerminalSelectionActionPosition { x: 100.0, y: 50.0 }
+        );
+
+        assert_eq!(terminal_selection_action_delay_for_click_count(1), 0);
+        assert_eq!(terminal_selection_action_delay_for_click_count(2), 260);
+        assert_eq!(terminal_selection_action_delay_for_click_count(3), 260);
+
+        assert!(should_handle_terminal_selection_mouse_up(true, 0));
+        assert!(!should_handle_terminal_selection_mouse_up(false, 0));
+        assert!(!should_handle_terminal_selection_mouse_up(true, 1));
     }
 
     #[test]
