@@ -6137,6 +6137,32 @@ pub fn parse_pairing_url_fields(input: &str) -> Option<RemotePairingFields> {
     })
 }
 
+pub fn get_pairing_token_from_url(input: &str) -> Option<String> {
+    ParsedPairingUrl::parse(input.trim())?
+        .pairing_token()
+        .map(|token| token.trim().to_string())
+}
+
+pub fn strip_pairing_token_from_url(input: &str) -> Option<String> {
+    let mut parts = PairingUrlRewriteParts::parse(input.trim())?;
+    parts.query = rewrite_url_params_without_name(parts.query.as_deref(), "token");
+    if parts
+        .hash
+        .as_deref()
+        .is_some_and(|hash| url_params_has_name(hash, "token"))
+    {
+        parts.hash = rewrite_url_params_without_name(parts.hash.as_deref(), "token");
+    }
+    Some(parts.render())
+}
+
+pub fn set_pairing_token_on_url(input: &str, credential: &str) -> Option<String> {
+    let mut parts = PairingUrlRewriteParts::parse(input.trim())?;
+    parts.query = rewrite_url_params_without_name(parts.query.as_deref(), "token");
+    parts.hash = Some(format!("token={}", form_url_encode_component(credential)));
+    Some(parts.render())
+}
+
 pub fn parse_remote_pairing_fields(
     host: &str,
     pairing_code: &str,
@@ -7636,6 +7662,46 @@ struct ParsedPairingUrl {
     hash: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PairingUrlRewriteParts {
+    base: String,
+    query: Option<String>,
+    hash: Option<String>,
+}
+
+impl PairingUrlRewriteParts {
+    fn parse(input: &str) -> Option<Self> {
+        if input.is_empty() {
+            return None;
+        }
+        let (before_hash, hash) = input
+            .split_once('#')
+            .map(|(base, hash)| (base, Some(hash.to_string())))
+            .unwrap_or((input, None));
+        let (base, query) = before_hash
+            .split_once('?')
+            .map(|(base, query)| (base.to_string(), Some(query.to_string())))
+            .unwrap_or((before_hash.to_string(), None));
+        if base.is_empty() {
+            return None;
+        }
+        Some(Self { base, query, hash })
+    }
+
+    fn render(&self) -> String {
+        let mut output = self.base.clone();
+        if let Some(query) = self.query.as_ref().filter(|query| !query.is_empty()) {
+            output.push('?');
+            output.push_str(query);
+        }
+        if let Some(hash) = self.hash.as_ref().filter(|hash| !hash.is_empty()) {
+            output.push('#');
+            output.push_str(hash);
+        }
+        output
+    }
+}
+
 impl ParsedPairingUrl {
     fn parse(input: &str) -> Option<Self> {
         if input.is_empty() {
@@ -7723,6 +7789,34 @@ fn get_url_param(params: &str, name: &str) -> Option<String> {
         let (key, value) = part.split_once('=').unwrap_or((part, ""));
         (percent_decode_form_component(key) == name).then(|| percent_decode_form_component(value))
     })
+}
+
+fn url_params_has_name(params: &str, name: &str) -> bool {
+    params.split('&').any(|part| {
+        let (key, _) = part.split_once('=').unwrap_or((part, ""));
+        percent_decode_form_component(key) == name
+    })
+}
+
+fn rewrite_url_params_without_name(params: Option<&str>, name: &str) -> Option<String> {
+    let params = params?;
+    let rewritten = params
+        .split('&')
+        .filter(|part| !part.is_empty())
+        .filter_map(|part| {
+            let (key, value) = part.split_once('=').unwrap_or((part, ""));
+            let key = percent_decode_form_component(key);
+            (key != name).then(|| {
+                format!(
+                    "{}={}",
+                    form_url_encode_component(&key),
+                    form_url_encode_component(&percent_decode_form_component(value))
+                )
+            })
+        })
+        .collect::<Vec<_>>()
+        .join("&");
+    (!rewritten.is_empty()).then_some(rewritten)
 }
 
 fn percent_decode_form_component(value: &str) -> String {
@@ -11247,6 +11341,35 @@ mod tests {
 
     #[test]
     fn parses_remote_pairing_fields_from_urls_and_manual_fields() {
+        assert_eq!(
+            get_pairing_token_from_url(
+                "https://remote.example.com/pair?token=search#token=%20hash+token%20"
+            )
+            .as_deref(),
+            Some("hash token")
+        );
+        assert_eq!(
+            get_pairing_token_from_url(
+                "https://remote.example.com/pair?%74%6F%6B%65%6E=search%2Dtoken#token=+++"
+            )
+            .as_deref(),
+            Some("search-token")
+        );
+        assert_eq!(
+            strip_pairing_token_from_url(
+                "https://remote.example.com/pair?token=search&next=a+b#token=hash&mode=remote"
+            )
+            .as_deref(),
+            Some("https://remote.example.com/pair?next=a+b#mode=remote")
+        );
+        assert_eq!(
+            set_pairing_token_on_url(
+                "https://remote.example.com/pair?token=old&next=1#mode=remote",
+                "PAIR CODE"
+            )
+            .as_deref(),
+            Some("https://remote.example.com/pair?next=1#token=PAIR+CODE")
+        );
         assert_eq!(
             parse_remote_pairing_fields("https://remote.example.com/pair#token=pairing-token", "")
                 .unwrap(),
