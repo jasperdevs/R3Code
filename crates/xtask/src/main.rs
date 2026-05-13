@@ -1869,6 +1869,22 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core worktree_cleanup_helpers`",
             "Wire helpers into live GPUI thread/worktree deletion flow.",
         )
+    } else if path == "apps/web/src/lib/diffRendering.ts"
+        || path == "apps/web/src/lib/diffRendering.test.ts"
+    {
+        (
+            "diff theme-name resolution, UTF-16 FNV-1a patch hashing, and patch cache key construction in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core diff_rendering_and_model_highlight`",
+            "Wire helpers into live GPUI diff highlighter/cache rendering.",
+        )
+    } else if path == "apps/web/src/components/chat/modelPickerModelHighlights.ts" {
+        (
+            "model picker new-model highlight key lookup in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core diff_rendering_and_model_highlight`",
+            "Wire highlight lookup into live GPUI model picker list rows.",
+        )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
             "logical project path normalization, physical/grouping/order keys, repository-scoped keys, settings override resolution, ref fallback, and group-label helpers in crates/r3_core/src/lib.rs",

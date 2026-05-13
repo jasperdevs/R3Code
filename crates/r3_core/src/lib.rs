@@ -46,6 +46,12 @@ impl HostedAppChannel {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffColorScheme {
+    Light,
+    Dark,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebDesktopAppBranding {
     pub base_name: String,
@@ -189,6 +195,59 @@ pub fn resolve_web_app_branding(input: &WebAppBrandingInput) -> WebAppBranding {
     }
 }
 
+pub fn resolve_diff_theme_name(theme: DiffColorScheme) -> &'static str {
+    match theme {
+        DiffColorScheme::Light => DIFF_THEME_LIGHT_NAME,
+        DiffColorScheme::Dark => DIFF_THEME_DARK_NAME,
+    }
+}
+
+pub fn fnv1a32(input: &str, seed: u32, multiplier: u32) -> u32 {
+    let mut hash = seed;
+    for code_unit in input.encode_utf16() {
+        hash ^= u32::from(code_unit);
+        hash = hash.wrapping_mul(multiplier);
+    }
+    hash
+}
+
+pub fn build_patch_cache_key(patch: &str, scope: Option<&str>) -> String {
+    let normalized_patch = patch.trim();
+    let primary = to_base36(fnv1a32(normalized_patch, FNV_OFFSET_BASIS_32, FNV_PRIME_32));
+    let secondary = to_base36(fnv1a32(
+        normalized_patch,
+        SECONDARY_HASH_SEED,
+        SECONDARY_HASH_MULTIPLIER,
+    ));
+    format!(
+        "{}:{}:{}:{}",
+        scope.unwrap_or("diff-panel"),
+        normalized_patch.encode_utf16().count(),
+        primary,
+        secondary
+    )
+}
+
+pub fn is_model_picker_new_model(provider: &str, slug: &str) -> bool {
+    let key = format!("{provider}:{slug}");
+    NEW_MODEL_KEYS.contains(&key.as_str())
+}
+
+fn to_base36(value: u32) -> String {
+    const DIGITS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
+    if value == 0 {
+        return "0".to_string();
+    }
+
+    let mut value = value;
+    let mut output = Vec::new();
+    while value > 0 {
+        output.push(DIGITS[(value % 36) as usize] as char);
+        value /= 36;
+    }
+    output.iter().rev().collect()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DraftThreadEnvMode {
     Local,
@@ -200,6 +259,13 @@ pub const RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY: &str = "(max-width: 980px)";
 pub const RIGHT_PANEL_SHEET_CLASS_NAME: &str = "w-[min(42vw,28rem)] min-w-80 max-w-[28rem] p-0 max-[760px]:w-[min(88vw,24rem)] max-[760px]:min-w-0 wco:mt-[env(titlebar-area-height)] wco:h-[calc(100%-env(titlebar-area-height))] wco:max-h-[calc(100%-env(titlebar-area-height))]";
 pub const TERMINAL_HELPER_TEXTAREA_CLASS: &str = "xterm-helper-textarea";
 pub const THREAD_TERMINAL_DRAWER_XTERM_SELECTOR: &str = ".thread-terminal-drawer .xterm";
+pub const DIFF_THEME_LIGHT_NAME: &str = "pierre-light";
+pub const DIFF_THEME_DARK_NAME: &str = "pierre-dark";
+pub const FNV_OFFSET_BASIS_32: u32 = 0x811c9dc5;
+pub const FNV_PRIME_32: u32 = 0x01000193;
+pub const SECONDARY_HASH_SEED: u32 = 0x9e3779b9;
+pub const SECONDARY_HASH_MULTIPLIER: u32 = 0x85ebca6b;
+pub const NEW_MODEL_KEYS: [&str; 0] = [];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalContextSelection {
@@ -21139,6 +21205,37 @@ mod tests {
         assert_eq!(ignored.hosted_app_channel_label, None);
         assert_eq!(ignored.app_stage_label, "Dev");
         assert_eq!(ignored.app_display_name, "R3Code (Dev)");
+    }
+
+    #[test]
+    fn diff_rendering_and_model_highlight_helpers_match_upstream_logic() {
+        assert_eq!(
+            resolve_diff_theme_name(DiffColorScheme::Light),
+            "pierre-light"
+        );
+        assert_eq!(
+            resolve_diff_theme_name(DiffColorScheme::Dark),
+            "pierre-dark"
+        );
+
+        let patch = "diff --git a/a.ts b/a.ts\n+console.log(\"hello\")";
+        assert_eq!(
+            build_patch_cache_key(patch, None),
+            "diff-panel:46:allpus:1j9mgqo"
+        );
+        assert_eq!(
+            build_patch_cache_key(&format!("\n{patch}\n"), None),
+            build_patch_cache_key(patch, None)
+        );
+        assert_ne!(
+            build_patch_cache_key(patch, Some("diff-panel:light")),
+            build_patch_cache_key(patch, Some("diff-panel:dark"))
+        );
+        assert_eq!(
+            build_patch_cache_key("😀", None),
+            "diff-panel:2:1kdnhdk:d1ty04"
+        );
+        assert!(!is_model_picker_new_model("claudeAgent", "claude-opus-4-7"));
     }
 
     #[test]
