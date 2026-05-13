@@ -5087,6 +5087,30 @@ pub struct RepositoryIdentityGitCommandPlan {
     pub shell_on_windows: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VcsDriverRequestedKind {
+    Auto,
+    Git,
+    Jj,
+    Unknown,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VcsDriverDetectionCacheKey {
+    pub cwd: String,
+    pub requested_kind: VcsDriverRequestedKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VcsDriverHandle {
+    pub kind: VcsDriverKind,
+    pub repository: VcsRepositoryIdentity,
+    pub driver_kind: VcsDriverKind,
+}
+
+pub const VCS_DRIVER_DETECTION_CACHE_CAPACITY: usize = 2_048;
+pub const VCS_DRIVER_DETECTION_CACHE_TTL_MS: u64 = 2_000;
+
 pub const GIT_WORKSPACE_FILES_MAX_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
 pub const GIT_CHECK_IGNORE_MAX_STDIN_BYTES: usize = 256 * 1024;
 pub const GIT_CHECKPOINT_DIFF_MAX_OUTPUT_BYTES: usize = 10_000_000;
@@ -5426,6 +5450,196 @@ pub fn resolve_repository_identity_from_remote_result(
         &parse_repository_identity_remote_fetch_urls(&remote_result.stdout),
     )?;
     Some(build_repository_identity(&remote, cache_key))
+}
+
+pub fn vcs_driver_requested_kind_schema_value(kind: VcsDriverRequestedKind) -> &'static str {
+    match kind {
+        VcsDriverRequestedKind::Auto => "auto",
+        VcsDriverRequestedKind::Git => "git",
+        VcsDriverRequestedKind::Jj => "jj",
+        VcsDriverRequestedKind::Unknown => "unknown",
+    }
+}
+
+pub fn vcs_driver_requested_kind_to_driver_kind(
+    kind: VcsDriverRequestedKind,
+) -> Option<VcsDriverKind> {
+    match kind {
+        VcsDriverRequestedKind::Git => Some(VcsDriverKind::Git),
+        VcsDriverRequestedKind::Jj => Some(VcsDriverKind::Jj),
+        VcsDriverRequestedKind::Unknown => Some(VcsDriverKind::Unknown),
+        VcsDriverRequestedKind::Auto => None,
+    }
+}
+
+pub fn parse_vcs_driver_requested_kind(value: &str) -> Option<VcsDriverRequestedKind> {
+    match value {
+        "auto" => Some(VcsDriverRequestedKind::Auto),
+        "git" => Some(VcsDriverRequestedKind::Git),
+        "jj" => Some(VcsDriverRequestedKind::Jj),
+        "unknown" => Some(VcsDriverRequestedKind::Unknown),
+        _ => None,
+    }
+}
+
+pub fn parse_vcs_project_config_kind(raw: &str) -> Option<VcsDriverRequestedKind> {
+    let parsed = serde_json::from_str::<serde_json::Value>(raw).ok()?;
+    let object = parsed.as_object()?;
+    let nested_kind = object
+        .get("vcs")
+        .and_then(serde_json::Value::as_object)
+        .and_then(|vcs| vcs.get("kind"))
+        .and_then(serde_json::Value::as_str)
+        .and_then(parse_vcs_driver_requested_kind);
+    let legacy_kind = object
+        .get("vcsKind")
+        .and_then(serde_json::Value::as_str)
+        .and_then(parse_vcs_driver_requested_kind);
+    Some(
+        nested_kind
+            .or(legacy_kind)
+            .unwrap_or(VcsDriverRequestedKind::Auto),
+    )
+}
+
+pub fn resolve_vcs_project_config_kind(
+    requested_kind: Option<VcsDriverRequestedKind>,
+    configured_kind: Option<VcsDriverRequestedKind>,
+) -> VcsDriverRequestedKind {
+    match requested_kind {
+        Some(kind) if kind != VcsDriverRequestedKind::Auto => kind,
+        _ => configured_kind.unwrap_or(VcsDriverRequestedKind::Auto),
+    }
+}
+
+pub fn vcs_project_config_candidate_paths(cwd: &str) -> Vec<String> {
+    let mut current = trim_trailing_project_path_separators(cwd.trim());
+    if current.is_empty() {
+        return Vec::new();
+    }
+
+    let mut candidates = Vec::new();
+    loop {
+        let separator = if current.contains('\\') { "\\" } else { "/" };
+        candidates.push(format!(
+            "{}{}.t3code{}vcs.json",
+            current.trim_end_matches(['/', '\\']),
+            separator,
+            separator
+        ));
+
+        let trimmed = current.trim_end_matches(['/', '\\']).to_string();
+        if trimmed == "/" || trimmed == "\\" || trimmed.ends_with(':') {
+            break;
+        }
+        let Some(parent_index) = trimmed.rfind(['/', '\\']) else {
+            break;
+        };
+        if parent_index == 0 {
+            current = trimmed[..=parent_index].to_string();
+        } else {
+            current = trimmed[..parent_index].to_string();
+        }
+        if current == trimmed {
+            break;
+        }
+    }
+
+    candidates
+}
+
+pub fn vcs_driver_detection_cache_key(cwd: &str, requested_kind: VcsDriverRequestedKind) -> String {
+    format!(
+        "{}\0{}",
+        vcs_driver_requested_kind_schema_value(requested_kind),
+        cwd
+    )
+}
+
+pub fn parse_vcs_driver_detection_cache_key(key: &str) -> VcsDriverDetectionCacheKey {
+    let Some(separator_index) = key.find('\0') else {
+        return VcsDriverDetectionCacheKey {
+            cwd: key.to_string(),
+            requested_kind: VcsDriverRequestedKind::Auto,
+        };
+    };
+    VcsDriverDetectionCacheKey {
+        requested_kind: parse_vcs_driver_requested_kind(&key[..separator_index])
+            .unwrap_or(VcsDriverRequestedKind::Auto),
+        cwd: key[separator_index + 1..].to_string(),
+    }
+}
+
+pub fn vcs_driver_registry_get(kind: VcsDriverKind) -> Result<VcsDriverKind, VcsContractError> {
+    if kind == VcsDriverKind::Git {
+        return Ok(VcsDriverKind::Git);
+    }
+    Err(VcsContractError::UnsupportedOperation {
+        operation: "VcsDriverRegistry.get".to_string(),
+        kind,
+        detail: format!(
+            "No {} VCS driver is registered.",
+            vcs_driver_kind_schema_value(kind)
+        ),
+    })
+}
+
+pub fn vcs_driver_registry_detect_with_git(
+    requested_kind: VcsDriverRequestedKind,
+    git_repository: Option<VcsRepositoryIdentity>,
+) -> Result<Option<VcsDriverHandle>, VcsContractError> {
+    match requested_kind {
+        VcsDriverRequestedKind::Git => {
+            let driver_kind = vcs_driver_registry_get(VcsDriverKind::Git)?;
+            Ok(git_repository.map(|repository| VcsDriverHandle {
+                kind: VcsDriverKind::Git,
+                repository,
+                driver_kind,
+            }))
+        }
+        VcsDriverRequestedKind::Jj => vcs_driver_registry_get(VcsDriverKind::Jj).map(|_| None),
+        VcsDriverRequestedKind::Auto | VcsDriverRequestedKind::Unknown => {
+            Ok(git_repository.map(|repository| VcsDriverHandle {
+                kind: VcsDriverKind::Git,
+                repository,
+                driver_kind: VcsDriverKind::Git,
+            }))
+        }
+    }
+}
+
+pub fn vcs_driver_registry_resolve_with_git(
+    cwd: &str,
+    requested_kind: Option<VcsDriverRequestedKind>,
+    git_repository: Option<VcsRepositoryIdentity>,
+) -> Result<VcsDriverHandle, VcsContractError> {
+    let requested_kind = requested_kind.unwrap_or(VcsDriverRequestedKind::Auto);
+    if let Some(handle) = vcs_driver_registry_detect_with_git(requested_kind, git_repository)? {
+        return Ok(handle);
+    }
+
+    let (kind, detail) = if requested_kind == VcsDriverRequestedKind::Auto {
+        (
+            VcsDriverKind::Unknown,
+            format!("No supported VCS repository was detected at {cwd}."),
+        )
+    } else {
+        let kind = vcs_driver_requested_kind_to_driver_kind(requested_kind)
+            .unwrap_or(VcsDriverKind::Unknown);
+        (
+            kind,
+            format!(
+                "No {} repository was detected at {cwd}.",
+                vcs_driver_requested_kind_schema_value(requested_kind)
+            ),
+        )
+    };
+
+    Err(VcsContractError::UnsupportedOperation {
+        operation: "VcsDriverRegistry.resolve".to_string(),
+        kind,
+        detail,
+    })
 }
 
 pub fn filter_git_ignored_paths(relative_paths: &[String], ignored_stdout: &str) -> Vec<String> {
@@ -16847,6 +17061,128 @@ mod tests {
         assert_eq!(
             resolve_repository_identity_from_remote_result("/repo", Some(&remote_failure)),
             None
+        );
+
+        assert_eq!(VCS_DRIVER_DETECTION_CACHE_CAPACITY, 2_048);
+        assert_eq!(VCS_DRIVER_DETECTION_CACHE_TTL_MS, 2_000);
+        assert_eq!(
+            parse_vcs_project_config_kind(r#"{"vcs":{"kind":"jj"},"vcsKind":"git"}"#),
+            Some(VcsDriverRequestedKind::Jj)
+        );
+        assert_eq!(
+            parse_vcs_project_config_kind(r#"{"vcsKind":"git"}"#),
+            Some(VcsDriverRequestedKind::Git)
+        );
+        assert_eq!(
+            parse_vcs_project_config_kind(r#"{"vcs":{"kind":"unknown"}}"#),
+            Some(VcsDriverRequestedKind::Unknown)
+        );
+        assert_eq!(
+            parse_vcs_project_config_kind(r#"{"vcs":{"kind":"svn"}}"#),
+            Some(VcsDriverRequestedKind::Auto)
+        );
+        assert_eq!(parse_vcs_project_config_kind("not json"), None);
+        assert_eq!(
+            resolve_vcs_project_config_kind(
+                Some(VcsDriverRequestedKind::Jj),
+                Some(VcsDriverRequestedKind::Git)
+            ),
+            VcsDriverRequestedKind::Jj
+        );
+        assert_eq!(
+            resolve_vcs_project_config_kind(
+                Some(VcsDriverRequestedKind::Auto),
+                Some(VcsDriverRequestedKind::Jj)
+            ),
+            VcsDriverRequestedKind::Jj
+        );
+        assert_eq!(
+            resolve_vcs_project_config_kind(None, None),
+            VcsDriverRequestedKind::Auto
+        );
+        assert_eq!(
+            vcs_project_config_candidate_paths("/repo/packages/app"),
+            vec![
+                "/repo/packages/app/.t3code/vcs.json".to_string(),
+                "/repo/packages/.t3code/vcs.json".to_string(),
+                "/repo/.t3code/vcs.json".to_string(),
+                "/.t3code/vcs.json".to_string(),
+            ]
+        );
+        assert_eq!(
+            vcs_driver_detection_cache_key("/repo", VcsDriverRequestedKind::Git),
+            "git\0/repo"
+        );
+        assert_eq!(
+            parse_vcs_driver_detection_cache_key("jj\0/repo"),
+            VcsDriverDetectionCacheKey {
+                requested_kind: VcsDriverRequestedKind::Jj,
+                cwd: "/repo".to_string(),
+            }
+        );
+        assert_eq!(
+            parse_vcs_driver_detection_cache_key("/repo"),
+            VcsDriverDetectionCacheKey {
+                requested_kind: VcsDriverRequestedKind::Auto,
+                cwd: "/repo".to_string(),
+            }
+        );
+
+        assert_eq!(
+            vcs_driver_registry_get(VcsDriverKind::Git),
+            Ok(VcsDriverKind::Git)
+        );
+        assert_eq!(
+            vcs_driver_registry_get(VcsDriverKind::Jj)
+                .unwrap_err()
+                .message(),
+            "VCS operation is unsupported for jj in VcsDriverRegistry.get: No jj VCS driver is registered."
+        );
+
+        let git_repository = VcsRepositoryIdentity {
+            kind: VcsDriverKind::Git,
+            root_path: "/repo".to_string(),
+            metadata_path: Some("/repo/.git".to_string()),
+            freshness: VcsFreshness {
+                source: VcsFreshnessSource::LiveLocal,
+                observed_at: "2026-05-13T12:00:00.000Z".to_string(),
+                expires_at: None,
+            },
+        };
+        let git_handle = vcs_driver_registry_detect_with_git(
+            VcsDriverRequestedKind::Auto,
+            Some(git_repository.clone()),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(git_handle.kind, VcsDriverKind::Git);
+        assert_eq!(git_handle.repository.root_path, "/repo");
+        assert_eq!(git_handle.driver_kind, VcsDriverKind::Git);
+        assert_eq!(
+            vcs_driver_registry_detect_with_git(VcsDriverRequestedKind::Unknown, None).unwrap(),
+            None
+        );
+        assert_eq!(
+            vcs_driver_registry_detect_with_git(VcsDriverRequestedKind::Jj, None)
+                .unwrap_err()
+                .message(),
+            "VCS operation is unsupported for jj in VcsDriverRegistry.get: No jj VCS driver is registered."
+        );
+        assert_eq!(
+            vcs_driver_registry_resolve_with_git("/repo", None, None)
+                .unwrap_err()
+                .message(),
+            "VCS operation is unsupported for unknown in VcsDriverRegistry.resolve: No supported VCS repository was detected at /repo."
+        );
+        assert_eq!(
+            vcs_driver_registry_resolve_with_git(
+                "/repo",
+                Some(VcsDriverRequestedKind::Unknown),
+                None
+            )
+            .unwrap_err()
+            .message(),
+            "VCS operation is unsupported for unknown in VcsDriverRegistry.resolve: No unknown repository was detected at /repo."
         );
 
         let capture_plan = git_capture_checkpoint_plan(
