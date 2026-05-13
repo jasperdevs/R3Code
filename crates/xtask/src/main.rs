@@ -2603,6 +2603,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace provider_models_for_display_match_upstream_instance_card_contract`",
             "Wire the remaining provider instance card controls, environment variable drafts, accent swatches, auth copy, update actions, and exact GPUI card rendering.",
         )
+    } else if path == "apps/web/src/components/ui/sidebar.test.tsx"
+        || path == "apps/web/src/components/ui/sidebar.tsx"
+    {
+        (
+            "Sidebar UI menu button/action/sub-button data slots and pointer cursor class merge behavior in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace sidebar_interactive_cursor_classes_match_upstream_contract`",
+            "Wire any remaining sidebar primitive sizing, tooltip, hover, rail, input, skeleton, badge, and exact GPUI style states.",
+        )
     } else if path.starts_with("apps/web/src/components/")
         || path.starts_with("apps/web/src/composer")
         || path.starts_with("apps/web/src/diff")

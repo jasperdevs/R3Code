@@ -15821,6 +15821,36 @@ pub fn sidebar_project_grouping_label(grouping_mode: SidebarProjectGroupingMode)
     }
 }
 
+pub const SIDEBAR_MENU_BUTTON_DATA_SLOT: &str = "sidebar-menu-button";
+pub const SIDEBAR_MENU_ACTION_DATA_SLOT: &str = "sidebar-menu-action";
+pub const SIDEBAR_MENU_SUB_BUTTON_DATA_SLOT: &str = "sidebar-menu-sub-button";
+
+pub const SIDEBAR_MENU_BUTTON_BASE_CLASS_NAME: &str = "peer/menu-button flex w-full cursor-pointer items-center gap-2 overflow-hidden rounded-lg p-2 text-left text-sm outline-hidden ring-ring transition-[width,height,padding] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 group-has-data-[sidebar=menu-action]/menu-item:pe-8 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground data-[state=open]:hover:bg-sidebar-accent data-[state=open]:hover:text-sidebar-accent-foreground group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! [&>span:last-child]:truncate [&>svg:not([class*='size-'])]:size-4 [&>svg]:shrink-0";
+pub const SIDEBAR_MENU_ACTION_CLASS_NAME: &str = "absolute top-1.5 right-1 flex aspect-square w-5 cursor-pointer items-center justify-center rounded-lg p-0 text-sidebar-foreground outline-hidden ring-ring transition-transform hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 peer-hover/menu-button:text-sidebar-accent-foreground [&>svg:not([class*='size-'])]:size-4 [&>svg]:shrink-0 after:-inset-2 after:absolute md:after:hidden peer-data-[size=sm]/menu-button:top-1 peer-data-[size=default]/menu-button:top-1.5 peer-data-[size=lg]/menu-button:top-2.5 group-data-[collapsible=icon]:hidden";
+pub const SIDEBAR_MENU_SUB_BUTTON_CLASS_NAME: &str = "-translate-x-px flex h-7 min-w-0 cursor-pointer items-center gap-2 overflow-hidden rounded-lg px-2 text-sidebar-foreground outline-hidden ring-ring hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 [&>span:last-child]:truncate [&>svg:not([class*='size-'])]:size-4 [&>svg]:shrink-0 [&>svg]:text-sidebar-accent-foreground data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground text-sm group-data-[collapsible=icon]:hidden";
+
+pub fn merge_sidebar_menu_button_class_name(class_name: Option<&str>) -> String {
+    let custom_class_name = class_name.unwrap_or_default().trim();
+    if custom_class_name.is_empty() {
+        return SIDEBAR_MENU_BUTTON_BASE_CLASS_NAME.to_string();
+    }
+
+    let has_unmodified_cursor_class = custom_class_name
+        .split_whitespace()
+        .any(|token| token.starts_with("cursor-"));
+    let base_class_name = if has_unmodified_cursor_class {
+        SIDEBAR_MENU_BUTTON_BASE_CLASS_NAME
+            .split_whitespace()
+            .filter(|token| *token != "cursor-pointer")
+            .collect::<Vec<_>>()
+            .join(" ")
+    } else {
+        SIDEBAR_MENU_BUTTON_BASE_CLASS_NAME.to_string()
+    };
+
+    format!("{base_class_name} {custom_class_name}")
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandPaletteItemKind {
     Action,
@@ -39301,6 +39331,23 @@ mod tests {
         );
         assert_eq!(clamp_sidebar_thread_preview_count(0), 1);
         assert_eq!(clamp_sidebar_thread_preview_count(16), 15);
+    }
+
+    #[test]
+    fn sidebar_interactive_cursor_classes_match_upstream_contract() {
+        let default_button = merge_sidebar_menu_button_class_name(None);
+        assert_eq!(SIDEBAR_MENU_BUTTON_DATA_SLOT, "sidebar-menu-button");
+        assert!(default_button.contains("cursor-pointer"));
+
+        let drag_handle = merge_sidebar_menu_button_class_name(Some("cursor-grab"));
+        assert!(drag_handle.contains("cursor-grab"));
+        assert!(!drag_handle.contains("cursor-pointer"));
+
+        assert_eq!(SIDEBAR_MENU_ACTION_DATA_SLOT, "sidebar-menu-action");
+        assert!(SIDEBAR_MENU_ACTION_CLASS_NAME.contains("cursor-pointer"));
+
+        assert_eq!(SIDEBAR_MENU_SUB_BUTTON_DATA_SLOT, "sidebar-menu-sub-button");
+        assert!(SIDEBAR_MENU_SUB_BUTTON_CLASS_NAME.contains("cursor-pointer"));
     }
 
     #[test]
