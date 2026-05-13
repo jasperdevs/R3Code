@@ -31291,6 +31291,15 @@ mod tests {
             Some("App".to_string())
         );
         assert_eq!(
+            format_provider_skill_install_source(&make_provider_skill("gh-fix-ci", |skill| {
+                skill.path =
+                    r"C:\Users\bunny\.agents\plugins\cache\github\skills\gh-fix-ci\SKILL.md"
+                        .to_string();
+                skill.scope = Some("user".to_string());
+            })),
+            Some("App".to_string())
+        );
+        assert_eq!(
             format_provider_skill_install_source(&make_provider_skill("agent-browser", |skill| {
                 skill.path = "/Users/julius/.agents/skills/agent-browser/SKILL.md".to_string();
                 skill.scope = Some("user".to_string());

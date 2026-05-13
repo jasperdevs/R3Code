@@ -1777,6 +1777,17 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core model_ordering`",
             "Wire ordering helpers into all live GPUI model picker lists, favorites views, and provider instance sections.",
         )
+    } else if path == "apps/web/src/providerSkillPresentation.ts"
+        || path == "apps/web/src/providerSkillPresentation.test.ts"
+        || path == "apps/web/src/providerSkillSearch.ts"
+        || path == "apps/web/src/providerSkillSearch.test.ts"
+    {
+        (
+            "provider skill display-name fallback, plugin/app install source detection with path separator normalization, scope labels, enabled-only filtering, `$` query normalization, exact/prefix/boundary/includes/fuzzy ranking, and deterministic tie-breaks in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core provider_skill_presentation_and_search_match_upstream_contract`",
+            "Wire helpers into live GPUI skill picker/menu surfaces, install-source labels, and provider skill search UI.",
+        )
     } else if path == "apps/web/src/shortcutModifierState.ts"
         || path == "apps/web/src/shortcutModifierState.test.ts"
     {
