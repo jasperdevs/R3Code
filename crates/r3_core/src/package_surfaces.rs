@@ -245,6 +245,68 @@ pub struct WebVercelConfigSurface {
     pub app_rewrite_destination: &'static str,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebIndexCssSurface {
+    pub imports: Vec<&'static str>,
+    pub custom_variants: Vec<(&'static str, &'static str)>,
+    pub theme_inline_vars: Vec<&'static str>,
+    pub root_light_tokens: BTreeMap<&'static str, &'static str>,
+    pub root_dark_tokens: BTreeMap<&'static str, &'static str>,
+    pub safe_area_utilities: Vec<(&'static str, &'static str)>,
+    pub body_font_stack: Vec<&'static str>,
+    pub root_layout_rules: BTreeMap<&'static str, &'static str>,
+    pub noise_overlay_opacity: &'static str,
+    pub scrollbar_width_px: u32,
+    pub terminal_scrollbar_width_px: u32,
+    pub class_hooks: Vec<&'static str>,
+    pub keyframes: Vec<&'static str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebViteEnvSurface {
+    pub reference_types: &'static str,
+    pub env_keys: Vec<&'static str>,
+    pub window_globals: BTreeMap<&'static str, &'static str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebAuthHttpHandlersSurface {
+    pub test_session_expires_at: &'static str,
+    pub environment_id: &'static str,
+    pub label: &'static str,
+    pub platform_os: &'static str,
+    pub platform_arch: &'static str,
+    pub server_version: &'static str,
+    pub repository_identity_capability: bool,
+    pub routes: Vec<(&'static str, &'static str)>,
+    pub session_method: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebWsRpcHarnessSurface {
+    pub parser: &'static str,
+    pub server_factory: &'static str,
+    pub stream_methods: Vec<&'static str>,
+    pub records_requests: bool,
+    pub responds_to_ping_with_pong: bool,
+    pub resets_scope_before_reconnect: bool,
+    pub stream_pubsub_kind: &'static str,
+    pub missing_stream_error_prefix: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebMockServiceWorkerSurface {
+    pub package_version: &'static str,
+    pub integrity_checksum: &'static str,
+    pub install_skip_waiting: bool,
+    pub activate_claims_clients: bool,
+    pub message_types: Vec<&'static str>,
+    pub bypasses_navigation_requests: bool,
+    pub bypasses_only_if_cached_cross_origin: bool,
+    pub unregisters_when_last_client_closes: bool,
+    pub response_event_type: &'static str,
+}
+
 pub fn desktop_package_metadata() -> PackageSurfaceMetadata {
     PackageSurfaceMetadata {
         name: "@r3tools/desktop",
@@ -673,6 +735,198 @@ pub fn web_vercel_config_surface() -> WebVercelConfigSurface {
         ],
         app_rewrite_source: "/(.*)",
         app_rewrite_destination: "/index.html",
+    }
+}
+
+pub fn web_index_css_surface() -> WebIndexCssSurface {
+    WebIndexCssSurface {
+        imports: vec!["tailwindcss"],
+        custom_variants: vec![
+            ("dark", "&:is(.dark, .dark *)"),
+            ("wco", "&:is(.wco, .wco *)"),
+        ],
+        theme_inline_vars: vec![
+            "--animate-skeleton",
+            "--color-warning-foreground",
+            "--color-warning",
+            "--color-success-foreground",
+            "--color-success",
+            "--color-info-foreground",
+            "--color-info",
+            "--color-destructive-foreground",
+            "--color-ring",
+            "--color-input",
+            "--color-border",
+            "--color-destructive",
+            "--color-accent-foreground",
+            "--color-accent",
+            "--color-muted-foreground",
+            "--color-muted",
+            "--color-secondary-foreground",
+            "--color-secondary",
+            "--color-primary-foreground",
+            "--color-primary",
+            "--color-popover-foreground",
+            "--color-popover",
+            "--color-card-foreground",
+            "--color-card",
+            "--color-foreground",
+            "--color-background",
+            "--radius-sm",
+            "--radius-md",
+            "--radius-lg",
+            "--radius-xl",
+            "--radius-2xl",
+            "--radius-3xl",
+            "--radius-4xl",
+        ],
+        root_light_tokens: BTreeMap::from([
+            ("color-scheme", "light"),
+            ("--radius", "0.625rem"),
+            ("--background", "var(--color-white)"),
+            ("--app-chrome-background", "var(--background)"),
+            ("--foreground", "var(--color-neutral-800)"),
+            ("--primary", "oklch(0.488 0.217 264)"),
+            ("--ring", "oklch(0.488 0.217 264)"),
+            ("--warning", "var(--color-amber-500)"),
+        ]),
+        root_dark_tokens: BTreeMap::from([
+            ("color-scheme", "dark"),
+            (
+                "--background",
+                "color-mix(in srgb, var(--color-neutral-950) 95%, var(--color-white))",
+            ),
+            ("--foreground", "var(--color-neutral-100)"),
+            ("--primary", "oklch(0.588 0.217 264)"),
+            ("--ring", "oklch(0.588 0.217 264)"),
+            ("--warning-foreground", "var(--color-amber-400)"),
+        ]),
+        safe_area_utilities: vec![
+            ("pt-safe", "padding-top"),
+            ("pb-safe", "padding-bottom"),
+            ("pl-safe", "padding-left"),
+            ("pr-safe", "padding-right"),
+        ],
+        body_font_stack: vec![
+            "DM Sans",
+            "-apple-system",
+            "BlinkMacSystemFont",
+            "Segoe UI",
+            "system-ui",
+            "sans-serif",
+        ],
+        root_layout_rules: BTreeMap::from([
+            (
+                "html,body",
+                "min-height: calc(100svh + env(safe-area-inset-top))",
+            ),
+            ("body", "height: 100%; overflow: hidden"),
+            (
+                "#root",
+                "height: 100%; width: 100%; overflow-x: clip; overflow-y: hidden",
+            ),
+        ]),
+        noise_overlay_opacity: "0.035",
+        scrollbar_width_px: 6,
+        terminal_scrollbar_width_px: 6,
+        class_hooks: vec![
+            ".no-transitions",
+            ".drag-region",
+            ".turn-chip-strip",
+            ".thread-terminal-drawer",
+            ".chat-markdown",
+            ".chat-markdown-file-link",
+            ".chat-markdown-codeblock",
+            ".provider-update-pill-progress",
+            ".diff-panel-viewport",
+            ".diff-render-file",
+            ".ultrathink-frame",
+            ".ultrathink-chroma",
+            ".ultrathink-pill",
+            ".ultrathink-word",
+            ".model-picker-list",
+        ],
+        keyframes: vec![
+            "skeleton",
+            "provider-update-pill-countdown",
+            "ultrathink-rainbow",
+            "ultrathink-chroma-shift",
+        ],
+    }
+}
+
+pub fn web_vite_env_surface() -> WebViteEnvSurface {
+    WebViteEnvSurface {
+        reference_types: "vite/client",
+        env_keys: vec![
+            "VITE_HTTP_URL",
+            "VITE_WS_URL",
+            "VITE_HOSTED_APP_URL",
+            "VITE_HOSTED_APP_CHANNEL",
+            "APP_VERSION",
+        ],
+        window_globals: BTreeMap::from([
+            ("nativeApi", "LocalApi"),
+            ("desktopBridge", "DesktopBridge"),
+        ]),
+    }
+}
+
+pub fn web_auth_http_handlers_surface() -> WebAuthHttpHandlersSurface {
+    WebAuthHttpHandlersSurface {
+        test_session_expires_at: "2026-05-01T12:00:00.000Z",
+        environment_id: "environment-local",
+        label: "Local environment",
+        platform_os: "darwin",
+        platform_arch: "arm64",
+        server_version: "0.0.0-test",
+        repository_identity_capability: true,
+        routes: vec![
+            ("GET", "*/.well-known/t3/environment"),
+            ("GET", "*/api/auth/session"),
+            ("POST", "*/api/auth/bootstrap"),
+        ],
+        session_method: "browser-session-cookie",
+    }
+}
+
+pub fn web_ws_rpc_harness_surface() -> WebWsRpcHarnessSurface {
+    WebWsRpcHarnessSurface {
+        parser: "RpcSerialization.json.makeUnsafe",
+        server_factory: "RpcServer.makeNoSerialization",
+        stream_methods: vec![
+            "orchestration.subscribeShell",
+            "orchestration.subscribeThread",
+            "gitRunStackedAction",
+            "subscribeVcsStatus",
+            "subscribeTerminalEvents",
+            "subscribeServerConfig",
+            "subscribeServerLifecycle",
+        ],
+        records_requests: true,
+        responds_to_ping_with_pong: true,
+        resets_scope_before_reconnect: true,
+        stream_pubsub_kind: "PubSub.unbounded",
+        missing_stream_error_prefix: "No stream registered for ",
+    }
+}
+
+pub fn web_mock_service_worker_surface() -> WebMockServiceWorkerSurface {
+    WebMockServiceWorkerSurface {
+        package_version: "2.12.11",
+        integrity_checksum: "4db4a41e972cec1b64cc569c66952d82",
+        install_skip_waiting: true,
+        activate_claims_clients: true,
+        message_types: vec![
+            "KEEPALIVE_REQUEST",
+            "INTEGRITY_CHECK_REQUEST",
+            "MOCK_ACTIVATE",
+            "CLIENT_CLOSED",
+        ],
+        bypasses_navigation_requests: true,
+        bypasses_only_if_cached_cross_origin: true,
+        unregisters_when_last_client_closes: true,
+        response_event_type: "RESPONSE",
     }
 }
 
@@ -1113,6 +1367,115 @@ mod tests {
             web_channel_cookie("nightly"),
             "r3code_web_channel=nightly; Path=/; Max-Age=31536000; HttpOnly; Secure; SameSite=Lax"
         );
+    }
+
+    #[test]
+    fn ports_web_css_vite_env_and_test_support_surfaces() {
+        let css = web_index_css_surface();
+        assert_eq!(css.imports, vec!["tailwindcss"]);
+        assert_eq!(
+            css.custom_variants,
+            vec![
+                ("dark", "&:is(.dark, .dark *)"),
+                ("wco", "&:is(.wco, .wco *)")
+            ]
+        );
+        assert!(css.theme_inline_vars.contains(&"--animate-skeleton"));
+        assert!(css.theme_inline_vars.contains(&"--color-background"));
+        assert_eq!(css.root_light_tokens["--radius"], "0.625rem");
+        assert_eq!(css.root_light_tokens["--primary"], "oklch(0.488 0.217 264)");
+        assert_eq!(css.root_dark_tokens["--primary"], "oklch(0.588 0.217 264)");
+        assert_eq!(
+            css.safe_area_utilities,
+            vec![
+                ("pt-safe", "padding-top"),
+                ("pb-safe", "padding-bottom"),
+                ("pl-safe", "padding-left"),
+                ("pr-safe", "padding-right")
+            ]
+        );
+        assert_eq!(css.body_font_stack[0], "DM Sans");
+        assert_eq!(css.noise_overlay_opacity, "0.035");
+        assert_eq!(css.scrollbar_width_px, 6);
+        assert_eq!(css.terminal_scrollbar_width_px, 6);
+        assert!(css.class_hooks.contains(&".chat-markdown"));
+        assert!(css.class_hooks.contains(&".ultrathink-frame"));
+        assert!(css.keyframes.contains(&"provider-update-pill-countdown"));
+
+        let vite_env = web_vite_env_surface();
+        assert_eq!(vite_env.reference_types, "vite/client");
+        assert_eq!(
+            vite_env.env_keys,
+            vec![
+                "VITE_HTTP_URL",
+                "VITE_WS_URL",
+                "VITE_HOSTED_APP_URL",
+                "VITE_HOSTED_APP_CHANNEL",
+                "APP_VERSION"
+            ]
+        );
+        assert_eq!(vite_env.window_globals["nativeApi"], "LocalApi");
+        assert_eq!(vite_env.window_globals["desktopBridge"], "DesktopBridge");
+
+        let auth = web_auth_http_handlers_surface();
+        assert_eq!(auth.test_session_expires_at, "2026-05-01T12:00:00.000Z");
+        assert_eq!(auth.environment_id, "environment-local");
+        assert_eq!(auth.platform_os, "darwin");
+        assert_eq!(auth.platform_arch, "arm64");
+        assert_eq!(auth.server_version, "0.0.0-test");
+        assert!(auth.repository_identity_capability);
+        assert_eq!(
+            auth.routes,
+            vec![
+                ("GET", "*/.well-known/t3/environment"),
+                ("GET", "*/api/auth/session"),
+                ("POST", "*/api/auth/bootstrap")
+            ]
+        );
+        assert_eq!(auth.session_method, "browser-session-cookie");
+
+        let harness = web_ws_rpc_harness_surface();
+        assert_eq!(harness.parser, "RpcSerialization.json.makeUnsafe");
+        assert_eq!(harness.server_factory, "RpcServer.makeNoSerialization");
+        assert_eq!(
+            harness.stream_methods,
+            vec![
+                "orchestration.subscribeShell",
+                "orchestration.subscribeThread",
+                "gitRunStackedAction",
+                "subscribeVcsStatus",
+                "subscribeTerminalEvents",
+                "subscribeServerConfig",
+                "subscribeServerLifecycle"
+            ]
+        );
+        assert!(harness.records_requests);
+        assert!(harness.responds_to_ping_with_pong);
+        assert!(harness.resets_scope_before_reconnect);
+        assert_eq!(harness.stream_pubsub_kind, "PubSub.unbounded");
+        assert_eq!(
+            harness.missing_stream_error_prefix,
+            "No stream registered for "
+        );
+
+        let msw = web_mock_service_worker_surface();
+        assert_eq!(msw.package_version, "2.12.11");
+        assert_eq!(msw.integrity_checksum, "4db4a41e972cec1b64cc569c66952d82");
+        assert!(msw.install_skip_waiting);
+        assert!(msw.activate_claims_clients);
+        assert_eq!(
+            msw.message_types,
+            vec![
+                "KEEPALIVE_REQUEST",
+                "INTEGRITY_CHECK_REQUEST",
+                "MOCK_ACTIVATE",
+                "CLIENT_CLOSED"
+            ]
+        );
+        assert!(msw.bypasses_navigation_requests);
+        assert!(msw.bypasses_only_if_cached_cross_origin);
+        assert!(msw.unregisters_when_last_client_closes);
+        assert_eq!(msw.response_event_type, "RESPONSE");
     }
 
     #[test]

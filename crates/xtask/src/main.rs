@@ -2469,6 +2469,20 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core package_surfaces`",
             "Wire the Rust/GPUI app packaging, hosted web deployment, brand asset application, and browser-test launch path to these contracts instead of the upstream Vite/Vercel toolchain.",
         )
+    } else if matches!(
+        path,
+        "apps/web/src/index.css"
+            | "apps/web/src/vite-env.d.ts"
+            | "apps/web/public/mockServiceWorker.js"
+            | "apps/web/test/authHttpHandlers.ts"
+            | "apps/web/test/wsRpcHarness.ts"
+    ) {
+        (
+            "web Tailwind/global CSS tokens and selectors, Vite env/window declarations, MSW worker metadata, auth HTTP test handlers, and browser WebSocket RPC harness contracts in crates/r3_core/src/package_surfaces.rs",
+            "partial",
+            "`cargo test -p r3_core package_surfaces`",
+            "Wire native GPUI styling/test harness equivalents to these exact global theme hooks, browser env assumptions, mock-auth routes, MSW lifecycle semantics, and RPC harness stream/unary behavior.",
+        )
     } else if path.starts_with("apps/web/") {
         (
             "crates/r3_ui/src/shell.rs",
