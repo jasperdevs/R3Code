@@ -8278,6 +8278,31 @@ pub fn normalize_github_pull_request_list_json(
         .collect())
 }
 
+pub fn github_list_change_requests_from_stdout(
+    stdout: &str,
+) -> Result<Vec<ChangeRequest>, SourceControlProviderErrorContract> {
+    let raw = stdout.trim();
+    if raw.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    normalize_github_pull_request_list_json(raw)
+        .map(|items| {
+            items
+                .iter()
+                .map(github_list_change_request_from_summary)
+                .collect()
+        })
+        .map_err(|cause| {
+            source_control_provider_error_with_cause(
+                SourceControlProviderKind::Github,
+                "listChangeRequests",
+                "GitHub CLI returned invalid change request JSON.",
+                Some(&cause),
+            )
+        })
+}
+
 fn normalize_gitlab_change_request_state(state: Option<&str>) -> ChangeRequestState {
     match state.map(str::trim).map(str::to_ascii_lowercase).as_deref() {
         Some("merged") => ChangeRequestState::Merged,
@@ -20057,6 +20082,31 @@ mod tests {
                 (2, Some(ChangeRequestState::Closed))
             ]
         );
+        assert_eq!(
+            github_list_change_requests_from_stdout(" \n\t ").unwrap(),
+            []
+        );
+        let github_listed = github_list_change_requests_from_stdout(
+            r#"[{"number":3,"title":"Listed","url":"u","baseRefName":"main","headRefName":"h","state":"MERGED","updatedAt":"2026-05-13T01:00:00Z"}]"#,
+        )
+        .unwrap();
+        assert_eq!(github_listed[0].provider, SourceControlProviderKind::Github);
+        assert_eq!(github_listed[0].state, ChangeRequestState::Merged);
+        assert_eq!(
+            github_listed[0].updated_at.as_deref(),
+            Some("2026-05-13T01:00:00Z")
+        );
+        let github_list_error = github_list_change_requests_from_stdout("{").unwrap_err();
+        assert_eq!(
+            github_list_error.provider,
+            SourceControlProviderKind::Github
+        );
+        assert_eq!(github_list_error.operation, "listChangeRequests");
+        assert_eq!(
+            github_list_error.detail,
+            "GitHub CLI returned invalid change request JSON."
+        );
+        assert!(github_list_error.cause.is_some());
 
         let gitlab_raw = serde_json::json!({
             "iid": 8,
