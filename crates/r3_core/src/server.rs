@@ -1,4 +1,8 @@
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Component, Path, PathBuf},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerNetworkInterfaceInfo {
@@ -1165,6 +1169,46 @@ pub enum StaticAndDevRouteDecision {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StaticAndDevRouteFileResponse {
+    BadRequest {
+        body: &'static str,
+        status: u16,
+    },
+    Redirect {
+        location: String,
+        status: u16,
+    },
+    ServiceUnavailable {
+        body: &'static str,
+        status: u16,
+    },
+    InvalidStaticPath {
+        body: &'static str,
+        status: u16,
+    },
+    File {
+        relative_path: String,
+        bytes: Vec<u8>,
+        status: u16,
+        content_type: &'static str,
+    },
+    FallbackIndex {
+        relative_path: &'static str,
+        bytes: Vec<u8>,
+        status: u16,
+        content_type: &'static str,
+    },
+    NotFound {
+        body: &'static str,
+        status: u16,
+    },
+    InternalServerError {
+        body: &'static str,
+        status: u16,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProjectFaviconRouteDecision {
     BadRequest {
         body: &'static str,
@@ -1563,7 +1607,7 @@ pub fn static_and_dev_route_decision(
             };
         }
     }
-    if !static_dir_configured && dev_url.filter(|url| !url.is_empty()).is_none() {
+    if !static_dir_configured {
         return StaticAndDevRouteDecision::ServiceUnavailable {
             body: "No static directory configured and no dev URL set.",
             status: 503,
@@ -1603,6 +1647,107 @@ pub fn static_and_dev_route_decision(
         body: "Not Found",
         status: 404,
     }
+}
+
+pub fn static_and_dev_route_file_response(
+    request_url: Option<&str>,
+    dev_url: Option<&str>,
+    static_dir: Option<&Path>,
+) -> StaticAndDevRouteFileResponse {
+    let Some(request_url) = request_url else {
+        return StaticAndDevRouteFileResponse::BadRequest {
+            body: "Bad Request",
+            status: 400,
+        };
+    };
+    if let Some(dev_url) = dev_url.filter(|url| !url.is_empty()) {
+        if is_loopback_hostname_for_dev_redirect(&url_hostname(request_url)) {
+            return StaticAndDevRouteFileResponse::Redirect {
+                location: resolve_dev_redirect_url(dev_url, request_url),
+                status: 302,
+            };
+        }
+    }
+    let Some(static_dir) = static_dir else {
+        return StaticAndDevRouteFileResponse::ServiceUnavailable {
+            body: "No static directory configured and no dev URL set.",
+            status: 503,
+        };
+    };
+    let pathname = url_pathname(request_url);
+    let relative_path = match normalize_static_request_path(&pathname) {
+        StaticRequestPathDecision::ServeRelativePath(relative_path) => relative_path,
+        StaticRequestPathDecision::Invalid { message, status } => {
+            return StaticAndDevRouteFileResponse::InvalidStaticPath {
+                body: message,
+                status,
+            };
+        }
+    };
+    let static_root = normalize_filesystem_path(&absolutize_filesystem_path(static_dir));
+    let file_path = normalize_filesystem_path(&static_root.join(Path::new(&relative_path)));
+    if !file_path.starts_with(&static_root) {
+        return StaticAndDevRouteFileResponse::InvalidStaticPath {
+            body: "Invalid static file path",
+            status: 400,
+        };
+    }
+    if fs::metadata(&file_path)
+        .map(|metadata| metadata.is_file())
+        .unwrap_or(false)
+    {
+        return match fs::read(&file_path) {
+            Ok(bytes) => StaticAndDevRouteFileResponse::File {
+                content_type: static_content_type_for_path(&relative_path),
+                relative_path,
+                bytes,
+                status: 200,
+            },
+            Err(_) => StaticAndDevRouteFileResponse::InternalServerError {
+                body: "Internal Server Error",
+                status: 500,
+            },
+        };
+    }
+    let fallback_index_path = normalize_filesystem_path(&static_root.join("index.html"));
+    match fs::read(fallback_index_path) {
+        Ok(bytes) => StaticAndDevRouteFileResponse::FallbackIndex {
+            relative_path: "index.html",
+            bytes,
+            status: 200,
+            content_type: "text/html; charset=utf-8",
+        },
+        Err(_) => StaticAndDevRouteFileResponse::NotFound {
+            body: "Not Found",
+            status: 404,
+        },
+    }
+}
+
+fn absolutize_filesystem_path(path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join(path)
+    }
+}
+
+fn normalize_filesystem_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                normalized.push(component.as_os_str());
+            }
+        }
+    }
+    normalized
 }
 
 pub fn static_content_type_for_path(path: &str) -> &'static str {
@@ -2215,6 +2360,16 @@ pub fn redact_server_settings_for_client(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn make_static_test_dir(name: &str) -> PathBuf {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!("r3code-static-{name}-{unique}"));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
 
     #[test]
     fn ports_server_expand_home_path() {
@@ -3404,6 +3559,20 @@ mod tests {
         assert_eq!(
             static_and_dev_route_decision(
                 Some("http://example.com:3773/assets/app.js"),
+                Some("http://localhost:5173"),
+                false,
+                false,
+                false,
+                false,
+            ),
+            StaticAndDevRouteDecision::ServiceUnavailable {
+                body: "No static directory configured and no dev URL set.",
+                status: 503,
+            }
+        );
+        assert_eq!(
+            static_and_dev_route_decision(
+                Some("http://example.com:3773/assets/app.js"),
                 None,
                 true,
                 true,
@@ -3413,6 +3582,88 @@ mod tests {
             StaticAndDevRouteDecision::InternalServerError {
                 body: "Internal Server Error",
                 status: 500,
+            }
+        );
+        let static_dir = make_static_test_dir("serve-file");
+        std::fs::create_dir_all(static_dir.join("assets")).unwrap();
+        std::fs::write(static_dir.join("assets/app.js"), b"console.log('r3');").unwrap();
+        assert_eq!(
+            static_and_dev_route_file_response(
+                Some("http://example.com:3773/assets/app.js"),
+                None,
+                Some(&static_dir),
+            ),
+            StaticAndDevRouteFileResponse::File {
+                relative_path: "assets/app.js".to_string(),
+                bytes: b"console.log('r3');".to_vec(),
+                status: 200,
+                content_type: "text/javascript",
+            }
+        );
+        let _ = std::fs::remove_dir_all(&static_dir);
+
+        let static_dir = make_static_test_dir("fallback-index");
+        std::fs::write(static_dir.join("index.html"), b"<main>fallback</main>").unwrap();
+        assert_eq!(
+            static_and_dev_route_file_response(
+                Some("http://example.com:3773/missing-route"),
+                None,
+                Some(&static_dir),
+            ),
+            StaticAndDevRouteFileResponse::FallbackIndex {
+                relative_path: "index.html",
+                bytes: b"<main>fallback</main>".to_vec(),
+                status: 200,
+                content_type: "text/html; charset=utf-8",
+            }
+        );
+        let _ = std::fs::remove_dir_all(&static_dir);
+
+        let static_dir = make_static_test_dir("not-found");
+        assert_eq!(
+            static_and_dev_route_file_response(
+                Some("http://example.com:3773/missing-route"),
+                None,
+                Some(&static_dir),
+            ),
+            StaticAndDevRouteFileResponse::NotFound {
+                body: "Not Found",
+                status: 404,
+            }
+        );
+        let _ = std::fs::remove_dir_all(&static_dir);
+
+        assert_eq!(
+            static_and_dev_route_file_response(
+                Some("http://127.0.0.1:3773/projects/demo?thread=1"),
+                Some("http://localhost:5173/base"),
+                None,
+            ),
+            StaticAndDevRouteFileResponse::Redirect {
+                location: "http://localhost:5173/projects/demo?thread=1".to_string(),
+                status: 302,
+            }
+        );
+        assert_eq!(
+            static_and_dev_route_file_response(
+                Some("http://example.com:3773/assets/app.js"),
+                Some("http://localhost:5173"),
+                None,
+            ),
+            StaticAndDevRouteFileResponse::ServiceUnavailable {
+                body: "No static directory configured and no dev URL set.",
+                status: 503,
+            }
+        );
+        assert_eq!(
+            static_and_dev_route_file_response(
+                Some("http://example.com:3773/../secret"),
+                None,
+                Some(Path::new(".")),
+            ),
+            StaticAndDevRouteFileResponse::InvalidStaticPath {
+                body: "Invalid static file path",
+                status: 400,
             }
         );
         assert_eq!(static_content_type_for_path("style.css"), "text/css");
