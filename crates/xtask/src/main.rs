@@ -2573,6 +2573,20 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace git_action_menu_items_match_upstream_clean_main_status`; `cargo test --workspace git_action_logic_matches_upstream_quick_actions_and_dialogs`; `cargo test --workspace git_actions_browser_contracts_match_upstream_component`",
             "Port remaining provider-specific menu labels, disabled-reason tooltips, publish readiness helpers, full runStackedAction result handling, progress event subscription, and live GPUI action execution.",
         )
+    } else if path == "apps/web/src/components/Icons.tsx" {
+        (
+            "provider/editor/model icon export list, SVG viewBox contracts, generated gradient/mask/clip/filter IDs, theme fill classes, Antigravity data-url image usage, and native asset coverage map in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace upstream_icon_contracts_match_web_components`",
+            "Port missing native SVG assets for GitHub, Git, Jujutsu, GitLab, Azure DevOps, Bitbucket, Trae, Kiro, VS Code Insiders, VSCodium, Antigravity, ACP Registry, and Pi Agent, then wire every live GPUI icon call site to the exact asset.",
+        )
+    } else if path == "apps/web/src/components/JetBrainsIcons.tsx" {
+        (
+            "JetBrains icon export list, shared useSvgGradientIds prefix/count contract, 64x64 viewBox, black tile path/fill, and white glyph fill in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace upstream_jetbrains_icon_contracts_match_shared_helper`",
+            "Port each JetBrains product SVG as native GPUI assets and wire the exact editor/provider icon rendering paths.",
+        )
     } else if path == "apps/web/src/components/Sidebar.logic.test.ts"
         || path == "apps/web/src/components/Sidebar.logic.ts"
     {

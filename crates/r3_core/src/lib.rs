@@ -152,6 +152,351 @@ pub struct DiffWorkerPoolContract {
     pub theme_sync_catches_set_errors: bool,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UpstreamWebIconContract {
+    pub export_name: &'static str,
+    pub native_asset_path: Option<&'static str>,
+    pub view_box: &'static str,
+    pub generated_id_suffixes: &'static [&'static str],
+    pub themed_class_name: Option<&'static str>,
+    pub uses_data_url_image: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UpstreamJetBrainsIconContract {
+    pub export_name: &'static str,
+    pub gradient_prefix: &'static str,
+    pub gradient_count: usize,
+    pub view_box: &'static str,
+    pub tile_path: &'static str,
+    pub tile_fill: &'static str,
+    pub glyph_fill: &'static str,
+}
+
+pub const JETBRAINS_ICON_VIEW_BOX: &str = "0 0 64 64";
+pub const JETBRAINS_ICON_GRADIENT_COUNT: usize = 2;
+pub const JETBRAINS_ICON_TILE_PATH: &str = "M52 12H12v40h40z";
+pub const JETBRAINS_ICON_TILE_FILL: &str = "#000";
+pub const JETBRAINS_ICON_GLYPH_FILL: &str = "#fff";
+
+pub const UPSTREAM_WEB_ICON_CONTRACTS: &[UpstreamWebIconContract] = &[
+    UpstreamWebIconContract {
+        export_name: "GitHubIcon",
+        native_asset_path: None,
+        view_box: "0 0 1024 1024",
+        generated_id_suffixes: &[],
+        themed_class_name: None,
+        uses_data_url_image: false,
+    },
+    UpstreamWebIconContract {
+        export_name: "GitIcon",
+        native_asset_path: None,
+        view_box: "0 0 256 256",
+        generated_id_suffixes: &[],
+        themed_class_name: None,
+        uses_data_url_image: false,
+    },
+    UpstreamWebIconContract {
+        export_name: "JujutsuIcon",
+        native_asset_path: None,
+        view_box: "0 0 1024 1024",
+        generated_id_suffixes: &["jj-a"],
+        themed_class_name: None,
+        uses_data_url_image: false,
+    },
+    UpstreamWebIconContract {
+        export_name: "GitLabIcon",
+        native_asset_path: None,
+        view_box: "0 0 32 32",
+        generated_id_suffixes: &[],
+        themed_class_name: None,
+        uses_data_url_image: false,
+    },
+    UpstreamWebIconContract {
+        export_name: "AzureDevOpsIcon",
+        native_asset_path: None,
+        view_box: "0 0 96 96",
+        generated_id_suffixes: &["azure-a", "azure-b", "azure-c"],
+        themed_class_name: None,
+        uses_data_url_image: false,
+    },
+    UpstreamWebIconContract {
+        export_name: "BitbucketIcon",
+        native_asset_path: None,
+        view_box: "8.4 14.39 2481.29 2231.21",
+        generated_id_suffixes: &["bitbucket-a"],
+        themed_class_name: None,
+        uses_data_url_image: false,
+    },
+    UpstreamWebIconContract {
+        export_name: "CursorIcon",
+        native_asset_path: Some("icons/cursor.svg"),
+        view_box: "0 0 466.73 532.09",
+        generated_id_suffixes: &[],
+        themed_class_name: Some("fill-[#26251E] dark:fill-[#EDECEC]"),
+        uses_data_url_image: false,
+    },
+    UpstreamWebIconContract {
+        export_name: "TraeIcon",
+        native_asset_path: None,
+        view_box: "0 0 24 24",
+        generated_id_suffixes: &[],
+        themed_class_name: None,
+        uses_data_url_image: false,
+    },
+    UpstreamWebIconContract {
+        export_name: "KiroIcon",
+        native_asset_path: None,
+        view_box: "0 0 1200 1200",
+        generated_id_suffixes: &[],
+        themed_class_name: None,
+        uses_data_url_image: false,
+    },
+    UpstreamWebIconContract {
+        export_name: "VisualStudioCode",
+        native_asset_path: Some("icons/visual-studio-code.svg"),
+        view_box: "0 0 100 100",
+        generated_id_suffixes: &["vscode-a", "vscode-b", "vscode-c", "vscode-d"],
+        themed_class_name: None,
+        uses_data_url_image: false,
+    },
+    UpstreamWebIconContract {
+        export_name: "VisualStudioCodeInsiders",
+        native_asset_path: None,
+        view_box: "0 0 100 100",
+        generated_id_suffixes: &[
+            "vscode-insiders-a",
+            "vscode-insiders-b",
+            "vscode-insiders-c",
+            "vscode-insiders-d",
+        ],
+        themed_class_name: None,
+        uses_data_url_image: false,
+    },
+    UpstreamWebIconContract {
+        export_name: "VSCodium",
+        native_asset_path: None,
+        view_box: "0 0 100 100",
+        generated_id_suffixes: &["vscodium-gradient"],
+        themed_class_name: None,
+        uses_data_url_image: false,
+    },
+    UpstreamWebIconContract {
+        export_name: "Zed",
+        native_asset_path: Some("icons/zed.svg"),
+        view_box: "0 0 96 96",
+        generated_id_suffixes: &["zed-logo-a"],
+        themed_class_name: None,
+        uses_data_url_image: false,
+    },
+    UpstreamWebIconContract {
+        export_name: "OpenAI",
+        native_asset_path: Some("icons/openai.svg"),
+        view_box: "0 0 256 260",
+        generated_id_suffixes: &[],
+        themed_class_name: Some("fill-black dark:fill-white"),
+        uses_data_url_image: false,
+    },
+    UpstreamWebIconContract {
+        export_name: "ClaudeAI",
+        native_asset_path: Some("icons/claude-ai.svg"),
+        view_box: "0 0 256 257",
+        generated_id_suffixes: &[],
+        themed_class_name: Some("fill-[#d97757]"),
+        uses_data_url_image: false,
+    },
+    UpstreamWebIconContract {
+        export_name: "Gemini",
+        native_asset_path: Some("icons/gemini.svg"),
+        view_box: "0 0 296 298",
+        generated_id_suffixes: &[
+            "gemini__a",
+            "gemini__b",
+            "gemini__c",
+            "gemini__d",
+            "gemini__e",
+            "gemini__f",
+            "gemini__g",
+            "gemini__h",
+        ],
+        themed_class_name: None,
+        uses_data_url_image: false,
+    },
+    UpstreamWebIconContract {
+        export_name: "AntigravityIcon",
+        native_asset_path: None,
+        view_box: "0 0 128 128",
+        generated_id_suffixes: &[],
+        themed_class_name: None,
+        uses_data_url_image: true,
+    },
+    UpstreamWebIconContract {
+        export_name: "OpenCodeIcon",
+        native_asset_path: Some("icons/opencode.svg"),
+        view_box: "0 0 32 40",
+        generated_id_suffixes: &["opencode__clip0_1311_94969"],
+        themed_class_name: Some("dark:hidden; hidden dark:block"),
+        uses_data_url_image: false,
+    },
+    UpstreamWebIconContract {
+        export_name: "GithubCopilotIcon",
+        native_asset_path: Some("icons/github-copilot.svg"),
+        view_box: "0 0 256 208",
+        generated_id_suffixes: &[],
+        themed_class_name: Some("fill-black dark:fill-white"),
+        uses_data_url_image: false,
+    },
+    UpstreamWebIconContract {
+        export_name: "ACPRegistryIcon",
+        native_asset_path: None,
+        view_box: "0 0 576 220",
+        generated_id_suffixes: &[],
+        themed_class_name: Some("fill-black dark:fill-white"),
+        uses_data_url_image: false,
+    },
+    UpstreamWebIconContract {
+        export_name: "PiAgentIcon",
+        native_asset_path: None,
+        view_box: "0 0 800 800",
+        generated_id_suffixes: &[],
+        themed_class_name: Some("fill-none"),
+        uses_data_url_image: false,
+    },
+];
+
+pub const UPSTREAM_JETBRAINS_ICON_CONTRACTS: &[UpstreamJetBrainsIconContract] = &[
+    UpstreamJetBrainsIconContract {
+        export_name: "AquaIcon",
+        gradient_prefix: "aqua",
+        gradient_count: JETBRAINS_ICON_GRADIENT_COUNT,
+        view_box: JETBRAINS_ICON_VIEW_BOX,
+        tile_path: JETBRAINS_ICON_TILE_PATH,
+        tile_fill: JETBRAINS_ICON_TILE_FILL,
+        glyph_fill: JETBRAINS_ICON_GLYPH_FILL,
+    },
+    UpstreamJetBrainsIconContract {
+        export_name: "CLionIcon",
+        gradient_prefix: "clion",
+        gradient_count: JETBRAINS_ICON_GRADIENT_COUNT,
+        view_box: JETBRAINS_ICON_VIEW_BOX,
+        tile_path: JETBRAINS_ICON_TILE_PATH,
+        tile_fill: JETBRAINS_ICON_TILE_FILL,
+        glyph_fill: JETBRAINS_ICON_GLYPH_FILL,
+    },
+    UpstreamJetBrainsIconContract {
+        export_name: "DataGripIcon",
+        gradient_prefix: "datagrip",
+        gradient_count: JETBRAINS_ICON_GRADIENT_COUNT,
+        view_box: JETBRAINS_ICON_VIEW_BOX,
+        tile_path: JETBRAINS_ICON_TILE_PATH,
+        tile_fill: JETBRAINS_ICON_TILE_FILL,
+        glyph_fill: JETBRAINS_ICON_GLYPH_FILL,
+    },
+    UpstreamJetBrainsIconContract {
+        export_name: "DataSpellIcon",
+        gradient_prefix: "dataspell",
+        gradient_count: JETBRAINS_ICON_GRADIENT_COUNT,
+        view_box: JETBRAINS_ICON_VIEW_BOX,
+        tile_path: JETBRAINS_ICON_TILE_PATH,
+        tile_fill: JETBRAINS_ICON_TILE_FILL,
+        glyph_fill: JETBRAINS_ICON_GLYPH_FILL,
+    },
+    UpstreamJetBrainsIconContract {
+        export_name: "GoLandIcon",
+        gradient_prefix: "goland",
+        gradient_count: JETBRAINS_ICON_GRADIENT_COUNT,
+        view_box: JETBRAINS_ICON_VIEW_BOX,
+        tile_path: JETBRAINS_ICON_TILE_PATH,
+        tile_fill: JETBRAINS_ICON_TILE_FILL,
+        glyph_fill: JETBRAINS_ICON_GLYPH_FILL,
+    },
+    UpstreamJetBrainsIconContract {
+        export_name: "IntelliJIdeaIcon",
+        gradient_prefix: "intellij-idea",
+        gradient_count: JETBRAINS_ICON_GRADIENT_COUNT,
+        view_box: JETBRAINS_ICON_VIEW_BOX,
+        tile_path: JETBRAINS_ICON_TILE_PATH,
+        tile_fill: JETBRAINS_ICON_TILE_FILL,
+        glyph_fill: JETBRAINS_ICON_GLYPH_FILL,
+    },
+    UpstreamJetBrainsIconContract {
+        export_name: "PhpStormIcon",
+        gradient_prefix: "phpstorm",
+        gradient_count: JETBRAINS_ICON_GRADIENT_COUNT,
+        view_box: JETBRAINS_ICON_VIEW_BOX,
+        tile_path: JETBRAINS_ICON_TILE_PATH,
+        tile_fill: JETBRAINS_ICON_TILE_FILL,
+        glyph_fill: JETBRAINS_ICON_GLYPH_FILL,
+    },
+    UpstreamJetBrainsIconContract {
+        export_name: "PyCharmIcon",
+        gradient_prefix: "pycharm",
+        gradient_count: JETBRAINS_ICON_GRADIENT_COUNT,
+        view_box: JETBRAINS_ICON_VIEW_BOX,
+        tile_path: JETBRAINS_ICON_TILE_PATH,
+        tile_fill: JETBRAINS_ICON_TILE_FILL,
+        glyph_fill: JETBRAINS_ICON_GLYPH_FILL,
+    },
+    UpstreamJetBrainsIconContract {
+        export_name: "RiderIcon",
+        gradient_prefix: "rider",
+        gradient_count: JETBRAINS_ICON_GRADIENT_COUNT,
+        view_box: JETBRAINS_ICON_VIEW_BOX,
+        tile_path: JETBRAINS_ICON_TILE_PATH,
+        tile_fill: JETBRAINS_ICON_TILE_FILL,
+        glyph_fill: JETBRAINS_ICON_GLYPH_FILL,
+    },
+    UpstreamJetBrainsIconContract {
+        export_name: "RubyMineIcon",
+        gradient_prefix: "rubymine",
+        gradient_count: JETBRAINS_ICON_GRADIENT_COUNT,
+        view_box: JETBRAINS_ICON_VIEW_BOX,
+        tile_path: JETBRAINS_ICON_TILE_PATH,
+        tile_fill: JETBRAINS_ICON_TILE_FILL,
+        glyph_fill: JETBRAINS_ICON_GLYPH_FILL,
+    },
+    UpstreamJetBrainsIconContract {
+        export_name: "RustRoverIcon",
+        gradient_prefix: "rustrover",
+        gradient_count: JETBRAINS_ICON_GRADIENT_COUNT,
+        view_box: JETBRAINS_ICON_VIEW_BOX,
+        tile_path: JETBRAINS_ICON_TILE_PATH,
+        tile_fill: JETBRAINS_ICON_TILE_FILL,
+        glyph_fill: JETBRAINS_ICON_GLYPH_FILL,
+    },
+    UpstreamJetBrainsIconContract {
+        export_name: "WebStormIcon",
+        gradient_prefix: "webstorm",
+        gradient_count: JETBRAINS_ICON_GRADIENT_COUNT,
+        view_box: JETBRAINS_ICON_VIEW_BOX,
+        tile_path: JETBRAINS_ICON_TILE_PATH,
+        tile_fill: JETBRAINS_ICON_TILE_FILL,
+        glyph_fill: JETBRAINS_ICON_GLYPH_FILL,
+    },
+];
+
+pub fn upstream_web_icon_contract(export_name: &str) -> Option<&'static UpstreamWebIconContract> {
+    UPSTREAM_WEB_ICON_CONTRACTS
+        .iter()
+        .find(|contract| contract.export_name == export_name)
+}
+
+pub fn upstream_web_icon_exports_missing_native_assets() -> Vec<&'static str> {
+    UPSTREAM_WEB_ICON_CONTRACTS
+        .iter()
+        .filter(|contract| contract.native_asset_path.is_none())
+        .map(|contract| contract.export_name)
+        .collect()
+}
+
+pub fn upstream_jetbrains_icon_contract(
+    export_name: &str,
+) -> Option<&'static UpstreamJetBrainsIconContract> {
+    UPSTREAM_JETBRAINS_ICON_CONTRACTS
+        .iter()
+        .find(|contract| contract.export_name == export_name)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebDesktopAppBranding {
     pub base_name: String,
@@ -46755,6 +47100,168 @@ mod tests {
             vec!["terminal-2"]
         );
         assert_eq!(snapshot.terminal_event_entries.len(), 2);
+    }
+
+    #[test]
+    fn upstream_icon_contracts_match_web_components() {
+        let web_exports = UPSTREAM_WEB_ICON_CONTRACTS
+            .iter()
+            .map(|contract| contract.export_name)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            web_exports,
+            vec![
+                "GitHubIcon",
+                "GitIcon",
+                "JujutsuIcon",
+                "GitLabIcon",
+                "AzureDevOpsIcon",
+                "BitbucketIcon",
+                "CursorIcon",
+                "TraeIcon",
+                "KiroIcon",
+                "VisualStudioCode",
+                "VisualStudioCodeInsiders",
+                "VSCodium",
+                "Zed",
+                "OpenAI",
+                "ClaudeAI",
+                "Gemini",
+                "AntigravityIcon",
+                "OpenCodeIcon",
+                "GithubCopilotIcon",
+                "ACPRegistryIcon",
+                "PiAgentIcon",
+            ]
+        );
+
+        assert_eq!(
+            upstream_web_icon_contract("JujutsuIcon")
+                .unwrap()
+                .generated_id_suffixes,
+            &["jj-a"]
+        );
+        assert_eq!(
+            upstream_web_icon_contract("AzureDevOpsIcon")
+                .unwrap()
+                .generated_id_suffixes,
+            &["azure-a", "azure-b", "azure-c"]
+        );
+        assert_eq!(
+            upstream_web_icon_contract("VisualStudioCode")
+                .unwrap()
+                .generated_id_suffixes,
+            &["vscode-a", "vscode-b", "vscode-c", "vscode-d"]
+        );
+        assert_eq!(
+            upstream_web_icon_contract("VisualStudioCodeInsiders")
+                .unwrap()
+                .generated_id_suffixes,
+            &[
+                "vscode-insiders-a",
+                "vscode-insiders-b",
+                "vscode-insiders-c",
+                "vscode-insiders-d",
+            ]
+        );
+        assert_eq!(
+            upstream_web_icon_contract("OpenAI")
+                .unwrap()
+                .themed_class_name,
+            Some("fill-black dark:fill-white")
+        );
+        assert!(
+            upstream_web_icon_contract("AntigravityIcon")
+                .unwrap()
+                .uses_data_url_image
+        );
+        assert_eq!(
+            upstream_web_icon_contract("ACPRegistryIcon")
+                .unwrap()
+                .view_box,
+            "0 0 576 220"
+        );
+
+        assert_eq!(
+            upstream_web_icon_exports_missing_native_assets(),
+            vec![
+                "GitHubIcon",
+                "GitIcon",
+                "JujutsuIcon",
+                "GitLabIcon",
+                "AzureDevOpsIcon",
+                "BitbucketIcon",
+                "TraeIcon",
+                "KiroIcon",
+                "VisualStudioCodeInsiders",
+                "VSCodium",
+                "AntigravityIcon",
+                "ACPRegistryIcon",
+                "PiAgentIcon",
+            ]
+        );
+    }
+
+    #[test]
+    fn upstream_jetbrains_icon_contracts_match_shared_helper() {
+        let jetbrains_exports = UPSTREAM_JETBRAINS_ICON_CONTRACTS
+            .iter()
+            .map(|contract| contract.export_name)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            jetbrains_exports,
+            vec![
+                "AquaIcon",
+                "CLionIcon",
+                "DataGripIcon",
+                "DataSpellIcon",
+                "GoLandIcon",
+                "IntelliJIdeaIcon",
+                "PhpStormIcon",
+                "PyCharmIcon",
+                "RiderIcon",
+                "RubyMineIcon",
+                "RustRoverIcon",
+                "WebStormIcon",
+            ]
+        );
+
+        let prefixes = UPSTREAM_JETBRAINS_ICON_CONTRACTS
+            .iter()
+            .map(|contract| contract.gradient_prefix)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            prefixes,
+            vec![
+                "aqua",
+                "clion",
+                "datagrip",
+                "dataspell",
+                "goland",
+                "intellij-idea",
+                "phpstorm",
+                "pycharm",
+                "rider",
+                "rubymine",
+                "rustrover",
+                "webstorm",
+            ]
+        );
+
+        for contract in UPSTREAM_JETBRAINS_ICON_CONTRACTS {
+            assert_eq!(contract.gradient_count, 2);
+            assert_eq!(contract.view_box, "0 0 64 64");
+            assert_eq!(contract.tile_path, "M52 12H12v40h40z");
+            assert_eq!(contract.tile_fill, "#000");
+            assert_eq!(contract.glyph_fill, "#fff");
+        }
+
+        assert_eq!(
+            upstream_jetbrains_icon_contract("IntelliJIdeaIcon")
+                .unwrap()
+                .gradient_prefix,
+            "intellij-idea"
+        );
     }
 
     #[test]
