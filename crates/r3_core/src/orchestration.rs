@@ -2691,6 +2691,294 @@ pub fn checkpoint_ref_for_thread_turn(thread_id: &str, turn_count: u32) -> Strin
     )
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectionCheckpointSummary {
+    pub turn_id: String,
+    pub checkpoint_turn_count: u32,
+    pub checkpoint_ref: String,
+    pub status: String,
+    pub files: Vec<TurnDiffFileChange>,
+    pub assistant_message_id: Option<String>,
+    pub completed_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectionThreadCheckpointContext {
+    pub thread_id: String,
+    pub project_id: String,
+    pub workspace_root: String,
+    pub worktree_path: Option<String>,
+    pub checkpoints: Vec<ProjectionCheckpointSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectionFullThreadDiffContext {
+    pub thread_id: String,
+    pub project_id: String,
+    pub workspace_root: String,
+    pub worktree_path: Option<String>,
+    pub latest_checkpoint_turn_count: u32,
+    pub to_checkpoint_ref: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrchestrationGetTurnDiffInput {
+    pub thread_id: String,
+    pub from_turn_count: u32,
+    pub to_turn_count: u32,
+    pub ignore_whitespace: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrchestrationGetFullThreadDiffInput {
+    pub thread_id: String,
+    pub to_turn_count: u32,
+    pub ignore_whitespace: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OrchestrationCheckpointDiffResult {
+    pub thread_id: String,
+    pub from_turn_count: u32,
+    pub to_turn_count: u32,
+    pub diff: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckpointDiffQueryPlan {
+    pub thread_id: String,
+    pub from_turn_count: u32,
+    pub to_turn_count: u32,
+    pub cwd: String,
+    pub from_checkpoint_ref: String,
+    pub to_checkpoint_ref: String,
+    pub fallback_from_to_head: bool,
+    pub ignore_whitespace: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckpointDiffQueryDecision {
+    Empty(OrchestrationCheckpointDiffResult),
+    Diff(CheckpointDiffQueryPlan),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CheckpointDiffQueryError {
+    Invariant {
+        operation: &'static str,
+        detail: String,
+    },
+    Unavailable {
+        thread_id: String,
+        turn_count: u32,
+        detail: String,
+    },
+}
+
+impl CheckpointDiffQueryError {
+    pub fn message(&self) -> String {
+        match self {
+            Self::Invariant { operation, detail } => {
+                format!("Checkpoint invariant violation in {operation}: {detail}")
+            }
+            Self::Unavailable {
+                thread_id,
+                turn_count,
+                detail,
+            } => {
+                format!("Checkpoint unavailable for thread {thread_id} turn {turn_count}: {detail}")
+            }
+        }
+    }
+}
+
+pub fn build_checkpoint_diff_result(
+    thread_id: &str,
+    from_turn_count: u32,
+    to_turn_count: u32,
+    diff: impl Into<String>,
+) -> OrchestrationCheckpointDiffResult {
+    OrchestrationCheckpointDiffResult {
+        thread_id: thread_id.to_string(),
+        from_turn_count,
+        to_turn_count,
+        diff: diff.into(),
+    }
+}
+
+fn checkpoint_diff_workspace_cwd(
+    workspace_root: &str,
+    worktree_path: Option<&str>,
+) -> Option<String> {
+    worktree_path
+        .filter(|path| !path.is_empty())
+        .or_else(|| (!workspace_root.is_empty()).then_some(workspace_root))
+        .map(str::to_string)
+}
+
+fn checkpoint_ref_from_context(
+    context: &ProjectionThreadCheckpointContext,
+    turn_count: u32,
+) -> Option<String> {
+    context
+        .checkpoints
+        .iter()
+        .find(|checkpoint| checkpoint.checkpoint_turn_count == turn_count)
+        .map(|checkpoint| checkpoint.checkpoint_ref.clone())
+}
+
+pub fn resolve_checkpoint_turn_diff_query(
+    input: &OrchestrationGetTurnDiffInput,
+    context: Option<&ProjectionThreadCheckpointContext>,
+) -> Result<CheckpointDiffQueryDecision, CheckpointDiffQueryError> {
+    const OPERATION: &str = "CheckpointDiffQuery.getTurnDiff";
+    let ignore_whitespace = input.ignore_whitespace.unwrap_or(true);
+
+    if input.from_turn_count == input.to_turn_count {
+        return Ok(CheckpointDiffQueryDecision::Empty(
+            build_checkpoint_diff_result(
+                &input.thread_id,
+                input.from_turn_count,
+                input.to_turn_count,
+                "",
+            ),
+        ));
+    }
+
+    let context = context.ok_or_else(|| CheckpointDiffQueryError::Invariant {
+        operation: OPERATION,
+        detail: format!("Thread '{}' not found.", input.thread_id),
+    })?;
+
+    let max_turn_count = context
+        .checkpoints
+        .iter()
+        .map(|checkpoint| checkpoint.checkpoint_turn_count)
+        .max()
+        .unwrap_or(0);
+    if input.to_turn_count > max_turn_count {
+        return Err(CheckpointDiffQueryError::Unavailable {
+            thread_id: input.thread_id.clone(),
+            turn_count: input.to_turn_count,
+            detail: format!(
+                "Turn diff range exceeds current turn count: requested {}, current {}.",
+                input.to_turn_count, max_turn_count
+            ),
+        });
+    }
+
+    let cwd =
+        checkpoint_diff_workspace_cwd(&context.workspace_root, context.worktree_path.as_deref())
+            .ok_or_else(|| CheckpointDiffQueryError::Invariant {
+                operation: OPERATION,
+                detail: format!(
+                    "Workspace path missing for thread '{}' when computing turn diff.",
+                    input.thread_id
+                ),
+            })?;
+
+    let from_checkpoint_ref = if input.from_turn_count == 0 {
+        Some(checkpoint_ref_for_thread_turn(&input.thread_id, 0))
+    } else {
+        checkpoint_ref_from_context(context, input.from_turn_count)
+    }
+    .ok_or_else(|| CheckpointDiffQueryError::Unavailable {
+        thread_id: input.thread_id.clone(),
+        turn_count: input.from_turn_count,
+        detail: format!(
+            "Checkpoint ref is unavailable for turn {}.",
+            input.from_turn_count
+        ),
+    })?;
+
+    let to_checkpoint_ref =
+        checkpoint_ref_from_context(context, input.to_turn_count).ok_or_else(|| {
+            CheckpointDiffQueryError::Unavailable {
+                thread_id: input.thread_id.clone(),
+                turn_count: input.to_turn_count,
+                detail: format!(
+                    "Checkpoint ref is unavailable for turn {}.",
+                    input.to_turn_count
+                ),
+            }
+        })?;
+
+    Ok(CheckpointDiffQueryDecision::Diff(CheckpointDiffQueryPlan {
+        thread_id: input.thread_id.clone(),
+        from_turn_count: input.from_turn_count,
+        to_turn_count: input.to_turn_count,
+        cwd,
+        from_checkpoint_ref,
+        to_checkpoint_ref,
+        fallback_from_to_head: false,
+        ignore_whitespace,
+    }))
+}
+
+pub fn resolve_checkpoint_full_thread_diff_query(
+    input: &OrchestrationGetFullThreadDiffInput,
+    context: Option<&ProjectionFullThreadDiffContext>,
+) -> Result<CheckpointDiffQueryDecision, CheckpointDiffQueryError> {
+    const OPERATION: &str = "CheckpointDiffQuery.getFullThreadDiff";
+    let ignore_whitespace = input.ignore_whitespace.unwrap_or(true);
+
+    if input.to_turn_count == 0 {
+        return Ok(CheckpointDiffQueryDecision::Empty(
+            build_checkpoint_diff_result(&input.thread_id, 0, 0, ""),
+        ));
+    }
+
+    let context = context.ok_or_else(|| CheckpointDiffQueryError::Invariant {
+        operation: OPERATION,
+        detail: format!("Thread '{}' not found.", input.thread_id),
+    })?;
+
+    if input.to_turn_count > context.latest_checkpoint_turn_count {
+        return Err(CheckpointDiffQueryError::Unavailable {
+            thread_id: input.thread_id.clone(),
+            turn_count: input.to_turn_count,
+            detail: format!(
+                "Turn diff range exceeds current turn count: requested {}, current {}.",
+                input.to_turn_count, context.latest_checkpoint_turn_count
+            ),
+        });
+    }
+
+    let cwd =
+        checkpoint_diff_workspace_cwd(&context.workspace_root, context.worktree_path.as_deref())
+            .ok_or_else(|| CheckpointDiffQueryError::Invariant {
+                operation: OPERATION,
+                detail: format!(
+                    "Workspace path missing for thread '{}' when computing full thread diff.",
+                    input.thread_id
+                ),
+            })?;
+
+    let to_checkpoint_ref =
+        context
+            .to_checkpoint_ref
+            .clone()
+            .ok_or_else(|| CheckpointDiffQueryError::Unavailable {
+                thread_id: input.thread_id.clone(),
+                turn_count: input.to_turn_count,
+                detail: format!(
+                    "Checkpoint ref is unavailable for turn {}.",
+                    input.to_turn_count
+                ),
+            })?;
+
+    Ok(CheckpointDiffQueryDecision::Diff(CheckpointDiffQueryPlan {
+        thread_id: input.thread_id.clone(),
+        from_turn_count: 0,
+        to_turn_count: input.to_turn_count,
+        cwd,
+        from_checkpoint_ref: checkpoint_ref_for_thread_turn(&input.thread_id, 0),
+        to_checkpoint_ref,
+        fallback_from_to_head: false,
+        ignore_whitespace,
+    }))
+}
+
 pub fn checkpoint_status_from_runtime(status: Option<&str>) -> CheckpointDiffStatus {
     match status {
         Some("failed") => CheckpointDiffStatus::Error,
@@ -4215,6 +4503,18 @@ mod tests {
         }
     }
 
+    fn checkpoint(turn_count: u32) -> ProjectionCheckpointSummary {
+        ProjectionCheckpointSummary {
+            turn_id: format!("turn-{turn_count}"),
+            checkpoint_turn_count: turn_count,
+            checkpoint_ref: checkpoint_ref_for_thread_turn("thread-1", turn_count),
+            status: "ready".to_string(),
+            files: Vec::new(),
+            assistant_message_id: None,
+            completed_at: "2026-01-01T00:00:00.000Z".to_string(),
+        }
+    }
+
     #[test]
     fn ports_runtime_receipt_bus_and_checkpoint_reactor_contracts() {
         assert_eq!(
@@ -4347,6 +4647,183 @@ mod tests {
                 detail: "No active provider session with workspace cwd is bound to this thread."
                     .to_string(),
             }]
+        );
+    }
+
+    #[test]
+    fn ports_checkpoint_diff_query_contracts() {
+        let context = ProjectionThreadCheckpointContext {
+            thread_id: "thread-1".to_string(),
+            project_id: "project-1".to_string(),
+            workspace_root: "/tmp/workspace".to_string(),
+            worktree_path: Some("/tmp/worktree".to_string()),
+            checkpoints: vec![checkpoint(1), checkpoint(4)],
+        };
+
+        assert_eq!(
+            resolve_checkpoint_turn_diff_query(
+                &OrchestrationGetTurnDiffInput {
+                    thread_id: "thread-1".to_string(),
+                    from_turn_count: 0,
+                    to_turn_count: 1,
+                    ignore_whitespace: None,
+                },
+                Some(&context),
+            )
+            .unwrap(),
+            CheckpointDiffQueryDecision::Diff(CheckpointDiffQueryPlan {
+                thread_id: "thread-1".to_string(),
+                from_turn_count: 0,
+                to_turn_count: 1,
+                cwd: "/tmp/worktree".to_string(),
+                from_checkpoint_ref: checkpoint_ref_for_thread_turn("thread-1", 0),
+                to_checkpoint_ref: checkpoint_ref_for_thread_turn("thread-1", 1),
+                fallback_from_to_head: false,
+                ignore_whitespace: true,
+            })
+        );
+
+        assert_eq!(
+            resolve_checkpoint_turn_diff_query(
+                &OrchestrationGetTurnDiffInput {
+                    thread_id: "thread-1".to_string(),
+                    from_turn_count: 2,
+                    to_turn_count: 2,
+                    ignore_whitespace: Some(false),
+                },
+                None,
+            )
+            .unwrap(),
+            CheckpointDiffQueryDecision::Empty(build_checkpoint_diff_result("thread-1", 2, 2, ""))
+        );
+
+        let full_context = ProjectionFullThreadDiffContext {
+            thread_id: "thread-1".to_string(),
+            project_id: "project-1".to_string(),
+            workspace_root: "/tmp/workspace".to_string(),
+            worktree_path: None,
+            latest_checkpoint_turn_count: 4,
+            to_checkpoint_ref: Some(checkpoint_ref_for_thread_turn("thread-1", 4)),
+        };
+        assert_eq!(
+            resolve_checkpoint_full_thread_diff_query(
+                &OrchestrationGetFullThreadDiffInput {
+                    thread_id: "thread-1".to_string(),
+                    to_turn_count: 4,
+                    ignore_whitespace: Some(false),
+                },
+                Some(&full_context),
+            )
+            .unwrap(),
+            CheckpointDiffQueryDecision::Diff(CheckpointDiffQueryPlan {
+                thread_id: "thread-1".to_string(),
+                from_turn_count: 0,
+                to_turn_count: 4,
+                cwd: "/tmp/workspace".to_string(),
+                from_checkpoint_ref: checkpoint_ref_for_thread_turn("thread-1", 0),
+                to_checkpoint_ref: checkpoint_ref_for_thread_turn("thread-1", 4),
+                fallback_from_to_head: false,
+                ignore_whitespace: false,
+            })
+        );
+        assert_eq!(
+            resolve_checkpoint_full_thread_diff_query(
+                &OrchestrationGetFullThreadDiffInput {
+                    thread_id: "thread-1".to_string(),
+                    to_turn_count: 0,
+                    ignore_whitespace: None,
+                },
+                None,
+            )
+            .unwrap(),
+            CheckpointDiffQueryDecision::Empty(build_checkpoint_diff_result("thread-1", 0, 0, ""))
+        );
+
+        assert_eq!(
+            resolve_checkpoint_turn_diff_query(
+                &OrchestrationGetTurnDiffInput {
+                    thread_id: "thread-missing".to_string(),
+                    from_turn_count: 0,
+                    to_turn_count: 1,
+                    ignore_whitespace: None,
+                },
+                None,
+            )
+            .unwrap_err()
+            .message(),
+            "Checkpoint invariant violation in CheckpointDiffQuery.getTurnDiff: Thread 'thread-missing' not found."
+        );
+
+        assert_eq!(
+            resolve_checkpoint_turn_diff_query(
+                &OrchestrationGetTurnDiffInput {
+                    thread_id: "thread-1".to_string(),
+                    from_turn_count: 0,
+                    to_turn_count: 5,
+                    ignore_whitespace: None,
+                },
+                Some(&context),
+            )
+            .unwrap_err()
+            .message(),
+            "Checkpoint unavailable for thread thread-1 turn 5: Turn diff range exceeds current turn count: requested 5, current 4."
+        );
+
+        let missing_workspace = ProjectionFullThreadDiffContext {
+            workspace_root: String::new(),
+            to_checkpoint_ref: Some(checkpoint_ref_for_thread_turn("thread-1", 1)),
+            latest_checkpoint_turn_count: 1,
+            ..full_context
+        };
+        assert_eq!(
+            resolve_checkpoint_full_thread_diff_query(
+                &OrchestrationGetFullThreadDiffInput {
+                    thread_id: "thread-1".to_string(),
+                    to_turn_count: 1,
+                    ignore_whitespace: None,
+                },
+                Some(&missing_workspace),
+            )
+            .unwrap_err()
+            .message(),
+            "Checkpoint invariant violation in CheckpointDiffQuery.getFullThreadDiff: Workspace path missing for thread 'thread-1' when computing full thread diff."
+        );
+
+        let missing_ref = ProjectionFullThreadDiffContext {
+            to_checkpoint_ref: None,
+            ..missing_workspace
+        };
+        assert_eq!(
+            resolve_checkpoint_full_thread_diff_query(
+                &OrchestrationGetFullThreadDiffInput {
+                    thread_id: "thread-1".to_string(),
+                    to_turn_count: 1,
+                    ignore_whitespace: None,
+                },
+                Some(&missing_ref),
+            )
+            .unwrap_err()
+            .message(),
+            "Checkpoint invariant violation in CheckpointDiffQuery.getFullThreadDiff: Workspace path missing for thread 'thread-1' when computing full thread diff."
+        );
+
+        let missing_to_ref = ProjectionFullThreadDiffContext {
+            workspace_root: "/tmp/workspace".to_string(),
+            to_checkpoint_ref: None,
+            ..missing_ref
+        };
+        assert_eq!(
+            resolve_checkpoint_full_thread_diff_query(
+                &OrchestrationGetFullThreadDiffInput {
+                    thread_id: "thread-1".to_string(),
+                    to_turn_count: 1,
+                    ignore_whitespace: None,
+                },
+                Some(&missing_to_ref),
+            )
+            .unwrap_err()
+            .message(),
+            "Checkpoint unavailable for thread thread-1 turn 1: Checkpoint ref is unavailable for turn 1."
         );
     }
 

@@ -1770,10 +1770,10 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
         )
     } else if path.starts_with("apps/server/src/checkpointing/") {
         (
-            "diff summary/tree helpers in crates/r3_core/src/lib.rs",
+            "diff summary/tree helpers in crates/r3_core/src/lib.rs plus checkpoint diff query planning, canonical checkpoint refs, narrow full-thread context, and error/default contracts in crates/r3_core/src/orchestration.rs",
             "partial",
-            "`cargo test --workspace` diff tests",
-            "Port checkpoint store and diff blob query.",
+            "`cargo test -p r3_core orchestration`; `cargo test --workspace` diff tests",
+            "Port live checkpoint store execution, diff blob persistence, and generated patch retrieval.",
         )
     } else if path.starts_with("apps/server/src/workspace/")
         || path == "packages/contracts/src/project.ts"
