@@ -233,6 +233,46 @@ pub fn is_model_picker_new_model(provider: &str, slug: &str) -> bool {
     NEW_MODEL_KEYS.contains(&key.as_str())
 }
 
+pub fn is_transport_connection_error_message(message: Option<&str>) -> bool {
+    let Some(message) = message.map(str::trim).filter(|message| !message.is_empty()) else {
+        return false;
+    };
+    let lower = message.to_ascii_lowercase();
+    contains_ascii_word(&lower, "socketcloseerror")
+        || contains_ascii_word(&lower, "socketopenerror")
+        || lower.contains("unable to connect to the t3 server websocket.")
+        || contains_ascii_word(&lower, "ping timeout")
+}
+
+pub fn sanitize_thread_error_message(message: Option<&str>) -> Option<String> {
+    if is_transport_connection_error_message(message) {
+        None
+    } else {
+        message.map(str::to_string)
+    }
+}
+
+fn contains_ascii_word(haystack: &str, needle: &str) -> bool {
+    let mut search_start = 0;
+    while let Some(relative_index) = haystack[search_start..].find(needle) {
+        let start = search_start + relative_index;
+        let end = start + needle.len();
+        let before = haystack[..start].chars().next_back();
+        let after = haystack[end..].chars().next();
+        let before_boundary = before.is_none_or(|ch| !is_js_regex_word_char(ch));
+        let after_boundary = after.is_none_or(|ch| !is_js_regex_word_char(ch));
+        if before_boundary && after_boundary {
+            return true;
+        }
+        search_start = end;
+    }
+    false
+}
+
+fn is_js_regex_word_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || ch == '_'
+}
+
 fn to_base36(value: u32) -> String {
     const DIGITS: &[u8; 36] = b"0123456789abcdefghijklmnopqrstuvwxyz";
     if value == 0 {
@@ -21236,6 +21276,39 @@ mod tests {
             "diff-panel:2:1kdnhdk:d1ty04"
         );
         assert!(!is_model_picker_new_model("claudeAgent", "claude-opus-4-7"));
+    }
+
+    #[test]
+    fn transport_error_filtering_matches_upstream_patterns() {
+        assert!(is_transport_connection_error_message(Some(
+            "SocketCloseError: 1006"
+        )));
+        assert!(is_transport_connection_error_message(Some(
+            "Unable to connect to the T3 server WebSocket."
+        )));
+        assert!(is_transport_connection_error_message(Some(
+            "SocketOpenError: Timeout"
+        )));
+        assert!(is_transport_connection_error_message(Some("ping timeout")));
+        assert!(!is_transport_connection_error_message(Some(
+            "prefixSocketCloseErrorsuffix"
+        )));
+        assert!(!is_transport_connection_error_message(Some("   ")));
+        assert!(!is_transport_connection_error_message(None));
+
+        assert_eq!(
+            sanitize_thread_error_message(Some("Turn failed")).as_deref(),
+            Some("Turn failed")
+        );
+        assert_eq!(
+            sanitize_thread_error_message(Some("Select a base branch before sending.")).as_deref(),
+            Some("Select a base branch before sending.")
+        );
+        assert_eq!(
+            sanitize_thread_error_message(Some("SocketCloseError: 1006")),
+            None
+        );
+        assert_eq!(sanitize_thread_error_message(None), None);
     }
 
     #[test]

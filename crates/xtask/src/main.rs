@@ -1885,6 +1885,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core diff_rendering_and_model_highlight`",
             "Wire highlight lookup into live GPUI model picker list rows.",
         )
+    } else if path == "apps/web/src/rpc/transportError.ts"
+        || path == "apps/web/src/rpc/transportError.test.ts"
+    {
+        (
+            "transport connection error pattern detection and thread error sanitization helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core transport_error_filtering`",
+            "Wire helper into live GPUI thread error surfaces.",
+        )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
             "logical project path normalization, physical/grouping/order keys, repository-scoped keys, settings override resolution, ref fallback, and group-label helpers in crates/r3_core/src/lib.rs",
