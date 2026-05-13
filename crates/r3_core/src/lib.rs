@@ -6056,6 +6056,7 @@ pub struct SourceControlProviderErrorContract {
     pub provider: SourceControlProviderKind,
     pub operation: String,
     pub detail: String,
+    pub cause: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -6191,6 +6192,7 @@ pub struct SourceControlRepositoryErrorContract {
     pub provider: SourceControlProviderKind,
     pub operation: String,
     pub detail: String,
+    pub cause: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6625,10 +6627,20 @@ pub fn source_control_repository_error(
     operation: &str,
     detail: &str,
 ) -> SourceControlRepositoryErrorContract {
+    source_control_repository_error_with_cause(provider, operation, detail, None)
+}
+
+pub fn source_control_repository_error_with_cause(
+    provider: SourceControlProviderKind,
+    operation: &str,
+    detail: &str,
+    cause: Option<&str>,
+) -> SourceControlRepositoryErrorContract {
     SourceControlRepositoryErrorContract {
         provider,
         operation: operation.to_string(),
         detail: detail.to_string(),
+        cause: trimmed_optional_string(cause),
     }
 }
 
@@ -7990,13 +8002,28 @@ pub fn unsupported_source_control_provider_error(
     kind: SourceControlProviderKind,
     operation: &str,
 ) -> SourceControlProviderErrorContract {
-    SourceControlProviderErrorContract {
-        provider: kind,
-        operation: operation.to_string(),
-        detail: format!(
+    source_control_provider_error_with_cause(
+        kind,
+        operation,
+        &format!(
             "No {} source control provider is registered.",
             source_control_provider_kind_contract_value(kind)
         ),
+        None,
+    )
+}
+
+pub fn source_control_provider_error_with_cause(
+    kind: SourceControlProviderKind,
+    operation: &str,
+    detail: &str,
+    cause: Option<&str>,
+) -> SourceControlProviderErrorContract {
+    SourceControlProviderErrorContract {
+        provider: kind,
+        operation: operation.to_string(),
+        detail: detail.to_string(),
+        cause: trimmed_optional_string(cause),
     }
 }
 
@@ -8008,6 +8035,7 @@ pub fn source_control_provider_detection_error(
         provider: SourceControlProviderKind::Unknown,
         operation: operation.to_string(),
         detail: format!("Failed to detect source control provider for {cwd}."),
+        cause: None,
     }
 }
 
@@ -20483,6 +20511,30 @@ mod tests {
             .message(),
             "Source control repository operation publishRepository failed for unknown: Choose a source control provider before continuing."
         );
+        assert_eq!(
+            source_control_repository_error_with_cause(
+                SourceControlProviderKind::Github,
+                "cloneRepository",
+                "Git clone failed.",
+                Some("exit code 128"),
+            ),
+            SourceControlRepositoryErrorContract {
+                provider: SourceControlProviderKind::Github,
+                operation: "cloneRepository".to_string(),
+                detail: "Git clone failed.".to_string(),
+                cause: Some("exit code 128".to_string()),
+            }
+        );
+        assert_eq!(
+            source_control_repository_error_with_cause(
+                SourceControlProviderKind::Github,
+                "cloneRepository",
+                "Git clone failed.",
+                Some("   "),
+            )
+            .cause,
+            None
+        );
 
         assert_eq!(
             source_control_repository_lookup_input(
@@ -20795,6 +20847,20 @@ mod tests {
             )
             .message(),
             "Source control provider unknown failed in getDefaultBranch: No unknown source control provider is registered."
+        );
+        assert_eq!(
+            source_control_provider_error_with_cause(
+                SourceControlProviderKind::Github,
+                "listChangeRequests",
+                "GitHub CLI failed.",
+                Some("exit code 1"),
+            ),
+            SourceControlProviderErrorContract {
+                provider: SourceControlProviderKind::Github,
+                operation: "listChangeRequests".to_string(),
+                detail: "GitHub CLI failed.".to_string(),
+                cause: Some("exit code 1".to_string()),
+            }
         );
         assert_eq!(
             source_control_provider_detection_error("detectProvider", "/repo").message(),

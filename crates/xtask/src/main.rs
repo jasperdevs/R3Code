@@ -2383,7 +2383,7 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
         )
     } else if path == "packages/contracts/src/sourceControl.ts" {
         (
-            "source-control provider/auth/context contracts, change-request state/schema/normalizers, repository clone URL/visibility/info schemas, repository lookup plus clone/publish input/result contracts, VCS/provider discovery result contracts, provider registration/binding/unsupported-operation contracts, Bitbucket API discovery/auth contracts, and provider operation wire values in crates/r3_core/src/lib.rs",
+            "source-control provider/auth/context contracts, change-request state/schema/normalizers, repository clone URL/visibility/info schemas, repository lookup plus clone/publish input/result contracts, VCS/provider discovery result contracts, provider/repository tagged error cause/message contracts, provider registration/binding/unsupported-operation contracts, Bitbucket API discovery/auth contracts, and provider operation wire values in crates/r3_core/src/lib.rs",
             "partial",
             "`cargo test -p r3_core source_control`",
             "Port generated Effect schemas, exact runtime validators/encoders, and any remaining live source-control RPC schema wiring.",
