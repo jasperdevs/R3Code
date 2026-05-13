@@ -2459,6 +2459,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace open_in_picker_visibility_and_options_match_upstream_logic`",
             "Wire remaining header action layout, project script controls, git actions, terminal/diff tooltips, and exact GPUI responsive behavior.",
         )
+    } else if path == "apps/web/src/components/chat/ChangedFilesTree.test.tsx"
+        || path == "apps/web/src/components/chat/ChangedFilesTree.tsx"
+    {
+        (
+            "ChangedFilesTree compacted directory labels plus collapsed/expanded initial visibility for single-chain, branch-point, and mixed root/nested paths in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace changed_files_tree_initial_labels_match_upstream_expansion_contract`; `cargo test --workspace turn_diff_tree_compacts_directory_chains_and_sorts_numerically`",
+            "Wire directory toggle state, per-directory overrides, diff-open callbacks, file icons, and exact GPUI tree rendering.",
+        )
     } else if path == "apps/web/src/components/settings/SettingsPanels.logic.test.ts"
         || path == "apps/web/src/components/settings/SettingsPanels.logic.ts"
     {

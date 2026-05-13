@@ -26047,6 +26047,31 @@ pub fn build_turn_diff_tree(files: &[TurnDiffFileChange]) -> Vec<TurnDiffTreeNod
     to_turn_diff_tree_nodes(root)
 }
 
+pub fn changed_files_tree_initial_visible_labels(
+    files: &[TurnDiffFileChange],
+    all_directories_expanded: bool,
+) -> Vec<String> {
+    fn collect(node: &TurnDiffTreeNode, all_directories_expanded: bool, labels: &mut Vec<String>) {
+        match node {
+            TurnDiffTreeNode::Directory { name, children, .. } => {
+                labels.push(name.clone());
+                if all_directories_expanded {
+                    for child in children {
+                        collect(child, all_directories_expanded, labels);
+                    }
+                }
+            }
+            TurnDiffTreeNode::File { name, .. } => labels.push(name.clone()),
+        }
+    }
+
+    let mut labels = Vec::new();
+    for node in build_turn_diff_tree(files) {
+        collect(&node, all_directories_expanded, &mut labels);
+    }
+    labels
+}
+
 pub fn ordered_turn_diff_files(files: &[TurnDiffFileChange]) -> Vec<TurnDiffFileChange> {
     let mut ordered = files.to_vec();
     ordered.sort_by(|left, right| {
@@ -42978,6 +43003,70 @@ mod tests {
                 ],
             }]
         );
+    }
+
+    #[test]
+    fn changed_files_tree_initial_labels_match_upstream_expansion_contract() {
+        let single_chain = vec![
+            diff_file("apps/web/src/index.ts", Some(2), Some(1)),
+            diff_file("apps/web/src/main.ts", Some(3), Some(0)),
+        ];
+        let collapsed = changed_files_tree_initial_visible_labels(&single_chain, false);
+        assert!(collapsed.contains(&"apps/web/src".to_string()));
+        assert!(!collapsed.contains(&"index.ts".to_string()));
+        assert!(!collapsed.contains(&"main.ts".to_string()));
+        let expanded = changed_files_tree_initial_visible_labels(&single_chain, true);
+        for label in ["apps/web/src", "index.ts", "main.ts"] {
+            assert!(expanded.contains(&label.to_string()));
+        }
+
+        let branch_point = vec![
+            diff_file("apps/server/src/git/Layers/GitCore.ts", Some(4), Some(3)),
+            diff_file(
+                "apps/server/src/provider/Layers/CodexAdapter.ts",
+                Some(7),
+                Some(2),
+            ),
+        ];
+        let collapsed = changed_files_tree_initial_visible_labels(&branch_point, false);
+        assert!(collapsed.contains(&"apps/server/src".to_string()));
+        for label in ["git", "provider", "GitCore.ts", "CodexAdapter.ts"] {
+            assert!(!collapsed.contains(&label.to_string()));
+        }
+        let expanded = changed_files_tree_initial_visible_labels(&branch_point, true);
+        for label in [
+            "apps/server/src",
+            "git/Layers",
+            "provider/Layers",
+            "GitCore.ts",
+            "CodexAdapter.ts",
+        ] {
+            assert!(expanded.contains(&label.to_string()));
+        }
+
+        let mixed = vec![
+            diff_file("README.md", Some(1), Some(0)),
+            diff_file("packages/shared/src/git.ts", Some(8), Some(2)),
+            diff_file("packages/contracts/src/orchestration.ts", Some(13), Some(3)),
+        ];
+        let collapsed = changed_files_tree_initial_visible_labels(&mixed, false);
+        for label in ["README.md", "packages"] {
+            assert!(collapsed.contains(&label.to_string()));
+        }
+        for label in ["shared/src", "contracts/src", "git.ts", "orchestration.ts"] {
+            assert!(!collapsed.contains(&label.to_string()));
+        }
+        let expanded = changed_files_tree_initial_visible_labels(&mixed, true);
+        for label in [
+            "README.md",
+            "packages",
+            "shared/src",
+            "contracts/src",
+            "git.ts",
+            "orchestration.ts",
+        ] {
+            assert!(expanded.contains(&label.to_string()));
+        }
     }
 
     #[test]
