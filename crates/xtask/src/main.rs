@@ -2041,6 +2041,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core state_storage_helpers_match_upstream_contract`",
             "Wire debounced storage adapter into live GPUI persistence surfaces that replace browser storage.",
         )
+    } else if path == "apps/web/src/lib/terminalContext.ts"
+        || path == "apps/web/src/lib/terminalContext.test.ts"
+    {
+        (
+            "terminal context text normalization, labels, numbered context blocks, prompt append/extract/display state, inline placeholder insertion/removal/materialization, expiry filtering, and preview titles in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core terminal_context`; `cargo test -p r3_core inline_terminal_context`",
+            "Wire terminal context helpers into live GPUI terminal snapshot capture, composer chips, and displayed user-message rendering.",
+        )
     } else if path == "apps/web/src/lib/threadSort.ts"
         || path == "apps/web/src/lib/threadSort.test.ts"
     {
