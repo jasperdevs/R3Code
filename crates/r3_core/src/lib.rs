@@ -4950,6 +4950,170 @@ pub enum VcsDriverKind {
     Unknown,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VcsFreshnessSource {
+    LiveLocal,
+    CachedLocal,
+    CachedRemote,
+    ExplicitRemote,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VcsFreshness {
+    pub source: VcsFreshnessSource,
+    pub observed_at: String,
+    pub expires_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VcsIgnoreClassifier {
+    Native,
+    GitCompatibleFallback,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VcsDriverCapabilities {
+    pub kind: VcsDriverKind,
+    pub supports_worktrees: bool,
+    pub supports_bookmarks: bool,
+    pub supports_atomic_snapshot: bool,
+    pub supports_push_default_remote: bool,
+    pub ignore_classifier: VcsIgnoreClassifier,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VcsRepositoryIdentity {
+    pub kind: VcsDriverKind,
+    pub root_path: String,
+    pub metadata_path: Option<String>,
+    pub freshness: VcsFreshness,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VcsListWorkspaceFilesResult {
+    pub paths: Vec<String>,
+    pub truncated: bool,
+    pub freshness: VcsFreshness,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VcsRemote {
+    pub name: String,
+    pub url: String,
+    pub push_url: Option<String>,
+    pub is_primary: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VcsListRemotesResult {
+    pub remotes: Vec<VcsRemote>,
+    pub freshness: VcsFreshness,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VcsProcessErrorContext {
+    pub operation: String,
+    pub command: String,
+    pub cwd: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VcsContractError {
+    ProcessSpawn {
+        context: VcsProcessErrorContext,
+    },
+    ProcessExit {
+        context: VcsProcessErrorContext,
+        exit_code: i32,
+        detail: String,
+    },
+    ProcessTimeout {
+        context: VcsProcessErrorContext,
+        timeout_ms: u64,
+    },
+    OutputDecode {
+        context: VcsProcessErrorContext,
+        detail: String,
+    },
+    RepositoryDetection {
+        operation: String,
+        cwd: String,
+        detail: String,
+    },
+    UnsupportedOperation {
+        operation: String,
+        kind: VcsDriverKind,
+        detail: String,
+    },
+}
+
+impl VcsContractError {
+    pub fn message(&self) -> String {
+        match self {
+            Self::ProcessSpawn { context } => format!(
+                "VCS process failed to spawn in {}: {} ({})",
+                context.operation, context.command, context.cwd
+            ),
+            Self::ProcessExit {
+                context,
+                exit_code,
+                detail,
+            } => format!(
+                "VCS process failed in {}: {} ({}) exited with {} - {}",
+                context.operation, context.command, context.cwd, exit_code, detail
+            ),
+            Self::ProcessTimeout {
+                context,
+                timeout_ms,
+            } => format!(
+                "VCS process timed out in {}: {} ({}) after {}ms",
+                context.operation, context.command, context.cwd, timeout_ms
+            ),
+            Self::OutputDecode { context, detail } => format!(
+                "VCS output decode failed in {}: {} ({}) - {}",
+                context.operation, context.command, context.cwd, detail
+            ),
+            Self::RepositoryDetection {
+                operation,
+                cwd,
+                detail,
+            } => format!("VCS repository detection failed in {operation}: {cwd} - {detail}"),
+            Self::UnsupportedOperation {
+                operation,
+                kind,
+                detail,
+            } => format!(
+                "VCS operation is unsupported for {} in {operation}: {detail}",
+                vcs_driver_kind_schema_value(*kind)
+            ),
+        }
+    }
+}
+
+pub fn vcs_driver_kind_schema_value(kind: VcsDriverKind) -> &'static str {
+    match kind {
+        VcsDriverKind::Git => "git",
+        VcsDriverKind::Jj => "jj",
+        VcsDriverKind::Unknown => "unknown",
+    }
+}
+
+pub fn vcs_freshness_source_schema_value(source: VcsFreshnessSource) -> &'static str {
+    match source {
+        VcsFreshnessSource::LiveLocal => "live-local",
+        VcsFreshnessSource::CachedLocal => "cached-local",
+        VcsFreshnessSource::CachedRemote => "cached-remote",
+        VcsFreshnessSource::ExplicitRemote => "explicit-remote",
+    }
+}
+
+pub fn vcs_ignore_classifier_schema_value(classifier: VcsIgnoreClassifier) -> &'static str {
+    match classifier {
+        VcsIgnoreClassifier::Native => "native",
+        VcsIgnoreClassifier::GitCompatibleFallback => "git-compatible-fallback",
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceControlProviderAuth {
     pub status: SourceControlProviderAuthStatus,
@@ -15072,6 +15236,122 @@ mod tests {
         assert_eq!(
             source_control_item_summary(&authed_github),
             "Authenticated as jasper"
+        );
+    }
+
+    #[test]
+    fn vcs_contract_shapes_and_messages_match_upstream() {
+        assert_eq!(vcs_driver_kind_schema_value(VcsDriverKind::Git), "git");
+        assert_eq!(vcs_driver_kind_schema_value(VcsDriverKind::Jj), "jj");
+        assert_eq!(
+            vcs_freshness_source_schema_value(VcsFreshnessSource::LiveLocal),
+            "live-local"
+        );
+        assert_eq!(
+            vcs_freshness_source_schema_value(VcsFreshnessSource::CachedRemote),
+            "cached-remote"
+        );
+        assert_eq!(
+            vcs_ignore_classifier_schema_value(VcsIgnoreClassifier::GitCompatibleFallback),
+            "git-compatible-fallback"
+        );
+
+        let freshness = VcsFreshness {
+            source: VcsFreshnessSource::LiveLocal,
+            observed_at: "2026-05-13T12:00:00.000Z".to_string(),
+            expires_at: None,
+        };
+        let capabilities = VcsDriverCapabilities {
+            kind: VcsDriverKind::Git,
+            supports_worktrees: true,
+            supports_bookmarks: false,
+            supports_atomic_snapshot: true,
+            supports_push_default_remote: true,
+            ignore_classifier: VcsIgnoreClassifier::Native,
+        };
+        assert!(capabilities.supports_worktrees);
+        assert_eq!(capabilities.ignore_classifier, VcsIgnoreClassifier::Native);
+
+        let identity = VcsRepositoryIdentity {
+            kind: VcsDriverKind::Git,
+            root_path: "/repo".to_string(),
+            metadata_path: Some("/repo/.git".to_string()),
+            freshness: freshness.clone(),
+        };
+        assert_eq!(identity.metadata_path.as_deref(), Some("/repo/.git"));
+
+        let workspace_files = VcsListWorkspaceFilesResult {
+            paths: vec!["src/main.rs".to_string()],
+            truncated: false,
+            freshness: freshness.clone(),
+        };
+        assert_eq!(workspace_files.paths, vec!["src/main.rs"]);
+
+        let remotes = VcsListRemotesResult {
+            remotes: vec![VcsRemote {
+                name: "origin".to_string(),
+                url: "git@github.com:pingdotgg/t3code.git".to_string(),
+                push_url: None,
+                is_primary: true,
+            }],
+            freshness,
+        };
+        assert!(remotes.remotes[0].is_primary);
+
+        let context = VcsProcessErrorContext {
+            operation: "VcsProcess.run".to_string(),
+            command: "git status --short".to_string(),
+            cwd: "/repo".to_string(),
+        };
+        assert_eq!(
+            VcsContractError::ProcessSpawn {
+                context: context.clone()
+            }
+            .message(),
+            "VCS process failed to spawn in VcsProcess.run: git status --short (/repo)"
+        );
+        assert_eq!(
+            VcsContractError::ProcessExit {
+                context: context.clone(),
+                exit_code: 2,
+                detail: "fatal".to_string(),
+            }
+            .message(),
+            "VCS process failed in VcsProcess.run: git status --short (/repo) exited with 2 - fatal"
+        );
+        assert_eq!(
+            VcsContractError::ProcessTimeout {
+                context: context.clone(),
+                timeout_ms: 30_000,
+            }
+            .message(),
+            "VCS process timed out in VcsProcess.run: git status --short (/repo) after 30000ms"
+        );
+        assert_eq!(
+            VcsContractError::OutputDecode {
+                context,
+                detail: "process completed without an exit code".to_string(),
+            }
+            .message(),
+            "VCS output decode failed in VcsProcess.run: git status --short (/repo) - process completed without an exit code"
+        );
+        assert_eq!(
+            VcsContractError::RepositoryDetection {
+                operation: "detect".to_string(),
+                cwd: "/repo".to_string(),
+                detail: "not a repository".to_string(),
+            }
+            .message(),
+            "VCS repository detection failed in detect: /repo - not a repository"
+        );
+        assert_eq!(
+            VcsContractError::UnsupportedOperation {
+                operation: "snapshot".to_string(),
+                kind: VcsDriverKind::Jj,
+                detail: "not implemented".to_string(),
+            }
+            .message(),
+            "VCS operation is unsupported for jj in snapshot: not implemented"
         );
     }
 

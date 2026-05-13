@@ -2359,6 +2359,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace` client runtime helper tests",
             "Wire browser AtomRegistry/reactivity runtime, async refresh deduplication with real RPC clients, package exports, and generated contract types.",
         )
+    } else if path == "packages/contracts/src/vcs.ts" {
+        (
+            "VCS driver, freshness, repository identity, remote-list, process-error, repository-detection, and unsupported-operation contract shapes/messages in crates/r3_core/src/lib.rs plus VCS process run contracts in crates/r3_core/src/process.rs",
+            "partial",
+            "`cargo test -p r3_core vcs`; `cargo test -p r3_core process`",
+            "Port generated Effect schemas, exact DateTime types, schema decoders/encoders, and live VCS service integration.",
+        )
     } else if path.starts_with("packages/contracts/src/") {
         (
             "selected structs/enums in crates/r3_core/src/lib.rs",
