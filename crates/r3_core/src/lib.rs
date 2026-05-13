@@ -17601,6 +17601,170 @@ pub fn should_register_saved_environment_connection_after_prepare(
     !pending_cancelled && pending_entry_still_current
 }
 
+pub fn build_added_saved_environment_record(
+    environment_id: &str,
+    descriptor_label: &str,
+    input_label: &str,
+    http_base_url: &str,
+    ws_base_url: &str,
+    now_iso: &str,
+    existing_record: Option<&BrowserSavedEnvironmentRecord>,
+    desktop_ssh: Option<DesktopSshEnvironmentTarget>,
+) -> BrowserSavedEnvironmentRecord {
+    let trimmed_label = input_label.trim();
+    let label = if !trimmed_label.is_empty() {
+        trimmed_label.to_string()
+    } else if let Some(existing_label) = existing_record.map(|record| record.label.as_str()) {
+        existing_label.to_string()
+    } else {
+        descriptor_label.to_string()
+    };
+    BrowserSavedEnvironmentRecord {
+        environment_id: environment_id.to_string(),
+        label,
+        http_base_url: http_base_url.to_string(),
+        ws_base_url: ws_base_url.to_string(),
+        created_at: existing_record
+            .map(|record| record.created_at.clone())
+            .unwrap_or_else(|| now_iso.to_string()),
+        last_connected_at: Some(now_iso.to_string()),
+        desktop_ssh: desktop_ssh
+            .or_else(|| existing_record.and_then(|record| record.desktop_ssh.as_ref().cloned())),
+        bearer_token: None,
+    }
+}
+
+pub fn stale_desktop_ssh_environment_id_to_remove(
+    existing_record: Option<&BrowserSavedEnvironmentRecord>,
+    new_environment_id: &str,
+) -> Option<String> {
+    existing_record
+        .filter(|record| record.environment_id != new_environment_id)
+        .map(|record| record.environment_id.clone())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreparedDesktopSshEnvironmentRecord {
+    pub record: BrowserSavedEnvironmentRecord,
+    pub should_persist_and_upsert: bool,
+}
+
+pub fn prepare_desktop_ssh_saved_environment_record(
+    record: &BrowserSavedEnvironmentRecord,
+    bootstrap_http_base_url: &str,
+    bootstrap_ws_base_url: &str,
+    bootstrap_target: DesktopSshEnvironmentTarget,
+) -> PreparedDesktopSshEnvironmentRecord {
+    let mut next = record.clone();
+    next.http_base_url = bootstrap_http_base_url.to_string();
+    next.ws_base_url = bootstrap_ws_base_url.to_string();
+    next.desktop_ssh = Some(bootstrap_target);
+    let should_persist_and_upsert = next.http_base_url != record.http_base_url
+        || next.ws_base_url != record.ws_base_url
+        || next.desktop_ssh != record.desktop_ssh;
+    PreparedDesktopSshEnvironmentRecord {
+        record: next,
+        should_persist_and_upsert,
+    }
+}
+
+pub fn format_desktop_ssh_bootstrap_error(
+    message: &str,
+    http_base_url: &str,
+    remote_port: Option<u16>,
+    remote_server_kind: Option<&str>,
+) -> String {
+    let mut details = vec![
+        format!("local {http_base_url}"),
+        format!(
+            "remote port {}",
+            remote_port
+                .map(|port| port.to_string())
+                .unwrap_or_else(|| "unknown".to_string())
+        ),
+    ];
+    if let Some(kind) = remote_server_kind.filter(|kind| !kind.is_empty()) {
+        details.push(format!("remote server {kind}"));
+    }
+    format!("{message} ({})", details.join(", "))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SavedEnvironmentMetadataRefreshPlan {
+    pub patch: SavedEnvironmentRuntimeStatePatch,
+    pub descriptor_environment_id: String,
+    pub rename_environment_label: String,
+}
+
+pub fn saved_environment_metadata_refresh_plan(
+    server_environment_id: &str,
+    server_environment_label: &str,
+    session_authenticated: bool,
+    session_role: Option<&str>,
+    role_hint: Option<&str>,
+) -> SavedEnvironmentMetadataRefreshPlan {
+    SavedEnvironmentMetadataRefreshPlan {
+        patch: SavedEnvironmentRuntimeStatePatch {
+            auth_state: Some(if session_authenticated {
+                "authenticated".to_string()
+            } else {
+                "requires-auth".to_string()
+            }),
+            descriptor_environment_id: Some(Some(server_environment_id.to_string())),
+            server_config_environment_id: Some(Some(server_environment_id.to_string())),
+            role: Some(if session_authenticated {
+                session_role.or(role_hint).map(str::to_string)
+            } else {
+                None
+            }),
+            ..SavedEnvironmentRuntimeStatePatch::default()
+        },
+        descriptor_environment_id: server_environment_id.to_string(),
+        rename_environment_label: server_environment_label.to_string(),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegisterEnvironmentConnectionPlan {
+    Register,
+    AlreadyRegisteredSameConnection,
+    ErrorDifferentConnection,
+}
+
+pub fn register_environment_connection_plan(
+    has_existing_connection: bool,
+    existing_is_same_connection: bool,
+) -> RegisterEnvironmentConnectionPlan {
+    if has_existing_connection && !existing_is_same_connection {
+        return RegisterEnvironmentConnectionPlan::ErrorDifferentConnection;
+    }
+    if has_existing_connection {
+        return RegisterEnvironmentConnectionPlan::AlreadyRegisteredSameConnection;
+    }
+    RegisterEnvironmentConnectionPlan::Register
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoveEnvironmentConnectionPlan {
+    pub removed: bool,
+    pub clear_projection_version: bool,
+    pub delete_connection: bool,
+    pub emit_registry_change: bool,
+    pub detach_thread_detail_subscriptions: bool,
+    pub dispose_connection: bool,
+}
+
+pub fn remove_environment_connection_plan(has_connection: bool) -> RemoveEnvironmentConnectionPlan {
+    RemoveEnvironmentConnectionPlan {
+        removed: has_connection,
+        clear_projection_version: has_connection,
+        delete_connection: has_connection,
+        emit_registry_change: has_connection,
+        detach_thread_detail_subscriptions: has_connection,
+        dispose_connection: has_connection,
+    }
+}
+
 pub fn parse_ssh_resolve_output(alias: &str, stdout: &str) -> DesktopSshEnvironmentTarget {
     let mut values = BTreeMap::new();
     for line in stdout.lines() {
@@ -27614,6 +27778,185 @@ mod tests {
                     "environment-b".to_string(),
                     "environment-d".to_string()
                 ],
+            }
+        );
+    }
+
+    #[test]
+    fn environment_runtime_service_record_metadata_flows_match_upstream_contract() {
+        let existing = BrowserSavedEnvironmentRecord {
+            environment_id: "environment-old".to_string(),
+            label: "Old label".to_string(),
+            http_base_url: "http://old.local/".to_string(),
+            ws_base_url: "ws://old.local/".to_string(),
+            created_at: "2026-03-04T11:00:00.000Z".to_string(),
+            last_connected_at: None,
+            desktop_ssh: Some(DesktopSshEnvironmentTarget {
+                alias: "old".to_string(),
+                hostname: "old.local".to_string(),
+                username: Some("dev".to_string()),
+                port: Some(22),
+            }),
+            bearer_token: Some("secret".to_string()),
+        };
+        let new_target = DesktopSshEnvironmentTarget {
+            alias: "new".to_string(),
+            hostname: "new.local".to_string(),
+            username: Some("dev".to_string()),
+            port: Some(2222),
+        };
+        let record = build_added_saved_environment_record(
+            "environment-new",
+            "Descriptor label",
+            "  Manual label  ",
+            "https://remote.example.com/",
+            "wss://remote.example.com/",
+            "2026-03-04T12:00:00.000Z",
+            Some(&existing),
+            Some(new_target.clone()),
+        );
+        assert_eq!(record.label, "Manual label");
+        assert_eq!(record.created_at, "2026-03-04T11:00:00.000Z");
+        assert_eq!(
+            record.last_connected_at.as_deref(),
+            Some("2026-03-04T12:00:00.000Z")
+        );
+        assert_eq!(record.desktop_ssh, Some(new_target.clone()));
+        assert_eq!(record.bearer_token, None);
+        assert_eq!(
+            stale_desktop_ssh_environment_id_to_remove(Some(&existing), "environment-new")
+                .as_deref(),
+            Some("environment-old")
+        );
+        assert_eq!(
+            stale_desktop_ssh_environment_id_to_remove(Some(&existing), "environment-old"),
+            None
+        );
+
+        let fallback_label = build_added_saved_environment_record(
+            "environment-old",
+            "Descriptor label",
+            "   ",
+            "https://remote.example.com/",
+            "wss://remote.example.com/",
+            "2026-03-04T12:00:00.000Z",
+            Some(&existing),
+            None,
+        );
+        assert_eq!(fallback_label.label, "Old label");
+        assert_eq!(fallback_label.desktop_ssh, existing.desktop_ssh);
+        let descriptor_label = build_added_saved_environment_record(
+            "environment-empty",
+            "Descriptor label",
+            "   ",
+            "https://remote.example.com/",
+            "wss://remote.example.com/",
+            "2026-03-04T12:00:00.000Z",
+            None,
+            None,
+        );
+        assert_eq!(descriptor_label.label, "Descriptor label");
+        assert_eq!(descriptor_label.created_at, "2026-03-04T12:00:00.000Z");
+
+        let prepared = prepare_desktop_ssh_saved_environment_record(
+            &existing,
+            "http://127.0.0.1:3773/",
+            "ws://127.0.0.1:3773/",
+            new_target,
+        );
+        assert!(prepared.should_persist_and_upsert);
+        assert_eq!(prepared.record.http_base_url, "http://127.0.0.1:3773/");
+        assert_eq!(prepared.record.ws_base_url, "ws://127.0.0.1:3773/");
+        let unchanged = prepare_desktop_ssh_saved_environment_record(
+            &prepared.record,
+            "http://127.0.0.1:3773/",
+            "ws://127.0.0.1:3773/",
+            prepared.record.desktop_ssh.clone().unwrap(),
+        );
+        assert!(!unchanged.should_persist_and_upsert);
+
+        assert_eq!(
+            format_desktop_ssh_bootstrap_error(
+                "launch failed",
+                "http://127.0.0.1:3773/",
+                Some(4000),
+                Some("managed")
+            ),
+            "launch failed (local http://127.0.0.1:3773/, remote port 4000, remote server managed)"
+        );
+        assert_eq!(
+            format_desktop_ssh_bootstrap_error(
+                "launch failed",
+                "http://127.0.0.1:3773/",
+                None,
+                None
+            ),
+            "launch failed (local http://127.0.0.1:3773/, remote port unknown)"
+        );
+
+        let metadata = saved_environment_metadata_refresh_plan(
+            "environment-new",
+            "Renamed environment",
+            true,
+            None,
+            Some("owner"),
+        );
+        assert_eq!(metadata.patch.auth_state.as_deref(), Some("authenticated"));
+        assert_eq!(
+            metadata.patch.descriptor_environment_id,
+            Some(Some("environment-new".to_string()))
+        );
+        assert_eq!(
+            metadata.patch.server_config_environment_id,
+            Some(Some("environment-new".to_string()))
+        );
+        assert_eq!(metadata.patch.role, Some(Some("owner".to_string())));
+        assert_eq!(metadata.rename_environment_label, "Renamed environment");
+        let unauthenticated = saved_environment_metadata_refresh_plan(
+            "environment-new",
+            "Renamed environment",
+            false,
+            Some("owner"),
+            Some("admin"),
+        );
+        assert_eq!(
+            unauthenticated.patch.auth_state.as_deref(),
+            Some("requires-auth")
+        );
+        assert_eq!(unauthenticated.patch.role, Some(None));
+
+        assert_eq!(
+            register_environment_connection_plan(false, false),
+            RegisterEnvironmentConnectionPlan::Register
+        );
+        assert_eq!(
+            register_environment_connection_plan(true, true),
+            RegisterEnvironmentConnectionPlan::AlreadyRegisteredSameConnection
+        );
+        assert_eq!(
+            register_environment_connection_plan(true, false),
+            RegisterEnvironmentConnectionPlan::ErrorDifferentConnection
+        );
+        assert_eq!(
+            remove_environment_connection_plan(true),
+            RemoveEnvironmentConnectionPlan {
+                removed: true,
+                clear_projection_version: true,
+                delete_connection: true,
+                emit_registry_change: true,
+                detach_thread_detail_subscriptions: true,
+                dispose_connection: true,
+            }
+        );
+        assert_eq!(
+            remove_environment_connection_plan(false),
+            RemoveEnvironmentConnectionPlan {
+                removed: false,
+                clear_projection_version: false,
+                delete_connection: false,
+                emit_registry_change: false,
+                detach_thread_detail_subscriptions: false,
+                dispose_connection: false,
             }
         );
     }
