@@ -2442,9 +2442,9 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
         )
     } else if path == "apps/web/src/environments/runtime/service.ts" {
         (
-            "environment runtime service constants, projection snapshot/event version gating, thread-detail subscription key/ref-count/idle-capacity rules, SSH HTTP status parsing, saved runtime state transition patches, and selected pairing URL helpers in crates/r3_core/src/lib.rs",
+            "environment runtime service constants, projection snapshot/event version gating, thread-detail subscription key/ref-count/idle-capacity rules, SSH HTTP status parsing, saved runtime state transition patches, saved-environment sync scheduler queueing, service start/release ref-count lifecycle, browser resume reconnect cooldown, and selected pairing URL helpers in crates/r3_core/src/lib.rs",
             "partial",
-            "`cargo test --workspace environment_runtime_service_helpers_match_upstream_contract`",
+            "`cargo test --workspace environment_runtime_service`",
             "Wire the runtime service to live GPUI/WebSocket clients, query invalidation throttling, saved-environment connection sync, browser resume reconnects, and actual thread-detail subscription handles.",
         )
     } else if path.starts_with("apps/web/src/environments/")

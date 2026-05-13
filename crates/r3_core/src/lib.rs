@@ -16922,6 +16922,7 @@ pub const THREAD_DETAIL_SUBSCRIPTION_IDLE_EVICTION_MS: u64 = 15 * 60 * 1_000;
 pub const MAX_CACHED_THREAD_DETAIL_SUBSCRIPTIONS: usize = 32;
 pub const BROWSER_RESUME_RECONNECT_COOLDOWN_MS: u64 = 2_000;
 pub const INITIAL_SERVER_CONFIG_SNAPSHOT_WAIT_MS: u64 = 150;
+pub const ENVIRONMENT_QUERY_INVALIDATION_THROTTLE_WAIT_MS: u64 = 100;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppliedProjectionVersion {
@@ -17169,6 +17170,263 @@ pub fn saved_environment_runtime_error_patch(
         last_error: Some(Some(error_message.to_string())),
         last_error_at: Some(Some(error_at.to_string())),
         ..SavedEnvironmentRuntimeStatePatch::default()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SavedEnvironmentSyncSchedulerState {
+    pub active_sync: bool,
+    pub queued: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SavedEnvironmentSyncSchedulerRequest {
+    StartSync,
+    ReturnActiveSyncAndQueue,
+}
+
+pub fn request_saved_environment_sync(
+    state: SavedEnvironmentSyncSchedulerState,
+) -> (
+    SavedEnvironmentSyncSchedulerState,
+    SavedEnvironmentSyncSchedulerRequest,
+) {
+    if state.active_sync {
+        return (
+            SavedEnvironmentSyncSchedulerState {
+                active_sync: true,
+                queued: true,
+            },
+            SavedEnvironmentSyncSchedulerRequest::ReturnActiveSyncAndQueue,
+        );
+    }
+
+    (
+        SavedEnvironmentSyncSchedulerState {
+            active_sync: true,
+            queued: false,
+        },
+        SavedEnvironmentSyncSchedulerRequest::StartSync,
+    )
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SavedEnvironmentSyncSchedulerCompletion {
+    pub state: SavedEnvironmentSyncSchedulerState,
+    pub run_again: bool,
+}
+
+pub fn finish_saved_environment_sync_iteration(
+    state: SavedEnvironmentSyncSchedulerState,
+) -> SavedEnvironmentSyncSchedulerCompletion {
+    if state.queued {
+        return SavedEnvironmentSyncSchedulerCompletion {
+            state: SavedEnvironmentSyncSchedulerState {
+                active_sync: true,
+                queued: false,
+            },
+            run_again: true,
+        };
+    }
+
+    SavedEnvironmentSyncSchedulerCompletion {
+        state: SavedEnvironmentSyncSchedulerState {
+            active_sync: false,
+            queued: false,
+        },
+        run_again: false,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnvironmentConnectionServiceSnapshot {
+    pub query_client_key: String,
+    pub ref_count: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnvironmentConnectionServiceStartAction {
+    RetainExisting,
+    StopPreviousAndStartNew,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnvironmentConnectionServiceStartPlan {
+    pub state: EnvironmentConnectionServiceSnapshot,
+    pub action: EnvironmentConnectionServiceStartAction,
+    pub reset_needs_provider_invalidation: bool,
+    pub query_invalidation_throttler_wait_ms: u64,
+    pub query_invalidation_throttler_leading: bool,
+    pub query_invalidation_throttler_trailing: bool,
+    pub maybe_create_primary_environment_connection: bool,
+    pub subscribe_saved_environment_registry: bool,
+    pub wait_for_saved_environment_registry_hydration: bool,
+    pub subscribe_browser_resume_reconnects: bool,
+}
+
+pub fn start_environment_connection_service_plan(
+    active: Option<&EnvironmentConnectionServiceSnapshot>,
+    query_client_key: &str,
+) -> EnvironmentConnectionServiceStartPlan {
+    if let Some(active) = active {
+        if active.query_client_key == query_client_key {
+            return EnvironmentConnectionServiceStartPlan {
+                state: EnvironmentConnectionServiceSnapshot {
+                    query_client_key: active.query_client_key.clone(),
+                    ref_count: active.ref_count.saturating_add(1),
+                },
+                action: EnvironmentConnectionServiceStartAction::RetainExisting,
+                reset_needs_provider_invalidation: false,
+                query_invalidation_throttler_wait_ms: 0,
+                query_invalidation_throttler_leading: false,
+                query_invalidation_throttler_trailing: false,
+                maybe_create_primary_environment_connection: false,
+                subscribe_saved_environment_registry: false,
+                wait_for_saved_environment_registry_hydration: false,
+                subscribe_browser_resume_reconnects: false,
+            };
+        }
+    }
+
+    EnvironmentConnectionServiceStartPlan {
+        state: EnvironmentConnectionServiceSnapshot {
+            query_client_key: query_client_key.to_string(),
+            ref_count: 1,
+        },
+        action: EnvironmentConnectionServiceStartAction::StopPreviousAndStartNew,
+        reset_needs_provider_invalidation: true,
+        query_invalidation_throttler_wait_ms: ENVIRONMENT_QUERY_INVALIDATION_THROTTLE_WAIT_MS,
+        query_invalidation_throttler_leading: false,
+        query_invalidation_throttler_trailing: true,
+        maybe_create_primary_environment_connection: true,
+        subscribe_saved_environment_registry: true,
+        wait_for_saved_environment_registry_hydration: true,
+        subscribe_browser_resume_reconnects: true,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnvironmentConnectionServiceReleaseAction {
+    Ignored,
+    RetainActive,
+    StopActive,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnvironmentConnectionServiceReleasePlan {
+    pub state: Option<EnvironmentConnectionServiceSnapshot>,
+    pub action: EnvironmentConnectionServiceReleaseAction,
+}
+
+pub fn release_environment_connection_service_plan(
+    active: Option<&EnvironmentConnectionServiceSnapshot>,
+    query_client_key: &str,
+) -> EnvironmentConnectionServiceReleasePlan {
+    let Some(active) = active else {
+        return EnvironmentConnectionServiceReleasePlan {
+            state: None,
+            action: EnvironmentConnectionServiceReleaseAction::Ignored,
+        };
+    };
+
+    if active.query_client_key != query_client_key {
+        return EnvironmentConnectionServiceReleasePlan {
+            state: Some(active.clone()),
+            action: EnvironmentConnectionServiceReleaseAction::Ignored,
+        };
+    }
+
+    if active.ref_count <= 1 {
+        return EnvironmentConnectionServiceReleasePlan {
+            state: None,
+            action: EnvironmentConnectionServiceReleaseAction::StopActive,
+        };
+    }
+
+    EnvironmentConnectionServiceReleasePlan {
+        state: Some(EnvironmentConnectionServiceSnapshot {
+            query_client_key: active.query_client_key.clone(),
+            ref_count: active.ref_count - 1,
+        }),
+        action: EnvironmentConnectionServiceReleaseAction::RetainActive,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BrowserResumeReconnectState {
+    pub last_browser_hidden_at_ms: Option<u64>,
+    pub last_browser_resume_reconnect_at_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BrowserResumeEvent {
+    VisibilityHidden,
+    VisibilityVisible,
+    PageShow { persisted: bool },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrowserResumeReconnectDecision {
+    pub state: BrowserResumeReconnectState,
+    pub reconnect_reason: Option<&'static str>,
+}
+
+fn browser_resume_reconnect_decision(
+    mut state: BrowserResumeReconnectState,
+    now_ms: u64,
+    reason: &'static str,
+) -> BrowserResumeReconnectDecision {
+    if state
+        .last_browser_resume_reconnect_at_ms
+        .map(|last| now_ms.saturating_sub(last) < BROWSER_RESUME_RECONNECT_COOLDOWN_MS)
+        .unwrap_or(false)
+    {
+        return BrowserResumeReconnectDecision {
+            state,
+            reconnect_reason: None,
+        };
+    }
+
+    state.last_browser_resume_reconnect_at_ms = Some(now_ms);
+    BrowserResumeReconnectDecision {
+        state,
+        reconnect_reason: Some(reason),
+    }
+}
+
+pub fn apply_browser_resume_event(
+    mut state: BrowserResumeReconnectState,
+    event: BrowserResumeEvent,
+    now_ms: u64,
+) -> BrowserResumeReconnectDecision {
+    match event {
+        BrowserResumeEvent::VisibilityHidden => {
+            state.last_browser_hidden_at_ms = Some(now_ms);
+            BrowserResumeReconnectDecision {
+                state,
+                reconnect_reason: None,
+            }
+        }
+        BrowserResumeEvent::VisibilityVisible => {
+            if state.last_browser_hidden_at_ms.is_none() {
+                return BrowserResumeReconnectDecision {
+                    state,
+                    reconnect_reason: None,
+                };
+            }
+            state.last_browser_hidden_at_ms = None;
+            browser_resume_reconnect_decision(state, now_ms, "visibilitychange")
+        }
+        BrowserResumeEvent::PageShow { persisted } => {
+            if !persisted && state.last_browser_hidden_at_ms.is_none() {
+                return BrowserResumeReconnectDecision {
+                    state,
+                    reconnect_reason: None,
+                };
+            }
+            state.last_browser_hidden_at_ms = None;
+            browser_resume_reconnect_decision(state, now_ms, "pageshow")
+        }
     }
 }
 
@@ -26873,6 +27131,153 @@ mod tests {
         );
         assert_eq!(state["environment-a"].connection_state, "error");
         assert_eq!(state["environment-a"].last_error.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn environment_runtime_service_lifecycle_matches_upstream_contract() {
+        let scheduler = SavedEnvironmentSyncSchedulerState {
+            active_sync: false,
+            queued: false,
+        };
+        let (scheduler, request) = request_saved_environment_sync(scheduler);
+        assert_eq!(request, SavedEnvironmentSyncSchedulerRequest::StartSync);
+        assert_eq!(
+            scheduler,
+            SavedEnvironmentSyncSchedulerState {
+                active_sync: true,
+                queued: false,
+            }
+        );
+        let (scheduler, request) = request_saved_environment_sync(scheduler);
+        assert_eq!(
+            request,
+            SavedEnvironmentSyncSchedulerRequest::ReturnActiveSyncAndQueue
+        );
+        assert_eq!(
+            scheduler,
+            SavedEnvironmentSyncSchedulerState {
+                active_sync: true,
+                queued: true,
+            }
+        );
+        let completion = finish_saved_environment_sync_iteration(scheduler);
+        assert!(completion.run_again);
+        assert_eq!(
+            completion.state,
+            SavedEnvironmentSyncSchedulerState {
+                active_sync: true,
+                queued: false,
+            }
+        );
+        let completion = finish_saved_environment_sync_iteration(completion.state);
+        assert!(!completion.run_again);
+        assert_eq!(
+            completion.state,
+            SavedEnvironmentSyncSchedulerState {
+                active_sync: false,
+                queued: false,
+            }
+        );
+
+        let first = start_environment_connection_service_plan(None, "client-a");
+        assert_eq!(
+            first.action,
+            EnvironmentConnectionServiceStartAction::StopPreviousAndStartNew
+        );
+        assert_eq!(first.state.ref_count, 1);
+        assert!(first.reset_needs_provider_invalidation);
+        assert_eq!(
+            first.query_invalidation_throttler_wait_ms,
+            ENVIRONMENT_QUERY_INVALIDATION_THROTTLE_WAIT_MS
+        );
+        assert!(!first.query_invalidation_throttler_leading);
+        assert!(first.query_invalidation_throttler_trailing);
+        assert!(first.maybe_create_primary_environment_connection);
+        assert!(first.subscribe_saved_environment_registry);
+        assert!(first.wait_for_saved_environment_registry_hydration);
+        assert!(first.subscribe_browser_resume_reconnects);
+
+        let retained = start_environment_connection_service_plan(Some(&first.state), "client-a");
+        assert_eq!(
+            retained.action,
+            EnvironmentConnectionServiceStartAction::RetainExisting
+        );
+        assert_eq!(retained.state.ref_count, 2);
+        assert!(!retained.reset_needs_provider_invalidation);
+        assert!(!retained.maybe_create_primary_environment_connection);
+
+        let ignored_release =
+            release_environment_connection_service_plan(Some(&retained.state), "client-b");
+        assert_eq!(
+            ignored_release.action,
+            EnvironmentConnectionServiceReleaseAction::Ignored
+        );
+        assert_eq!(ignored_release.state, Some(retained.state.clone()));
+
+        let release_one =
+            release_environment_connection_service_plan(Some(&retained.state), "client-a");
+        assert_eq!(
+            release_one.action,
+            EnvironmentConnectionServiceReleaseAction::RetainActive
+        );
+        assert_eq!(release_one.state.as_ref().unwrap().ref_count, 1);
+        let release_last =
+            release_environment_connection_service_plan(release_one.state.as_ref(), "client-a");
+        assert_eq!(
+            release_last.action,
+            EnvironmentConnectionServiceReleaseAction::StopActive
+        );
+        assert_eq!(release_last.state, None);
+
+        let replaced = start_environment_connection_service_plan(Some(&first.state), "client-b");
+        assert_eq!(
+            replaced.action,
+            EnvironmentConnectionServiceStartAction::StopPreviousAndStartNew
+        );
+        assert_eq!(replaced.state.query_client_key, "client-b");
+
+        let resume = BrowserResumeReconnectState {
+            last_browser_hidden_at_ms: None,
+            last_browser_resume_reconnect_at_ms: None,
+        };
+        let hidden = apply_browser_resume_event(resume, BrowserResumeEvent::VisibilityHidden, 100);
+        assert_eq!(hidden.state.last_browser_hidden_at_ms, Some(100));
+        assert_eq!(hidden.reconnect_reason, None);
+        let visible =
+            apply_browser_resume_event(hidden.state, BrowserResumeEvent::VisibilityVisible, 250);
+        assert_eq!(visible.state.last_browser_hidden_at_ms, None);
+        assert_eq!(visible.reconnect_reason, Some("visibilitychange"));
+        assert_eq!(visible.state.last_browser_resume_reconnect_at_ms, Some(250));
+
+        let hidden_again =
+            apply_browser_resume_event(visible.state, BrowserResumeEvent::VisibilityHidden, 400);
+        let cooled_down = apply_browser_resume_event(
+            hidden_again.state,
+            BrowserResumeEvent::VisibilityVisible,
+            500,
+        );
+        assert_eq!(cooled_down.reconnect_reason, None);
+        assert_eq!(
+            cooled_down.state.last_browser_resume_reconnect_at_ms,
+            Some(250)
+        );
+
+        let page_show = apply_browser_resume_event(
+            cooled_down.state,
+            BrowserResumeEvent::PageShow { persisted: true },
+            2_500,
+        );
+        assert_eq!(page_show.reconnect_reason, Some("pageshow"));
+        assert_eq!(
+            page_show.state.last_browser_resume_reconnect_at_ms,
+            Some(2_500)
+        );
+        let normal_page_show = apply_browser_resume_event(
+            page_show.state,
+            BrowserResumeEvent::PageShow { persisted: false },
+            5_000,
+        );
+        assert_eq!(normal_page_show.reconnect_reason, None);
     }
 
     #[test]
