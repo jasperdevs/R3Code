@@ -38322,6 +38322,20 @@ mod tests {
                 orchestration_status: "ready".to_string(),
             },
         );
+        state.thread_turn_state_by_id.insert(
+            thread_id.to_string(),
+            ThreadTurnState {
+                latest_turn: Some(LatestTurn {
+                    turn_id: "turn-1".to_string(),
+                    state: "running".to_string(),
+                    requested_at: "2026-03-04T12:00:01.000Z".to_string(),
+                    started_at: Some("2026-03-04T12:00:02.000Z".to_string()),
+                    completed_at: None,
+                    assistant_message_id: Some("msg-assistant".to_string()),
+                }),
+                pending_source_proposed_plan: Some("plan-1".to_string()),
+            },
+        );
         state.message_ids_by_thread_id.insert(
             thread_id.to_string(),
             vec![
@@ -38383,6 +38397,24 @@ mod tests {
             ]),
         );
         state
+            .proposed_plan_ids_by_thread_id
+            .insert(thread_id.to_string(), vec!["plan-1".to_string()]);
+        state.proposed_plan_by_thread_id.insert(
+            thread_id.to_string(),
+            BTreeMap::from([(
+                "plan-1".to_string(),
+                ProposedPlan {
+                    id: "plan-1".to_string(),
+                    turn_id: Some("turn-1".to_string()),
+                    plan_markdown: "1. Inspect\n2. Patch".to_string(),
+                    implemented_at: None,
+                    implementation_thread_id: None,
+                    created_at: "2026-03-04T12:00:01.000Z".to_string(),
+                    updated_at: "2026-03-04T12:00:02.000Z".to_string(),
+                },
+            )]),
+        );
+        state
             .turn_diff_ids_by_thread_id
             .insert(thread_id.to_string(), vec!["turn-1".to_string()]);
         state.turn_diff_summary_by_thread_id.insert(
@@ -38410,6 +38442,11 @@ mod tests {
 
         assert_eq!(thread.shell.title, "Browser test thread");
         assert_eq!(thread.session.unwrap().status, SessionPhase::Ready);
+        assert_eq!(thread.latest_turn.unwrap().turn_id, "turn-1");
+        assert_eq!(
+            thread.pending_source_proposed_plan.as_deref(),
+            Some("plan-1")
+        );
         assert_eq!(
             thread
                 .messages
@@ -38420,6 +38457,7 @@ mod tests {
         );
         assert_eq!(thread.messages[0].role, MessageRole::User);
         assert_eq!(thread.activities.len(), 2);
+        assert_eq!(thread.proposed_plans[0].id, "plan-1");
         assert_eq!(thread.turn_diff_summaries[0].files[0].additions, Some(4));
     }
 

@@ -1774,6 +1774,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core ports_client_tracing_configuration_contracts`",
             "Wire the plan into live GPUI tracing runtime setup with HTTP URL resolution, exporter delegate lifecycle, async serialization layer, and authenticated bootstrap.",
         )
+    } else if path == "apps/web/src/threadDerivation.ts" {
+        (
+            "thread derivation from environment state by shell/session/turn/message/activity/proposed-plan/diff ID maps, missing-record filtering, latest-turn and pending-plan projection, and missing-shell fallback in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core derives_thread_from_environment_state_in_id_order`; `cargo test -p r3_core missing_thread_shell_returns_none`",
+            "Port referential caching semantics for unchanged shell/session/collection identities and wire into live GPUI selectors.",
+        )
     } else if path == "apps/web/src/markdown-links.ts"
         || path == "apps/web/src/markdown-links.test.ts"
     {
