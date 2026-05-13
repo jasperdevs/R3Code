@@ -12315,6 +12315,31 @@ pub struct SourceControlDiscoveryStateSnapshot {
     pub is_pending: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SourceControlDiscoveryRefreshDecision {
+    InvalidTarget,
+    ReturnInFlight,
+    MissingClient {
+        next: SourceControlDiscoveryStateSnapshot,
+    },
+    Start {
+        next: SourceControlDiscoveryStateSnapshot,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SourceControlDiscoveryCompletionDecision {
+    Success(SourceControlDiscoveryStateSnapshot),
+    Failure(SourceControlDiscoveryStateSnapshot),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlDiscoveryResetPlan {
+    pub clear_in_flight: bool,
+    pub reset_keys: Vec<String>,
+    pub next: SourceControlDiscoveryStateSnapshot,
+}
+
 pub const EMPTY_SOURCE_CONTROL_DISCOVERY_STATE_SNAPSHOT: SourceControlDiscoveryStateSnapshot =
     SourceControlDiscoveryStateSnapshot {
         has_data: false,
@@ -12370,6 +12395,59 @@ pub fn source_control_discovery_set_error(
                 .to_string(),
         ),
         is_pending: false,
+    }
+}
+
+pub fn source_control_discovery_refresh_decision(
+    target_key: Option<&str>,
+    current: &SourceControlDiscoveryStateSnapshot,
+    has_in_flight_refresh: bool,
+    has_client: bool,
+) -> SourceControlDiscoveryRefreshDecision {
+    if get_source_control_discovery_target_key(target_key).is_none() {
+        return SourceControlDiscoveryRefreshDecision::InvalidTarget;
+    }
+    if has_in_flight_refresh {
+        return SourceControlDiscoveryRefreshDecision::ReturnInFlight;
+    }
+    if !has_client {
+        return SourceControlDiscoveryRefreshDecision::MissingClient {
+            next: source_control_discovery_set_error(
+                current,
+                Some("Source control discovery client is unavailable."),
+            ),
+        };
+    }
+    SourceControlDiscoveryRefreshDecision::Start {
+        next: source_control_discovery_mark_pending(current),
+    }
+}
+
+pub fn source_control_discovery_complete_success() -> SourceControlDiscoveryCompletionDecision {
+    SourceControlDiscoveryCompletionDecision::Success(source_control_discovery_set_data())
+}
+
+pub fn source_control_discovery_complete_failure(
+    current: &SourceControlDiscoveryStateSnapshot,
+    error: Option<&str>,
+) -> SourceControlDiscoveryCompletionDecision {
+    SourceControlDiscoveryCompletionDecision::Failure(source_control_discovery_set_error(
+        current, error,
+    ))
+}
+
+pub fn source_control_discovery_reset_plan<I, S>(known_keys: I) -> SourceControlDiscoveryResetPlan
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    SourceControlDiscoveryResetPlan {
+        clear_in_flight: true,
+        reset_keys: known_keys
+            .into_iter()
+            .filter_map(|key| get_source_control_discovery_target_key(Some(key.as_ref())))
+            .collect(),
+        next: INITIAL_SOURCE_CONTROL_DISCOVERY_STATE_SNAPSHOT,
     }
 }
 
@@ -18146,6 +18224,61 @@ mod tests {
                 .error
                 .as_deref(),
             Some("Failed to discover source control tools.")
+        );
+        assert_eq!(
+            source_control_discovery_refresh_decision(
+                Some("  "),
+                &EMPTY_SOURCE_CONTROL_DISCOVERY_STATE_SNAPSHOT,
+                false,
+                true,
+            ),
+            SourceControlDiscoveryRefreshDecision::InvalidTarget
+        );
+        assert_eq!(
+            source_control_discovery_refresh_decision(Some("primary"), &with_data, true, true),
+            SourceControlDiscoveryRefreshDecision::ReturnInFlight
+        );
+        assert_eq!(
+            source_control_discovery_refresh_decision(Some("primary"), &with_data, false, false),
+            SourceControlDiscoveryRefreshDecision::MissingClient {
+                next: SourceControlDiscoveryStateSnapshot {
+                    has_data: true,
+                    error: Some("Source control discovery client is unavailable.".to_string()),
+                    is_pending: false,
+                },
+            }
+        );
+        assert_eq!(
+            source_control_discovery_refresh_decision(Some("primary"), &with_data, false, true),
+            SourceControlDiscoveryRefreshDecision::Start {
+                next: SourceControlDiscoveryStateSnapshot {
+                    has_data: true,
+                    error: None,
+                    is_pending: true,
+                },
+            }
+        );
+        assert_eq!(
+            source_control_discovery_complete_success(),
+            SourceControlDiscoveryCompletionDecision::Success(source_control_discovery_set_data())
+        );
+        assert_eq!(
+            source_control_discovery_complete_failure(&with_data, Some("probe failed")),
+            SourceControlDiscoveryCompletionDecision::Failure(
+                SourceControlDiscoveryStateSnapshot {
+                    has_data: true,
+                    error: Some("probe failed".to_string()),
+                    is_pending: false,
+                }
+            )
+        );
+        assert_eq!(
+            source_control_discovery_reset_plan([" primary ", "", "secondary"]),
+            SourceControlDiscoveryResetPlan {
+                clear_in_flight: true,
+                reset_keys: vec!["primary".to_string(), "secondary".to_string()],
+                next: INITIAL_SOURCE_CONTROL_DISCOVERY_STATE_SNAPSHOT,
+            }
         );
     }
 

@@ -2369,7 +2369,7 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
         )
     } else if path.starts_with("packages/client-runtime/") {
         (
-            "client-runtime advertised endpoint, known-environment, scoped-ref, pairing URL get/strip/set, and source-control discovery state helpers in crates/r3_core/src/lib.rs",
+            "client-runtime advertised endpoint, known-environment, scoped-ref, pairing URL get/strip/set, and source-control discovery state/refresh/reset decision helpers in crates/r3_core/src/lib.rs",
             "partial",
             "`cargo test --workspace` client runtime helper tests",
             "Wire browser AtomRegistry/reactivity runtime, async refresh deduplication with real RPC clients, package exports, and generated contract types.",
