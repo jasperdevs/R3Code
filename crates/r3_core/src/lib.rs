@@ -15851,6 +15851,71 @@ pub fn merge_sidebar_menu_button_class_name(class_name: Option<&str>) -> String 
     format!("{base_class_name} {custom_class_name}")
 }
 
+pub const ANIMATED_HEIGHT_DATA_SLOT: &str = "animated-height";
+pub const ANIMATED_HEIGHT_CLASS_NAME: &str =
+    "transition-[height] duration-200 ease-out motion-reduce:transition-none";
+pub const ANIMATED_HEIGHT_TRANSITION_FALLBACK_MS: u64 = 250;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AnimatedHeightState {
+    pub height: Option<f64>,
+    pub is_clipping: bool,
+}
+
+impl Default for AnimatedHeightState {
+    fn default() -> Self {
+        Self {
+            height: None,
+            is_clipping: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AnimatedHeightStyle {
+    pub height: f64,
+    pub overflow_hidden: bool,
+}
+
+pub fn measure_animated_height_next_state(
+    current: AnimatedHeightState,
+    scroll_height: f64,
+    bounding_client_height: f64,
+) -> AnimatedHeightState {
+    let measured_height = if scroll_height != 0.0 {
+        scroll_height
+    } else {
+        bounding_client_height
+    };
+    let next_height = measured_height.ceil();
+    if current.height == Some(next_height) {
+        return current;
+    }
+
+    AnimatedHeightState {
+        height: Some(next_height),
+        is_clipping: current.height.is_some(),
+    }
+}
+
+pub fn clear_animated_height_clipping(current: AnimatedHeightState) -> AnimatedHeightState {
+    if current.is_clipping {
+        AnimatedHeightState {
+            is_clipping: false,
+            ..current
+        }
+    } else {
+        current
+    }
+}
+
+pub fn animated_height_style(state: AnimatedHeightState) -> Option<AnimatedHeightStyle> {
+    state.height.map(|height| AnimatedHeightStyle {
+        height,
+        overflow_hidden: state.is_clipping,
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandPaletteItemKind {
     Action,
@@ -39592,6 +39657,61 @@ mod tests {
 
         assert_eq!(SIDEBAR_MENU_SUB_BUTTON_DATA_SLOT, "sidebar-menu-sub-button");
         assert!(SIDEBAR_MENU_SUB_BUTTON_CLASS_NAME.contains("cursor-pointer"));
+    }
+
+    #[test]
+    fn animated_height_contract_matches_upstream_component() {
+        assert_eq!(ANIMATED_HEIGHT_DATA_SLOT, "animated-height");
+        assert_eq!(
+            ANIMATED_HEIGHT_CLASS_NAME,
+            "transition-[height] duration-200 ease-out motion-reduce:transition-none"
+        );
+        assert_eq!(ANIMATED_HEIGHT_TRANSITION_FALLBACK_MS, 250);
+
+        let initial = AnimatedHeightState::default();
+        assert_eq!(animated_height_style(initial), None);
+
+        let measured = measure_animated_height_next_state(initial, 48.2, 12.0);
+        assert_eq!(
+            measured,
+            AnimatedHeightState {
+                height: Some(49.0),
+                is_clipping: false,
+            }
+        );
+        assert_eq!(
+            animated_height_style(measured),
+            Some(AnimatedHeightStyle {
+                height: 49.0,
+                overflow_hidden: false,
+            })
+        );
+
+        let unchanged = measure_animated_height_next_state(measured, 49.0, 100.0);
+        assert_eq!(unchanged, measured);
+
+        let resized_from_bounding_box = measure_animated_height_next_state(measured, 0.0, 72.1);
+        assert_eq!(
+            resized_from_bounding_box,
+            AnimatedHeightState {
+                height: Some(73.0),
+                is_clipping: true,
+            }
+        );
+        assert_eq!(
+            animated_height_style(resized_from_bounding_box),
+            Some(AnimatedHeightStyle {
+                height: 73.0,
+                overflow_hidden: true,
+            })
+        );
+        assert_eq!(
+            clear_animated_height_clipping(resized_from_bounding_box),
+            AnimatedHeightState {
+                height: Some(73.0),
+                is_clipping: false,
+            }
+        );
     }
 
     #[test]

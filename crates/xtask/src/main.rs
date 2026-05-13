@@ -1870,6 +1870,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core markdown`; `cargo check --workspace`",
             "Port full ReactMarkdown/remark-gfm coverage, Shiki/diff highlighter cache, clipboard copy timers, preferred-editor open actions, context menu, tooltips, skill inline rendering, browser interaction tests, and exact CSS pixel styling.",
         )
+    } else if path == "apps/web/src/components/AnimatedHeight.tsx" {
+        (
+            "AnimatedHeight data slot, transition class, fallback timeout, measured-height rounding, clipping transition state, and clear-on-transition-end behavior in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace animated_height_contract_matches_upstream_component`",
+            "Wire exact measured-height animation into any live GPUI surfaces that need dynamic height transitions.",
+        )
     } else if path == "apps/web/src/components/chat/MessagesTimeline.logic.ts"
         || path == "apps/web/src/components/chat/MessagesTimeline.logic.test.ts"
     {
