@@ -122,6 +122,13 @@ pub struct TerminalContextDraft {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TerminalRetentionThread {
+    pub key: String,
+    pub deleted_at: Option<String>,
+    pub archived_at: Option<String>,
+}
+
 impl TerminalContextDraft {
     pub fn selection(&self) -> TerminalContextSelection {
         TerminalContextSelection {
@@ -1998,6 +2005,36 @@ pub fn build_expired_terminal_context_toast_copy(
             description: "Re-add it if you want that terminal output included.",
         },
     }
+}
+
+pub fn collect_active_terminal_thread_ids(
+    snapshot_threads: &[TerminalRetentionThread],
+    draft_thread_keys: impl IntoIterator<Item = String>,
+) -> BTreeSet<String> {
+    let snapshot_thread_by_id = snapshot_threads
+        .iter()
+        .map(|thread| (thread.key.clone(), thread))
+        .collect::<BTreeMap<_, _>>();
+    let mut active_thread_ids = BTreeSet::new();
+
+    for thread in snapshot_threads {
+        if thread.deleted_at.is_some() || thread.archived_at.is_some() {
+            continue;
+        }
+        active_thread_ids.insert(thread.key.clone());
+    }
+
+    for draft_thread_key in draft_thread_keys {
+        if snapshot_thread_by_id
+            .get(&draft_thread_key)
+            .is_some_and(|thread| thread.deleted_at.is_some() || thread.archived_at.is_some())
+        {
+            continue;
+        }
+        active_thread_ids.insert(draft_thread_key);
+    }
+
+    active_thread_ids
 }
 
 pub fn should_hide_collapsed_toast_content(
@@ -25800,6 +25837,75 @@ mod tests {
         assert_eq!(
             format_inline_terminal_context_label(&live_context.selection()),
             "@terminal-1:12-13"
+        );
+    }
+
+    #[test]
+    fn terminal_state_cleanup_retains_active_threads_like_upstream() {
+        let thread_key = |environment_id: &str, thread_id: &str| {
+            scoped_thread_key(&ScopedThreadRef::new(environment_id, thread_id))
+        };
+
+        assert_eq!(
+            collect_active_terminal_thread_ids(
+                &[
+                    TerminalRetentionThread {
+                        key: thread_key("env-a", "server-1"),
+                        deleted_at: None,
+                        archived_at: None,
+                    },
+                    TerminalRetentionThread {
+                        key: thread_key("env-b", "server-2"),
+                        deleted_at: None,
+                        archived_at: None,
+                    },
+                ],
+                Vec::<String>::new()
+            ),
+            BTreeSet::from([
+                thread_key("env-a", "server-1"),
+                thread_key("env-b", "server-2")
+            ])
+        );
+
+        assert_eq!(
+            collect_active_terminal_thread_ids(
+                &[
+                    TerminalRetentionThread {
+                        key: thread_key("env-a", "server-active"),
+                        deleted_at: None,
+                        archived_at: None,
+                    },
+                    TerminalRetentionThread {
+                        key: thread_key("env-a", "server-deleted"),
+                        deleted_at: Some("2026-03-05T08:00:00.000Z".to_string()),
+                        archived_at: None,
+                    },
+                    TerminalRetentionThread {
+                        key: thread_key("env-a", "server-archived"),
+                        deleted_at: None,
+                        archived_at: Some("2026-03-05T09:00:00.000Z".to_string()),
+                    },
+                ],
+                [thread_key("env-a", "local-draft")]
+            ),
+            BTreeSet::from([
+                thread_key("env-a", "server-active"),
+                thread_key("env-a", "local-draft")
+            ])
+        );
+
+        let archived_thread_id = thread_key("env-a", "server-archived");
+        assert_eq!(
+            collect_active_terminal_thread_ids(
+                &[TerminalRetentionThread {
+                    key: archived_thread_id.clone(),
+                    deleted_at: None,
+                    archived_at: Some("2026-03-05T09:00:00.000Z".to_string()),
+                }],
+                [archived_thread_id, thread_key("env-a", "local-draft")]
+            ),
+            BTreeSet::from([thread_key("env-a", "local-draft")])
         );
     }
 

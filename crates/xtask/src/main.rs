@@ -1734,6 +1734,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core request_latency_state`",
             "Wire helpers into the live GPUI RPC layer timers and connection diagnostics UI.",
         )
+    } else if path == "apps/web/src/lib/terminalStateCleanup.ts"
+        || path == "apps/web/src/lib/terminalStateCleanup.test.ts"
+    {
+        (
+            "active terminal thread retention cleanup helper in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core terminal_state_cleanup`",
+            "Wire helper into the live GPUI terminal state store cleanup path.",
+        )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
             "logical project path normalization, physical/grouping/order keys, repository-scoped keys, settings override resolution, ref fallback, and group-label helpers in crates/r3_core/src/lib.rs",
