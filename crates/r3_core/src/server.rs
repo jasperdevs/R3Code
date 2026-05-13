@@ -1126,10 +1126,35 @@ pub enum StaticRequestPathDecision {
     Invalid { message: &'static str, status: u16 },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProjectFaviconRouteDecision {
+    BadRequest {
+        body: &'static str,
+        status: u16,
+    },
+    FallbackSvg {
+        body: &'static str,
+        status: u16,
+        content_type: &'static str,
+        cache_control: &'static str,
+    },
+    File {
+        path: String,
+        status: u16,
+        cache_control: &'static str,
+    },
+    InternalServerError {
+        body: &'static str,
+        status: u16,
+    },
+}
+
 pub const BROWSER_API_CORS_ALLOWED_METHODS: &[&str] = &["GET", "POST", "OPTIONS"];
 pub const BROWSER_API_CORS_ALLOWED_HEADERS: &[&str] =
     &["authorization", "b3", "traceparent", "content-type"];
 pub const BROWSER_API_CORS_MAX_AGE_SECONDS: u32 = 600;
+pub const PROJECT_FAVICON_CACHE_CONTROL: &str = "public, max-age=3600";
+pub const FALLBACK_PROJECT_FAVICON_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="#6b728080" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" data-fallback="project-favicon"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2Z"/></svg>"##;
 
 pub fn http_server_layer_plan(
     runtime: ServerJavaScriptRuntime,
@@ -1472,6 +1497,47 @@ pub fn browser_api_cors_headers() -> BTreeMap<&'static str, String> {
     ])
 }
 
+pub fn project_favicon_route_decision(
+    request_url: Option<&str>,
+    resolved_favicon_path: Option<&str>,
+    file_response_failed: bool,
+) -> ProjectFaviconRouteDecision {
+    let Some(request_url) = request_url else {
+        return ProjectFaviconRouteDecision::BadRequest {
+            body: "Bad Request",
+            status: 400,
+        };
+    };
+    if query_param(request_url, "cwd")
+        .filter(|value| !value.is_empty())
+        .is_none()
+    {
+        return ProjectFaviconRouteDecision::BadRequest {
+            body: "Missing cwd parameter",
+            status: 400,
+        };
+    }
+    let Some(path) = resolved_favicon_path.filter(|path| !path.is_empty()) else {
+        return ProjectFaviconRouteDecision::FallbackSvg {
+            body: FALLBACK_PROJECT_FAVICON_SVG,
+            status: 200,
+            content_type: "image/svg+xml",
+            cache_control: PROJECT_FAVICON_CACHE_CONTROL,
+        };
+    };
+    if file_response_failed {
+        return ProjectFaviconRouteDecision::InternalServerError {
+            body: "Internal Server Error",
+            status: 500,
+        };
+    }
+    ProjectFaviconRouteDecision::File {
+        path: path.to_string(),
+        status: 200,
+        cache_control: PROJECT_FAVICON_CACHE_CONTROL,
+    }
+}
+
 pub fn is_wildcard_host(host: Option<&str>) -> bool {
     matches!(host, Some("0.0.0.0" | "::" | "[::]"))
 }
@@ -1533,6 +1599,17 @@ fn url_path_search_hash(url: &str) -> String {
     } else {
         tail.to_string()
     }
+}
+
+fn query_param(url: &str, key: &str) -> Option<String> {
+    let query = url.split_once('?')?.1.split('#').next().unwrap_or("");
+    for pair in query.split('&') {
+        let (pair_key, value) = pair.split_once('=').unwrap_or((pair, ""));
+        if pair_key == key {
+            return Some(value.to_string());
+        }
+    }
+    None
 }
 
 fn normalize_relative_url_path(path: &str) -> String {
@@ -3041,6 +3118,62 @@ mod tests {
                     "authorization, b3, traceparent, content-type".to_string(),
                 ),
             ])
+        );
+        assert!(FALLBACK_PROJECT_FAVICON_SVG.contains(r#"data-fallback="project-favicon""#));
+        assert_eq!(PROJECT_FAVICON_CACHE_CONTROL, "public, max-age=3600");
+        assert_eq!(
+            project_favicon_route_decision(None, None, false),
+            ProjectFaviconRouteDecision::BadRequest {
+                body: "Bad Request",
+                status: 400,
+            }
+        );
+        assert_eq!(
+            project_favicon_route_decision(
+                Some("http://localhost:3773/api/project-favicon"),
+                None,
+                false
+            ),
+            ProjectFaviconRouteDecision::BadRequest {
+                body: "Missing cwd parameter",
+                status: 400,
+            }
+        );
+        assert_eq!(
+            project_favicon_route_decision(
+                Some("http://localhost:3773/api/project-favicon?cwd=C:/repo"),
+                None,
+                false,
+            ),
+            ProjectFaviconRouteDecision::FallbackSvg {
+                body: FALLBACK_PROJECT_FAVICON_SVG,
+                status: 200,
+                content_type: "image/svg+xml",
+                cache_control: PROJECT_FAVICON_CACHE_CONTROL,
+            }
+        );
+        assert_eq!(
+            project_favicon_route_decision(
+                Some("http://localhost:3773/api/project-favicon?cwd=C:/repo"),
+                Some("C:/repo/favicon.ico"),
+                false,
+            ),
+            ProjectFaviconRouteDecision::File {
+                path: "C:/repo/favicon.ico".to_string(),
+                status: 200,
+                cache_control: PROJECT_FAVICON_CACHE_CONTROL,
+            }
+        );
+        assert_eq!(
+            project_favicon_route_decision(
+                Some("http://localhost:3773/api/project-favicon?cwd=C:/repo"),
+                Some("C:/repo/favicon.ico"),
+                true,
+            ),
+            ProjectFaviconRouteDecision::InternalServerError {
+                body: "Internal Server Error",
+                status: 500,
+            }
         );
 
         assert_eq!(
