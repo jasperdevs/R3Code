@@ -6196,6 +6196,13 @@ pub struct SourceControlRepositoryErrorContract {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlLookupRepositoryPlan {
+    pub provider: SourceControlProviderKind,
+    pub cwd: String,
+    pub repository: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceControlGitCommandPlan {
     pub operation: &'static str,
     pub cwd: String,
@@ -6668,6 +6675,29 @@ pub fn source_control_repository_info(
         url: urls.url.clone(),
         ssh_url: urls.ssh_url.clone(),
     }
+}
+
+pub fn source_control_lookup_repository_plan(
+    input: &SourceControlRepositoryLookupInput,
+    default_cwd: &str,
+) -> Result<SourceControlLookupRepositoryPlan, SourceControlRepositoryErrorContract> {
+    let provider = source_control_ensure_concrete_provider(input.provider, "lookupRepository")?;
+    Ok(SourceControlLookupRepositoryPlan {
+        provider,
+        cwd: input
+            .cwd
+            .as_deref()
+            .and_then(|cwd| trimmed_optional_string(Some(cwd)))
+            .unwrap_or_else(|| default_cwd.to_string()),
+        repository: input.repository.trim().to_string(),
+    })
+}
+
+pub fn source_control_lookup_repository_result(
+    plan: &SourceControlLookupRepositoryPlan,
+    urls: &SourceControlRepositoryCloneUrls,
+) -> SourceControlRepositoryInfo {
+    source_control_repository_info(plan.provider, urls)
 }
 
 pub fn source_control_select_remote_url(
@@ -20611,6 +20641,56 @@ mod tests {
             url: "https://github.com/octocat/t3code".to_string(),
             ssh_url: "git@github.com:octocat/t3code.git".to_string(),
         };
+        let lookup_input = SourceControlRepositoryLookupInput {
+            provider: SourceControlProviderKind::Github,
+            repository: "  octocat/t3code  ".to_string(),
+            cwd: None,
+        };
+        let lookup_plan =
+            source_control_lookup_repository_plan(&lookup_input, "/server-cwd").unwrap();
+        assert_eq!(
+            lookup_plan,
+            SourceControlLookupRepositoryPlan {
+                provider: SourceControlProviderKind::Github,
+                cwd: "/server-cwd".to_string(),
+                repository: "octocat/t3code".to_string(),
+            }
+        );
+        assert_eq!(
+            source_control_lookup_repository_result(&lookup_plan, &urls),
+            SourceControlRepositoryInfo {
+                provider: SourceControlProviderKind::Github,
+                name_with_owner: "octocat/t3code".to_string(),
+                url: "https://github.com/octocat/t3code".to_string(),
+                ssh_url: "git@github.com:octocat/t3code.git".to_string(),
+            }
+        );
+        assert_eq!(
+            source_control_lookup_repository_plan(
+                &SourceControlRepositoryLookupInput {
+                    provider: SourceControlProviderKind::Unknown,
+                    repository: "octocat/t3code".to_string(),
+                    cwd: Some("  /workspace  ".to_string()),
+                },
+                "/server-cwd",
+            )
+            .unwrap_err()
+            .message(),
+            "Source control repository operation lookupRepository failed for unknown: Choose a source control provider before continuing."
+        );
+        assert_eq!(
+            source_control_lookup_repository_plan(
+                &SourceControlRepositoryLookupInput {
+                    provider: SourceControlProviderKind::Github,
+                    repository: "octocat/t3code".to_string(),
+                    cwd: Some("  /workspace  ".to_string()),
+                },
+                "/server-cwd",
+            )
+            .unwrap()
+            .cwd,
+            "/workspace"
+        );
         assert_eq!(
             source_control_repository_info(SourceControlProviderKind::Github, &urls),
             SourceControlRepositoryInfo {
