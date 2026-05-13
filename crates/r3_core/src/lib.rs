@@ -3768,6 +3768,18 @@ pub const BRANCH_TOOLBAR_MOBILE_TRIGGER_CLASS_NAME: &str = "min-w-0 max-w-[48%] 
 pub const BRANCH_TOOLBAR_MOBILE_MENU_CLASS_NAME: &str = "w-64";
 pub const BRANCH_TOOLBAR_RUN_ON_LABEL: &str = "Run on";
 pub const BRANCH_TOOLBAR_WORKSPACE_LABEL: &str = "Workspace";
+pub const BRANCH_SELECTOR_TRIGGER_CLASS_NAME: &str =
+    "min-w-0 text-muted-foreground/70 hover:text-foreground/80";
+pub const BRANCH_SELECTOR_TRIGGER_LABEL_CLASS_NAME: &str = "min-w-0 max-w-[240px] truncate";
+pub const BRANCH_SELECTOR_POPUP_CLASS_NAME: &str = "w-80";
+pub const BRANCH_SELECTOR_INPUT_PLACEHOLDER: &str = "Search refs...";
+pub const BRANCH_SELECTOR_INPUT_CLASS_NAME: &str = "[&_input]:font-sans rounded-md";
+pub const BRANCH_SELECTOR_INPUT_INNER_CLASS_NAME: &str = "ring-0";
+pub const BRANCH_SELECTOR_EMPTY_LABEL: &str = "No refs found.";
+pub const BRANCH_SELECTOR_STATIC_LIST_CLASS_NAME: &str = "max-h-56";
+pub const BRANCH_SELECTOR_VIRTUALIZED_LIST_MAX_HEIGHT: &str = "14rem";
+pub const BRANCH_SELECTOR_VIRTUALIZE_THRESHOLD: usize = 40;
+pub const BRANCH_SELECTOR_FETCH_NEXT_DISTANCE_PX: f64 = 96.0;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BranchToolbarRenderContract {
@@ -3785,12 +3797,126 @@ pub struct BranchToolbarRenderContract {
     pub mobile_menu_group_labels: Vec<&'static str>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchSelectorRenderContract {
+    pub trigger_label: String,
+    pub trigger_class_name: &'static str,
+    pub trigger_label_class_name: &'static str,
+    pub popup_class_name: &'static str,
+    pub input_placeholder: &'static str,
+    pub input_class_name: &'static str,
+    pub input_inner_class_name: &'static str,
+    pub empty_label: &'static str,
+    pub static_list_class_name: Option<&'static str>,
+    pub virtualized_list_max_height: Option<&'static str>,
+    pub should_virtualize: bool,
+    pub status_text: Option<String>,
+}
+
 impl DraftThreadEnvMode {
     pub fn toggled(self) -> Self {
         match self {
             Self::Local => Self::Worktree,
             Self::Worktree => Self::Local,
         }
+    }
+}
+
+pub fn should_virtualize_branch_selector_list(item_count: usize) -> bool {
+    item_count > BRANCH_SELECTOR_VIRTUALIZE_THRESHOLD
+}
+
+pub fn should_fetch_next_branch_selector_page(
+    is_open: bool,
+    has_next_page: bool,
+    is_fetching_next_page: bool,
+    distance_from_bottom: f64,
+) -> bool {
+    is_open
+        && has_next_page
+        && !is_fetching_next_page
+        && distance_from_bottom <= BRANCH_SELECTOR_FETCH_NEXT_DISTANCE_PX
+}
+
+pub fn branch_selector_status_text(
+    is_pending: bool,
+    is_fetching_next_page: bool,
+    has_next_page: bool,
+    visible_ref_count: usize,
+    total_ref_count: usize,
+) -> Option<String> {
+    if is_pending {
+        Some("Loading refs...".to_string())
+    } else if is_fetching_next_page {
+        Some("Loading more refs...".to_string())
+    } else if has_next_page {
+        Some(format!(
+            "Showing {visible_ref_count} of {total_ref_count} refs"
+        ))
+    } else {
+        None
+    }
+}
+
+pub fn branch_selector_badge(
+    ref_name: &VcsRef,
+    active_project_cwd: Option<&str>,
+) -> Option<&'static str> {
+    let has_secondary_worktree = ref_name
+        .worktree_path
+        .as_deref()
+        .zip(active_project_cwd)
+        .is_some_and(|(worktree_path, cwd)| worktree_path != cwd);
+    if ref_name.current {
+        Some("current")
+    } else if has_secondary_worktree {
+        Some("worktree")
+    } else if ref_name.is_remote {
+        Some("remote")
+    } else if ref_name.is_default {
+        Some("default")
+    } else {
+        None
+    }
+}
+
+pub fn derive_branch_selector_render_contract(
+    active_worktree_path: Option<&str>,
+    effective_env_mode: DraftThreadEnvMode,
+    resolved_active_branch: Option<&str>,
+    filtered_item_count: usize,
+    is_pending: bool,
+    is_fetching_next_page: bool,
+    has_next_page: bool,
+    visible_ref_count: usize,
+    total_ref_count: usize,
+) -> BranchSelectorRenderContract {
+    let should_virtualize = should_virtualize_branch_selector_list(filtered_item_count);
+    BranchSelectorRenderContract {
+        trigger_label: branch_toolbar_trigger_label(
+            active_worktree_path,
+            effective_env_mode,
+            resolved_active_branch,
+        ),
+        trigger_class_name: BRANCH_SELECTOR_TRIGGER_CLASS_NAME,
+        trigger_label_class_name: BRANCH_SELECTOR_TRIGGER_LABEL_CLASS_NAME,
+        popup_class_name: BRANCH_SELECTOR_POPUP_CLASS_NAME,
+        input_placeholder: BRANCH_SELECTOR_INPUT_PLACEHOLDER,
+        input_class_name: BRANCH_SELECTOR_INPUT_CLASS_NAME,
+        input_inner_class_name: BRANCH_SELECTOR_INPUT_INNER_CLASS_NAME,
+        empty_label: BRANCH_SELECTOR_EMPTY_LABEL,
+        static_list_class_name: (!should_virtualize)
+            .then_some(BRANCH_SELECTOR_STATIC_LIST_CLASS_NAME),
+        virtualized_list_max_height: should_virtualize
+            .then_some(BRANCH_SELECTOR_VIRTUALIZED_LIST_MAX_HEIGHT),
+        should_virtualize,
+        status_text: branch_selector_status_text(
+            is_pending,
+            is_fetching_next_page,
+            has_next_page,
+            visible_ref_count,
+            total_ref_count,
+        ),
     }
 }
 
@@ -35698,6 +35824,112 @@ mod tests {
         assert_eq!(locked_worktree.mobile_environment_icon, "MonitorIcon");
         assert_eq!(locked_worktree.mobile_label, "Worktree");
         assert!(locked_worktree.mobile_menu_group_labels.is_empty());
+    }
+
+    #[test]
+    fn branch_toolbar_branch_selector_render_contract_matches_upstream_component() {
+        let default_contract = derive_branch_selector_render_contract(
+            None,
+            DraftThreadEnvMode::Local,
+            Some("main"),
+            40,
+            false,
+            false,
+            false,
+            40,
+            40,
+        );
+        assert_eq!(default_contract.trigger_label, "main");
+        assert_eq!(
+            default_contract.trigger_class_name,
+            BRANCH_SELECTOR_TRIGGER_CLASS_NAME
+        );
+        assert_eq!(
+            default_contract.trigger_label_class_name,
+            BRANCH_SELECTOR_TRIGGER_LABEL_CLASS_NAME
+        );
+        assert_eq!(
+            default_contract.popup_class_name,
+            BRANCH_SELECTOR_POPUP_CLASS_NAME
+        );
+        assert_eq!(
+            default_contract.input_placeholder,
+            BRANCH_SELECTOR_INPUT_PLACEHOLDER
+        );
+        assert_eq!(default_contract.empty_label, BRANCH_SELECTOR_EMPTY_LABEL);
+        assert!(!default_contract.should_virtualize);
+        assert_eq!(
+            default_contract.static_list_class_name,
+            Some(BRANCH_SELECTOR_STATIC_LIST_CLASS_NAME)
+        );
+        assert_eq!(default_contract.virtualized_list_max_height, None);
+        assert_eq!(default_contract.status_text, None);
+
+        let virtualized = derive_branch_selector_render_contract(
+            None,
+            DraftThreadEnvMode::Worktree,
+            Some("main"),
+            41,
+            false,
+            false,
+            true,
+            41,
+            90,
+        );
+        assert_eq!(virtualized.trigger_label, "From main");
+        assert!(virtualized.should_virtualize);
+        assert_eq!(virtualized.static_list_class_name, None);
+        assert_eq!(
+            virtualized.virtualized_list_max_height,
+            Some(BRANCH_SELECTOR_VIRTUALIZED_LIST_MAX_HEIGHT)
+        );
+        assert_eq!(
+            virtualized.status_text,
+            Some("Showing 41 of 90 refs".to_string())
+        );
+
+        assert_eq!(
+            branch_selector_status_text(true, false, false, 0, 0),
+            Some("Loading refs...".to_string())
+        );
+        assert_eq!(
+            branch_selector_status_text(false, true, true, 40, 90),
+            Some("Loading more refs...".to_string())
+        );
+        assert!(should_fetch_next_branch_selector_page(
+            true, true, false, 96.0
+        ));
+        assert!(!should_fetch_next_branch_selector_page(
+            true, true, false, 97.0
+        ));
+
+        let current_ref = VcsRef {
+            name: "main".to_string(),
+            current: true,
+            is_default: true,
+            is_remote: false,
+            remote_name: None,
+            worktree_path: None,
+        };
+        assert_eq!(
+            branch_selector_badge(&current_ref, Some("/repo")),
+            Some("current")
+        );
+        assert_eq!(
+            branch_selector_badge(
+                &vcs_ref("feature-a", false, Some("/repo/worktree-a")),
+                Some("/repo")
+            ),
+            Some("worktree")
+        );
+        assert_eq!(
+            branch_selector_badge(&remote_vcs_ref("origin/feature-a", "origin"), Some("/repo")),
+            Some("remote")
+        );
+        assert_eq!(
+            branch_selector_badge(&vcs_ref("main", true, None), Some("/repo")),
+            Some("default")
+        );
     }
 
     #[test]
