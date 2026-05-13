@@ -217,6 +217,17 @@ pub struct ThreadScopedToastData {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ModelPickerOpenState {
+    pub open: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ModelPickerOpenStateTransition {
+    pub state: ModelPickerOpenState,
+    pub changed: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ShortcutModifierState {
     pub meta_key: bool,
     pub ctrl_key: bool,
@@ -2154,6 +2165,27 @@ pub fn should_render_thread_scoped_toast(
     };
     active_thread_ref
         .is_some_and(|active_thread_ref| active_thread_ref.thread_id == *toast_thread_id)
+}
+
+pub fn initial_model_picker_open_state() -> ModelPickerOpenState {
+    ModelPickerOpenState { open: false }
+}
+
+pub fn set_model_picker_open_state(
+    current: ModelPickerOpenState,
+    open: bool,
+) -> ModelPickerOpenStateTransition {
+    if current.open == open {
+        return ModelPickerOpenStateTransition {
+            state: current,
+            changed: false,
+        };
+    }
+
+    ModelPickerOpenStateTransition {
+        state: ModelPickerOpenState { open },
+        changed: true,
+    }
 }
 
 pub fn are_shortcut_modifier_states_equal(
@@ -26324,6 +26356,28 @@ mod tests {
                 shift_key: false,
             }
         );
+    }
+
+    #[test]
+    fn model_picker_open_state_matches_upstream_store_logic() {
+        let closed = initial_model_picker_open_state();
+        assert_eq!(closed, ModelPickerOpenState { open: false });
+
+        let unchanged_closed = set_model_picker_open_state(closed, false);
+        assert_eq!(unchanged_closed.state, closed);
+        assert!(!unchanged_closed.changed);
+
+        let opened = set_model_picker_open_state(closed, true);
+        assert_eq!(opened.state, ModelPickerOpenState { open: true });
+        assert!(opened.changed);
+
+        let unchanged_open = set_model_picker_open_state(opened.state, true);
+        assert_eq!(unchanged_open.state, opened.state);
+        assert!(!unchanged_open.changed);
+
+        let reclosed = set_model_picker_open_state(opened.state, false);
+        assert_eq!(reclosed.state, ModelPickerOpenState { open: false });
+        assert!(reclosed.changed);
     }
 
     #[test]

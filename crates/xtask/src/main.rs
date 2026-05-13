@@ -1768,6 +1768,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core shortcut_modifier_state`",
             "Wire helpers into live GPUI keyboard modifier tracking.",
         )
+    } else if path == "apps/web/src/modelPickerOpenState.ts" {
+        (
+            "model picker open default state and no-op setter transition helper in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core model_picker_open_state`",
+            "Wire helper into the live GPUI model picker open/close store.",
+        )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
             "logical project path normalization, physical/grouping/order keys, repository-scoped keys, settings override resolution, ref fallback, and group-label helpers in crates/r3_core/src/lib.rs",

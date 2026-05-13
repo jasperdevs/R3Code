@@ -785,7 +785,7 @@ Do not edit individual rows by hand; update `crates/xtask/src/main.rs` classific
 | `apps/web/src/markdown-links.ts` | crates/r3_ui/src/shell.rs | `partial` | Current visual gates only cover selected states | Classify exact web app behavior and add missing GPUI/screenshots. |
 | `apps/web/src/modelOrdering.test.ts` | crates/r3_ui/src/shell.rs | `partial` | Current visual gates only cover selected states | Classify exact web app behavior and add missing GPUI/screenshots. |
 | `apps/web/src/modelOrdering.ts` | crates/r3_ui/src/shell.rs | `partial` | Current visual gates only cover selected states | Classify exact web app behavior and add missing GPUI/screenshots. |
-| `apps/web/src/modelPickerOpenState.ts` | crates/r3_ui/src/shell.rs | `partial` | Current visual gates only cover selected states | Classify exact web app behavior and add missing GPUI/screenshots. |
+| `apps/web/src/modelPickerOpenState.ts` | model picker open default state and no-op setter transition helper in crates/r3_core/src/lib.rs | `partial` | `cargo test -p r3_core model_picker_open_state` | Wire helper into the live GPUI model picker open/close store. |
 | `apps/web/src/modelSelection.test.ts` | crates/r3_ui/src/shell.rs | `partial` | Current visual gates only cover selected states | Classify exact web app behavior and add missing GPUI/screenshots. |
 | `apps/web/src/modelSelection.ts` | crates/r3_ui/src/shell.rs | `partial` | Current visual gates only cover selected states | Classify exact web app behavior and add missing GPUI/screenshots. |
 | `apps/web/src/observability/clientTracing.ts` | crates/r3_ui/src/shell.rs | `partial` | Current visual gates only cover selected states | Classify exact web app behavior and add missing GPUI/screenshots. |
