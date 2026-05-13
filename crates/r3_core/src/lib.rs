@@ -4053,6 +4053,22 @@ pub struct SidebarProjectSnapshot {
     pub remote_environment_labels: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SidebarThreadForGrouping {
+    pub id: String,
+    pub environment_id: String,
+    pub project_id: String,
+    pub title: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct EnvironmentGroupingState {
+    pub environment_id: String,
+    pub projects: Vec<LogicalProject>,
+    pub sidebar_threads: Vec<SidebarThreadForGrouping>,
+    pub thread_ids_by_project_id: BTreeMap<String, Vec<String>>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProjectScriptIcon {
     Play,
@@ -21144,6 +21160,62 @@ pub fn build_sidebar_project_snapshots(
     snapshots
 }
 
+pub fn select_projects_across_environment_groups(
+    states: &[EnvironmentGroupingState],
+) -> Vec<LogicalProject> {
+    states
+        .iter()
+        .flat_map(|state| state.projects.iter().cloned())
+        .collect()
+}
+
+pub fn select_sidebar_threads_across_environment_groups(
+    states: &[EnvironmentGroupingState],
+) -> Vec<SidebarThreadForGrouping> {
+    states
+        .iter()
+        .flat_map(|state| state.sidebar_threads.iter().cloned())
+        .collect()
+}
+
+pub fn select_sidebar_threads_for_project_ref(
+    states: &[EnvironmentGroupingState],
+    project_ref: Option<&ScopedProjectRef>,
+) -> Vec<SidebarThreadForGrouping> {
+    let Some(project_ref) = project_ref else {
+        return Vec::new();
+    };
+    let Some(state) = states
+        .iter()
+        .find(|state| state.environment_id == project_ref.environment_id)
+    else {
+        return Vec::new();
+    };
+    let Some(thread_ids) = state.thread_ids_by_project_id.get(&project_ref.project_id) else {
+        return Vec::new();
+    };
+    thread_ids
+        .iter()
+        .filter_map(|thread_id| {
+            state
+                .sidebar_threads
+                .iter()
+                .find(|thread| thread.id == *thread_id)
+                .cloned()
+        })
+        .collect()
+}
+
+pub fn select_sidebar_threads_for_project_refs(
+    states: &[EnvironmentGroupingState],
+    project_refs: &[ScopedProjectRef],
+) -> Vec<SidebarThreadForGrouping> {
+    project_refs
+        .iter()
+        .flat_map(|project_ref| select_sidebar_threads_for_project_ref(states, Some(project_ref)))
+        .collect()
+}
+
 pub fn derive_project_group_label(
     representative: &LogicalProject,
     members: &[LogicalProject],
@@ -30391,6 +30463,217 @@ mod tests {
         assert_eq!(
             remote_only[0].environment_presence,
             EnvironmentPresence::RemoteOnly
+        );
+    }
+
+    #[test]
+    fn environment_grouping_selectors_match_upstream_contract() {
+        let shared_repo_key = "github.com/example/shared-repo";
+        let primary_shared = LogicalProject {
+            id: "shared-proj-primary".to_string(),
+            environment_id: "env-primary".to_string(),
+            cwd: "/tmp/shared-repo".to_string(),
+            name: "shared-repo".to_string(),
+            repository_identity: Some(LogicalProjectRepositoryIdentity {
+                canonical_key: Some(shared_repo_key.to_string()),
+                root_path: None,
+                display_name: None,
+                name: None,
+            }),
+        };
+        let remote_shared = LogicalProject {
+            id: "shared-proj-remote".to_string(),
+            environment_id: "env-remote".to_string(),
+            cwd: "/tmp/shared-repo".to_string(),
+            name: "shared-repo".to_string(),
+            repository_identity: primary_shared.repository_identity.clone(),
+        };
+        let local_only = LogicalProject {
+            id: "local-only-proj".to_string(),
+            environment_id: "env-primary".to_string(),
+            cwd: "/tmp/local-only".to_string(),
+            name: "local-only".to_string(),
+            repository_identity: None,
+        };
+        let remote_only = LogicalProject {
+            id: "remote-only-proj".to_string(),
+            environment_id: "env-remote".to_string(),
+            cwd: "/tmp/remote-only".to_string(),
+            name: "remote-only".to_string(),
+            repository_identity: None,
+        };
+        let thread = |id: &str, environment_id: &str, project_id: &str, title: &str| {
+            SidebarThreadForGrouping {
+                id: id.to_string(),
+                environment_id: environment_id.to_string(),
+                project_id: project_id.to_string(),
+                title: title.to_string(),
+            }
+        };
+        let states = vec![
+            EnvironmentGroupingState {
+                environment_id: "env-primary".to_string(),
+                projects: vec![primary_shared.clone(), local_only.clone()],
+                sidebar_threads: vec![
+                    thread(
+                        "thread-shared-primary-1",
+                        "env-primary",
+                        "shared-proj-primary",
+                        "Shared primary thread 1",
+                    ),
+                    thread(
+                        "thread-shared-primary-2",
+                        "env-primary",
+                        "shared-proj-primary",
+                        "Shared primary thread 2",
+                    ),
+                    thread(
+                        "thread-local-only-1",
+                        "env-primary",
+                        "local-only-proj",
+                        "Local only thread 1",
+                    ),
+                ],
+                thread_ids_by_project_id: BTreeMap::from([
+                    (
+                        "shared-proj-primary".to_string(),
+                        vec![
+                            "thread-shared-primary-1".to_string(),
+                            "thread-shared-primary-2".to_string(),
+                        ],
+                    ),
+                    (
+                        "local-only-proj".to_string(),
+                        vec!["thread-local-only-1".to_string()],
+                    ),
+                ]),
+            },
+            EnvironmentGroupingState {
+                environment_id: "env-remote".to_string(),
+                projects: vec![remote_shared.clone(), remote_only.clone()],
+                sidebar_threads: vec![
+                    thread(
+                        "thread-shared-remote-1",
+                        "env-remote",
+                        "shared-proj-remote",
+                        "Shared remote thread 1",
+                    ),
+                    thread(
+                        "thread-remote-only-1",
+                        "env-remote",
+                        "remote-only-proj",
+                        "Remote only thread 1",
+                    ),
+                ],
+                thread_ids_by_project_id: BTreeMap::from([
+                    (
+                        "shared-proj-remote".to_string(),
+                        vec!["thread-shared-remote-1".to_string()],
+                    ),
+                    (
+                        "remote-only-proj".to_string(),
+                        vec!["thread-remote-only-1".to_string()],
+                    ),
+                ]),
+            },
+        ];
+
+        let projects = select_projects_across_environment_groups(&states);
+        assert_eq!(projects.len(), 4);
+        assert_eq!(
+            projects
+                .iter()
+                .map(|project| project.name.as_str())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["local-only", "remote-only", "shared-repo"])
+        );
+        assert_eq!(
+            derive_logical_project_key(&primary_shared, None),
+            derive_logical_project_key(&remote_shared, None)
+        );
+        assert_ne!(
+            derive_logical_project_key(&local_only, None),
+            derive_logical_project_key(&remote_only, None)
+        );
+
+        let all_threads = select_sidebar_threads_across_environment_groups(&states);
+        assert_eq!(all_threads.len(), 5);
+        assert_eq!(
+            all_threads
+                .iter()
+                .map(|thread| thread.id.as_str())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                "thread-shared-primary-1",
+                "thread-shared-primary-2",
+                "thread-shared-remote-1",
+                "thread-local-only-1",
+                "thread-remote-only-1",
+            ])
+        );
+
+        let primary_ref = scope_project_ref("env-primary", "shared-proj-primary");
+        assert_eq!(
+            select_sidebar_threads_for_project_ref(&states, Some(&primary_ref))
+                .iter()
+                .map(|thread| thread.id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["thread-shared-primary-1", "thread-shared-primary-2"]
+        );
+        assert_eq!(
+            select_sidebar_threads_for_project_ref(&states, None),
+            Vec::<SidebarThreadForGrouping>::new()
+        );
+        assert_eq!(
+            select_sidebar_threads_for_project_ref(
+                &states,
+                Some(&scope_project_ref("nonexistent", "shared-proj-primary"))
+            ),
+            Vec::<SidebarThreadForGrouping>::new()
+        );
+
+        let grouped_threads = select_sidebar_threads_for_project_refs(
+            &states,
+            &[
+                scope_project_ref("env-primary", "shared-proj-primary"),
+                scope_project_ref("env-remote", "shared-proj-remote"),
+            ],
+        );
+        assert_eq!(
+            grouped_threads
+                .iter()
+                .map(|thread| thread.id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "thread-shared-primary-1",
+                "thread-shared-primary-2",
+                "thread-shared-remote-1",
+            ]
+        );
+        assert_eq!(
+            select_sidebar_threads_for_project_refs(
+                &states,
+                &[
+                    scope_project_ref("env-primary", "shared-proj-primary"),
+                    scope_project_ref("nonexistent", "nope"),
+                ],
+            )
+            .iter()
+            .map(|thread| thread.id.as_str())
+            .collect::<Vec<_>>(),
+            vec!["thread-shared-primary-1", "thread-shared-primary-2"]
+        );
+        assert_eq!(
+            select_sidebar_threads_for_project_refs(
+                &states,
+                &[scope_project_ref("env-remote", "remote-only-proj")],
+            )[0]
+            .id,
+            "thread-remote-only-1"
+        );
+        assert_eq!(
+            select_sidebar_threads_for_project_refs(&states, &[]),
+            Vec::<SidebarThreadForGrouping>::new()
         );
     }
 

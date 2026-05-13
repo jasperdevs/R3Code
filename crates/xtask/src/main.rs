@@ -2478,6 +2478,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace environment_api_facade_matches_upstream_contract`",
             "Wire the facade into live WsRpcClient instances, runtime connection lookup, and test override storage in GPUI runtime.",
         )
+    } else if path == "apps/web/src/environmentGrouping.test.ts" {
+        (
+            "environment grouping selectors for all projects/sidebar threads across environments, single/multiple project-ref thread lookup, null/missing environment handling, logical repository grouping, repository-path/separate grouping, settings overrides, and sidebar project group snapshots in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace environment_grouping_selectors_match_upstream_contract`; `cargo test --workspace logical_project_helpers_match_upstream_grouping_rules`; `cargo test --workspace sidebar_project_grouping_matches_upstream_contract`",
+            "Wire pure grouping selectors into live GPUI store selectors and memoization boundaries.",
+        )
     } else if path == "apps/web/src/authBootstrap.test.ts" {
         (
             "primary auth bootstrap request URL/method/body/credentials plans, pairing token submission validation, pairing link/client list/revoke endpoint shapes, revoke-others POST behavior, transient retry/gate helpers, and authenticated-session wait timeout constants in crates/r3_core/src/lib.rs",
