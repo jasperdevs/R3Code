@@ -1725,6 +1725,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core websocket_connection_state`",
             "Wire helpers into the live GPUI websocket connection surface and real socket lifecycle.",
         )
+    } else if path == "apps/web/src/rpc/requestLatencyState.ts"
+        || path == "apps/web/src/rpc/requestLatencyState.test.ts"
+    {
+        (
+            "slow RPC ack request tracking, threshold promotion, acknowledgement, subscribe filtering, and capacity eviction helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core request_latency_state`",
+            "Wire helpers into the live GPUI RPC layer timers and connection diagnostics UI.",
+        )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
             "logical project path normalization, physical/grouping/order keys, repository-scoped keys, settings override resolution, ref fallback, and group-label helpers in crates/r3_core/src/lib.rs",

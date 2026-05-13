@@ -260,11 +260,29 @@ pub struct WsConnectionMetadata {
     pub version_mismatch_hint: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlowRpcAckRequest {
+    pub request_id: String,
+    pub started_at: String,
+    pub started_at_ms: i64,
+    pub tag: String,
+    pub threshold_ms: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RpcAckLatencyState {
+    pub pending_requests: Vec<SlowRpcAckRequest>,
+    pub slow_requests: Vec<SlowRpcAckRequest>,
+    pub slow_rpc_ack_threshold_ms: i64,
+}
+
 pub const WS_RECONNECT_INITIAL_DELAY_MS: u64 = 1_000;
 pub const WS_RECONNECT_BACKOFF_FACTOR: u64 = 2;
 pub const WS_RECONNECT_MAX_DELAY_MS: u64 = 64_000;
 pub const WS_RECONNECT_MAX_RETRIES: usize = 7;
 pub const WS_RECONNECT_MAX_ATTEMPTS: usize = WS_RECONNECT_MAX_RETRIES + 1;
+pub const SLOW_RPC_ACK_THRESHOLD_MS: i64 = 15_000;
+pub const MAX_TRACKED_RPC_ACK_REQUESTS: usize = 256;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlineTerminalContextInsertion {
@@ -2087,6 +2105,113 @@ pub fn initial_ws_connection_status(online: bool) -> WsConnectionStatus {
         reconnect_phase: WsReconnectPhase::Idle,
         socket_url: None,
     }
+}
+
+pub fn initial_rpc_ack_latency_state() -> RpcAckLatencyState {
+    RpcAckLatencyState {
+        pending_requests: Vec::new(),
+        slow_requests: Vec::new(),
+        slow_rpc_ack_threshold_ms: SLOW_RPC_ACK_THRESHOLD_MS,
+    }
+}
+
+pub fn should_track_rpc_ack(tag: &str) -> bool {
+    !tag.contains("subscribe")
+}
+
+pub fn track_rpc_request_sent_at(
+    current: &RpcAckLatencyState,
+    request_id: &str,
+    tag: &str,
+    started_at_ms: i64,
+    started_at: &str,
+) -> RpcAckLatencyState {
+    if !should_track_rpc_ack(tag) {
+        return current.clone();
+    }
+
+    let mut next = acknowledge_rpc_request(current, request_id);
+    while next.pending_requests.len() >= MAX_TRACKED_RPC_ACK_REQUESTS {
+        next.pending_requests.remove(0);
+    }
+    next.pending_requests.push(SlowRpcAckRequest {
+        request_id: request_id.to_string(),
+        started_at: started_at.to_string(),
+        started_at_ms,
+        tag: tag.to_string(),
+        threshold_ms: next.slow_rpc_ack_threshold_ms,
+    });
+    next
+}
+
+pub fn acknowledge_rpc_request(
+    current: &RpcAckLatencyState,
+    request_id: &str,
+) -> RpcAckLatencyState {
+    let mut next = current.clone();
+    next.pending_requests
+        .retain(|request| request.request_id != request_id);
+    if next
+        .slow_requests
+        .iter()
+        .any(|request| request.request_id == request_id)
+    {
+        next.slow_requests
+            .retain(|request| request.request_id != request_id);
+    }
+    next
+}
+
+pub fn promote_elapsed_rpc_ack_requests(
+    current: &RpcAckLatencyState,
+    now_ms: i64,
+) -> RpcAckLatencyState {
+    let mut next = current.clone();
+    let mut still_pending = Vec::new();
+    let mut elapsed = Vec::new();
+    for request in std::mem::take(&mut next.pending_requests) {
+        if now_ms - request.started_at_ms >= request.threshold_ms {
+            elapsed.push(request);
+        } else {
+            still_pending.push(request);
+        }
+    }
+    next.pending_requests = still_pending;
+    for request in elapsed {
+        next = append_slow_rpc_ack_request(&next, request);
+    }
+    next
+}
+
+pub fn clear_all_tracked_rpc_requests(current: &RpcAckLatencyState) -> RpcAckLatencyState {
+    RpcAckLatencyState {
+        pending_requests: Vec::new(),
+        slow_requests: Vec::new(),
+        slow_rpc_ack_threshold_ms: current.slow_rpc_ack_threshold_ms,
+    }
+}
+
+pub fn set_slow_rpc_ack_threshold_ms_for_tests(
+    current: &RpcAckLatencyState,
+    threshold_ms: i64,
+) -> RpcAckLatencyState {
+    RpcAckLatencyState {
+        slow_rpc_ack_threshold_ms: threshold_ms,
+        ..current.clone()
+    }
+}
+
+fn append_slow_rpc_ack_request(
+    current: &RpcAckLatencyState,
+    request: SlowRpcAckRequest,
+) -> RpcAckLatencyState {
+    let mut next = current.clone();
+    next.slow_requests.push(request);
+    if next.slow_requests.len() > MAX_TRACKED_RPC_ACK_REQUESTS {
+        let excess = next.slow_requests.len() - MAX_TRACKED_RPC_ACK_REQUESTS;
+        next.slow_requests.drain(0..excess);
+    }
+    next
 }
 
 pub fn get_ws_connection_ui_state(status: &WsConnectionStatus) -> WsConnectionUiState {
@@ -25943,6 +26068,75 @@ mod tests {
         assert_eq!(get_ws_reconnect_delay_ms_for_retry(0), Some(1_000));
         assert_eq!(get_ws_reconnect_delay_ms_for_retry(6), Some(64_000));
         assert_eq!(get_ws_reconnect_delay_ms_for_retry(7), None);
+    }
+
+    #[test]
+    fn request_latency_state_matches_upstream_ack_tracking() {
+        let started_at = "2026-04-03T20:30:00.000Z";
+        let mut state = initial_rpc_ack_latency_state();
+
+        state = track_rpc_request_sent_at(&state, "1", "server.getConfig", 0, started_at);
+        state = promote_elapsed_rpc_ack_requests(&state, SLOW_RPC_ACK_THRESHOLD_MS - 1);
+        assert!(state.slow_requests.is_empty());
+
+        state = promote_elapsed_rpc_ack_requests(&state, SLOW_RPC_ACK_THRESHOLD_MS);
+        assert_eq!(
+            state.slow_requests,
+            vec![SlowRpcAckRequest {
+                request_id: "1".to_string(),
+                started_at: started_at.to_string(),
+                started_at_ms: 0,
+                tag: "server.getConfig".to_string(),
+                threshold_ms: SLOW_RPC_ACK_THRESHOLD_MS,
+            }]
+        );
+
+        state = acknowledge_rpc_request(&state, "1");
+        assert!(state.slow_requests.is_empty());
+
+        state = track_rpc_request_sent_at(&state, "1", "subscribeServerConfig", 0, started_at);
+        state = promote_elapsed_rpc_ack_requests(&state, SLOW_RPC_ACK_THRESHOLD_MS * 2);
+        assert!(state.slow_requests.is_empty());
+
+        let mut capacity_state = initial_rpc_ack_latency_state();
+        for index in 0..=MAX_TRACKED_RPC_ACK_REQUESTS {
+            capacity_state = track_rpc_request_sent_at(
+                &capacity_state,
+                &index.to_string(),
+                "server.getConfig",
+                0,
+                started_at,
+            );
+        }
+        capacity_state =
+            promote_elapsed_rpc_ack_requests(&capacity_state, SLOW_RPC_ACK_THRESHOLD_MS);
+        assert_eq!(
+            capacity_state.slow_requests.len(),
+            MAX_TRACKED_RPC_ACK_REQUESTS
+        );
+        assert_eq!(
+            capacity_state
+                .slow_requests
+                .first()
+                .map(|request| request.request_id.as_str()),
+            Some("1")
+        );
+        assert_eq!(
+            capacity_state
+                .slow_requests
+                .last()
+                .map(|request| request.request_id.as_str()),
+            Some("256")
+        );
+
+        let lowered_threshold =
+            set_slow_rpc_ack_threshold_ms_for_tests(&initial_rpc_ack_latency_state(), 25);
+        assert_eq!(lowered_threshold.slow_rpc_ack_threshold_ms, 25);
+        assert!(
+            clear_all_tracked_rpc_requests(&capacity_state)
+                .pending_requests
+                .is_empty()
+        );
     }
 
     #[test]
