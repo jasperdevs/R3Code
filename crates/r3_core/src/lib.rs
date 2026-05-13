@@ -5653,6 +5653,10 @@ pub fn is_windows_platform(platform: &str) -> bool {
     platform.to_ascii_lowercase().starts_with("win")
 }
 
+pub fn is_linux_platform(platform: &str) -> bool {
+    platform.to_ascii_lowercase().contains("linux")
+}
+
 pub fn keybinding_from_keyboard_event(
     event: KeybindingKeyboardEvent<'_>,
     platform: &str,
@@ -23499,6 +23503,15 @@ mod tests {
 
     #[test]
     fn keybinding_shortcuts_and_when_expressions_match_upstream_logic() {
+        assert!(is_mac_platform("MacIntel"));
+        assert!(is_mac_platform("iPhone"));
+        assert!(is_windows_platform("Win32"));
+        assert!(is_windows_platform("Windows"));
+        assert!(is_windows_platform("windows_nt"));
+        assert!(!is_windows_platform("darwin"));
+        assert!(is_linux_platform("Linux x86_64"));
+        assert!(!is_linux_platform("MacIntel"));
+
         assert_eq!(
             shortcut_to_keybinding_input(&KeybindingShortcut {
                 key: " ".to_string(),
