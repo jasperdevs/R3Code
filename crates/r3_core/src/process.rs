@@ -106,6 +106,22 @@ pub struct EditorLaunch {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessLaunchOptions {
+    pub detached: bool,
+    pub shell: bool,
+    pub stdin: &'static str,
+    pub stdout: &'static str,
+    pub stderr: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProcessLaunch {
+    pub command: String,
+    pub args: Vec<String>,
+    pub options: ProcessLaunchOptions,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OpenError {
     pub message: String,
 }
@@ -487,6 +503,98 @@ pub fn file_manager_command_for_platform(platform: &str) -> &'static str {
     }
 }
 
+pub fn detached_ignore_stdio_options(shell: bool) -> ProcessLaunchOptions {
+    ProcessLaunchOptions {
+        detached: true,
+        shell,
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "ignore",
+    }
+}
+
+pub fn resolve_browser_launch(
+    target: &str,
+    platform: &str,
+    env: &BTreeMap<String, String>,
+) -> ProcessLaunch {
+    if platform == "darwin" {
+        return ProcessLaunch {
+            command: "open".to_string(),
+            args: vec![target.to_string()],
+            options: detached_ignore_stdio_options(false),
+        };
+    }
+
+    if platform == "win32" {
+        return resolve_windows_browser_launch(target, &resolve_powershell_path(env));
+    }
+
+    if should_use_windows_browser_from_wsl(platform, env) {
+        return resolve_windows_browser_launch(target, resolve_wsl_powershell_path());
+    }
+
+    ProcessLaunch {
+        command: "xdg-open".to_string(),
+        args: vec![target.to_string()],
+        options: detached_ignore_stdio_options(false),
+    }
+}
+
+pub fn resolve_windows_browser_launch(target: &str, command: &str) -> ProcessLaunch {
+    let encoded_command = encode_utf16_le_base64(&format!(
+        "$ProgressPreference = 'SilentlyContinue'; Start {}",
+        escape_powershell_string_literal(target)
+    ));
+    ProcessLaunch {
+        command: command.to_string(),
+        args: vec![
+            "-NoProfile".to_string(),
+            "-NonInteractive".to_string(),
+            "-ExecutionPolicy".to_string(),
+            "Bypass".to_string(),
+            "-EncodedCommand".to_string(),
+            encoded_command,
+        ],
+        options: detached_ignore_stdio_options(false),
+    }
+}
+
+pub fn resolve_powershell_path(env: &BTreeMap<String, String>) -> String {
+    format!(
+        "{}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        env.get("SYSTEMROOT")
+            .or_else(|| env.get("windir"))
+            .map(String::as_str)
+            .unwrap_or(r"C:\Windows")
+    )
+}
+
+pub fn resolve_wsl_powershell_path() -> &'static str {
+    "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe"
+}
+
+pub fn should_use_windows_browser_from_wsl(platform: &str, env: &BTreeMap<String, String>) -> bool {
+    platform == "linux"
+        && (env.contains_key("WSL_DISTRO_NAME") || env.contains_key("WSL_INTEROP"))
+        && !env.contains_key("SSH_CONNECTION")
+        && !env.contains_key("SSH_TTY")
+        && !env.contains_key("container")
+}
+
+pub fn escape_powershell_string_literal(input: &str) -> String {
+    format!("'{}'", input.replace('\'', "''"))
+}
+
+pub fn encode_utf16_le_base64(input: &str) -> String {
+    let mut bytes = Vec::with_capacity(input.len() * 2);
+    for unit in input.encode_utf16() {
+        bytes.push((unit & 0xff) as u8);
+        bytes.push((unit >> 8) as u8);
+    }
+    encode_base64(&bytes)
+}
+
 pub fn windows_detached_shell_args(args: &[String]) -> Vec<String> {
     args.iter().map(|arg| format!("\"{arg}\"")).collect()
 }
@@ -792,6 +900,31 @@ fn push_unique(values: &mut Vec<String>, value: String) {
     }
 }
 
+fn encode_base64(input: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut output = String::new();
+    let mut index = 0;
+    while index < input.len() {
+        let b0 = input[index];
+        let b1 = input.get(index + 1).copied().unwrap_or(0);
+        let b2 = input.get(index + 2).copied().unwrap_or(0);
+        output.push(TABLE[(b0 >> 2) as usize] as char);
+        output.push(TABLE[(((b0 & 0b0000_0011) << 4) | (b1 >> 4)) as usize] as char);
+        if index + 1 < input.len() {
+            output.push(TABLE[(((b1 & 0b0000_1111) << 2) | (b2 >> 6)) as usize] as char);
+        } else {
+            output.push('=');
+        }
+        if index + 2 < input.len() {
+            output.push(TABLE[(b2 & 0b0011_1111) as usize] as char);
+        } else {
+            output.push('=');
+        }
+        index += 3;
+    }
+    output
+}
+
 fn is_executable_file(
     file_path: &Path,
     platform: &str,
@@ -972,6 +1105,90 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[test]
+    fn resolves_browser_launchers_like_upstream_external_launcher() {
+        let target = "https://example.com/some path?name=o'hara";
+        assert_eq!(
+            resolve_browser_launch(target, "darwin", &BTreeMap::new()),
+            ProcessLaunch {
+                command: "open".to_string(),
+                args: vec![target.to_string()],
+                options: detached_ignore_stdio_options(false),
+            }
+        );
+        assert_eq!(
+            resolve_browser_launch(target, "linux", &BTreeMap::new()),
+            ProcessLaunch {
+                command: "xdg-open".to_string(),
+                args: vec![target.to_string()],
+                options: detached_ignore_stdio_options(false),
+            }
+        );
+
+        let windows =
+            resolve_browser_launch(target, "win32", &env(&[("SYSTEMROOT", r"C:\Windows")]));
+        assert_eq!(
+            windows.command,
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+        );
+        assert_eq!(
+            windows.args,
+            vec![
+                "-NoProfile".to_string(),
+                "-NonInteractive".to_string(),
+                "-ExecutionPolicy".to_string(),
+                "Bypass".to_string(),
+                "-EncodedCommand".to_string(),
+                encode_utf16_le_base64(
+                    "$ProgressPreference = 'SilentlyContinue'; Start 'https://example.com/some path?name=o''hara'"
+                ),
+            ]
+        );
+        assert_eq!(windows.options, detached_ignore_stdio_options(false));
+
+        let wsl = resolve_browser_launch(
+            "https://example.com",
+            "linux",
+            &env(&[("WSL_DISTRO_NAME", "Ubuntu")]),
+        );
+        assert_eq!(wsl.command, resolve_wsl_powershell_path());
+        assert!(wsl.options.detached);
+
+        let wsl_over_ssh = resolve_browser_launch(
+            "https://example.com",
+            "linux",
+            &env(&[
+                ("WSL_DISTRO_NAME", "Ubuntu"),
+                ("SSH_CONNECTION", "client server"),
+            ]),
+        );
+        assert_eq!(wsl_over_ssh.command, "xdg-open");
+    }
+
+    #[test]
+    fn ports_external_launcher_powershell_helpers() {
+        assert_eq!(
+            escape_powershell_string_literal("C:\\Users\\o'hara"),
+            "'C:\\Users\\o''hara'"
+        );
+        assert_eq!(
+            resolve_powershell_path(&env(&[("windir", r"D:\Windows")])),
+            r"D:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+        );
+        assert_eq!(
+            encode_utf16_le_base64("Start 'x'"),
+            "UwB0AGEAcgB0ACAAJwB4ACcA"
+        );
+        assert!(should_use_windows_browser_from_wsl(
+            "linux",
+            &env(&[("WSL_INTEROP", "/run/WSL/1_interop")])
+        ));
+        assert!(!should_use_windows_browser_from_wsl(
+            "linux",
+            &env(&[("WSL_INTEROP", "/run/WSL/1_interop"), ("container", "1")])
+        ));
     }
 
     #[test]

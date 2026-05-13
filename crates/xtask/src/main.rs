@@ -1960,15 +1960,17 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
         || path == "apps/server/src/processRunner.test.ts"
         || path == "apps/server/src/open.ts"
         || path == "apps/server/src/open.test.ts"
+        || path == "apps/server/src/process/externalLauncher.ts"
+        || path == "apps/server/src/process/externalLauncher.test.ts"
         || path == "packages/contracts/src/editor.ts"
         || path == "packages/shared/src/shell.ts"
         || path == "packages/shared/src/shell.test.ts"
     {
         (
-            "process runner, command availability, and open/editor launch contracts in crates/r3_core/src/process.rs",
+            "process runner, command availability, browser launch, and external editor launch contracts in crates/r3_core/src/process.rs",
             "partial",
             "`cargo test -p r3_core process`",
-            "Wire live RPC shell.openInEditor, browser opener, process-tree kill behavior, and every shell environment probe into the Rust runtime.",
+            "Wire live RPC shell.openInEditor, browser opener process spawning, process-tree kill behavior, and every shell environment probe into the Rust runtime.",
         )
     } else if matches!(
         path,
