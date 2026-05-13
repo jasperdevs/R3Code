@@ -24,6 +24,53 @@ use std::{
 
 use sha2::{Digest, Sha256};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostedAppChannel {
+    Latest,
+    Nightly,
+}
+
+impl HostedAppChannel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Latest => "latest",
+            Self::Nightly => "nightly",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Latest => "Latest",
+            Self::Nightly => "Nightly",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebDesktopAppBranding {
+    pub base_name: String,
+    pub stage_label: String,
+    pub display_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebAppBrandingInput {
+    pub injected_desktop_branding: Option<WebDesktopAppBranding>,
+    pub hosted_app_channel_env: Option<String>,
+    pub is_dev: bool,
+    pub app_version: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebAppBranding {
+    pub hosted_app_channel: Option<HostedAppChannel>,
+    pub hosted_app_channel_label: Option<&'static str>,
+    pub app_base_name: String,
+    pub app_stage_label: String,
+    pub app_display_name: String,
+    pub app_version: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ScopedThreadRef {
     pub environment_id: String,
@@ -90,6 +137,55 @@ pub fn resolve_thread_route_target(
             .map(|draft_id| ThreadRouteTarget::Draft {
                 draft_id: draft_id.to_string(),
             }),
+    }
+}
+
+pub fn normalize_hosted_app_channel(channel: Option<&str>) -> Option<HostedAppChannel> {
+    match channel
+        .map(str::trim)
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        Some("latest") => Some(HostedAppChannel::Latest),
+        Some("nightly") => Some(HostedAppChannel::Nightly),
+        _ => None,
+    }
+}
+
+pub fn resolve_web_app_branding(input: &WebAppBrandingInput) -> WebAppBranding {
+    let hosted_app_channel = normalize_hosted_app_channel(input.hosted_app_channel_env.as_deref());
+    let hosted_app_channel_label = hosted_app_channel.map(HostedAppChannel::label);
+
+    if let Some(injected) = input.injected_desktop_branding.as_ref() {
+        return WebAppBranding {
+            hosted_app_channel,
+            hosted_app_channel_label,
+            app_base_name: injected.base_name.clone(),
+            app_stage_label: injected.stage_label.clone(),
+            app_display_name: injected.display_name.clone(),
+            app_version: input
+                .app_version
+                .clone()
+                .filter(|version| !version.is_empty())
+                .unwrap_or_else(|| "0.0.0".to_string()),
+        };
+    }
+
+    let app_base_name = APP_NAME.to_string();
+    let app_stage_label = hosted_app_channel_label
+        .map(str::to_string)
+        .unwrap_or_else(|| if input.is_dev { "Dev" } else { "Alpha" }.to_string());
+    WebAppBranding {
+        hosted_app_channel,
+        hosted_app_channel_label,
+        app_display_name: format!("{app_base_name} ({app_stage_label})"),
+        app_base_name,
+        app_stage_label,
+        app_version: input
+            .app_version
+            .clone()
+            .filter(|version| !version.is_empty())
+            .unwrap_or_else(|| "0.0.0".to_string()),
     }
 }
 
@@ -20753,6 +20849,59 @@ mod tests {
             to_rotated_trace_paths("/tmp/server.trace.ndjson", -1),
             vec!["/tmp/server.trace.ndjson"]
         );
+    }
+
+    #[test]
+    fn web_branding_matches_upstream_resolution_with_r3_name() {
+        let injected = resolve_web_app_branding(&WebAppBrandingInput {
+            injected_desktop_branding: Some(WebDesktopAppBranding {
+                base_name: "R3Code".to_string(),
+                stage_label: "Nightly".to_string(),
+                display_name: "R3Code (Nightly)".to_string(),
+            }),
+            hosted_app_channel_env: None,
+            is_dev: false,
+            app_version: Some("1.2.3".to_string()),
+        });
+        assert_eq!(injected.hosted_app_channel, None);
+        assert_eq!(injected.app_base_name, "R3Code");
+        assert_eq!(injected.app_stage_label, "Nightly");
+        assert_eq!(injected.app_display_name, "R3Code (Nightly)");
+        assert_eq!(injected.app_version, "1.2.3");
+
+        let hosted = resolve_web_app_branding(&WebAppBrandingInput {
+            injected_desktop_branding: None,
+            hosted_app_channel_env: Some(" Nightly ".to_string()),
+            is_dev: false,
+            app_version: None,
+        });
+        assert_eq!(hosted.hosted_app_channel, Some(HostedAppChannel::Nightly));
+        assert_eq!(hosted.hosted_app_channel_label, Some("Nightly"));
+        assert_eq!(hosted.app_stage_label, "Nightly");
+        assert_eq!(hosted.app_display_name, "R3Code (Nightly)");
+        assert_eq!(hosted.app_version, "0.0.0");
+
+        let latest = resolve_web_app_branding(&WebAppBrandingInput {
+            injected_desktop_branding: None,
+            hosted_app_channel_env: Some("latest".to_string()),
+            is_dev: true,
+            app_version: Some(String::new()),
+        });
+        assert_eq!(latest.hosted_app_channel, Some(HostedAppChannel::Latest));
+        assert_eq!(latest.hosted_app_channel_label, Some("Latest"));
+        assert_eq!(latest.app_stage_label, "Latest");
+        assert_eq!(latest.app_version, "0.0.0");
+
+        let ignored = resolve_web_app_branding(&WebAppBrandingInput {
+            injected_desktop_branding: None,
+            hosted_app_channel_env: Some("preview".to_string()),
+            is_dev: true,
+            app_version: Some("0.5.0".to_string()),
+        });
+        assert_eq!(ignored.hosted_app_channel, None);
+        assert_eq!(ignored.hosted_app_channel_label, None);
+        assert_eq!(ignored.app_stage_label, "Dev");
+        assert_eq!(ignored.app_display_name, "R3Code (Dev)");
     }
 
     #[test]
