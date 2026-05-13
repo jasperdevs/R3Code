@@ -1893,6 +1893,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core right_panel_and_terminal_focus_helpers`",
             "Wire live GPUI/Electron titlebar overlay state into shell root class handling.",
         )
+    } else if path == "apps/web/src/components/chat/DiffStatLabel.tsx" {
+        (
+            "DiffStatLabel non-zero predicate plus exact +additions/-deletions fragment text and class contracts in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core turn_diff_stats_sum_only_files_with_numeric_values`",
+            "Wire core label segments into live GPUI changed-files and timeline diff labels.",
+        )
     } else if path == "apps/web/src/components/chat/modelPickerModelHighlights.ts" {
         (
             "model picker new-model highlight key lookup in crates/r3_core/src/lib.rs",

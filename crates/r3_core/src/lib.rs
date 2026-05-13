@@ -17694,6 +17694,12 @@ pub struct TurnDiffStat {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffStatLabelSegment {
+    pub text: String,
+    pub class_name: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TurnDiffTreeNode {
     Directory {
         name: String,
@@ -17781,6 +17787,38 @@ pub fn summarize_turn_diff_stats(files: &[TurnDiffFileChange]) -> TurnDiffStat {
 
 pub fn has_non_zero_turn_diff_stat(stat: TurnDiffStat) -> bool {
     stat.additions > 0 || stat.deletions > 0
+}
+
+pub fn diff_stat_label_segments(
+    stat: TurnDiffStat,
+    show_parentheses: bool,
+) -> Vec<DiffStatLabelSegment> {
+    let mut segments = Vec::with_capacity(if show_parentheses { 5 } else { 3 });
+    if show_parentheses {
+        segments.push(DiffStatLabelSegment {
+            text: "(".to_string(),
+            class_name: "text-muted-foreground/70",
+        });
+    }
+    segments.push(DiffStatLabelSegment {
+        text: format!("+{}", stat.additions),
+        class_name: "text-success",
+    });
+    segments.push(DiffStatLabelSegment {
+        text: "/".to_string(),
+        class_name: "mx-0.5 text-muted-foreground/70",
+    });
+    segments.push(DiffStatLabelSegment {
+        text: format!("-{}", stat.deletions),
+        class_name: "text-destructive",
+    });
+    if show_parentheses {
+        segments.push(DiffStatLabelSegment {
+            text: ")".to_string(),
+            class_name: "text-muted-foreground/70",
+        });
+    }
+    segments
 }
 
 #[derive(Debug, Clone)]
@@ -28848,6 +28886,55 @@ mod tests {
             }
         );
         assert!(has_non_zero_turn_diff_stat(stat));
+        assert!(!has_non_zero_turn_diff_stat(TurnDiffStat::default()));
+        assert_eq!(
+            diff_stat_label_segments(stat, false),
+            vec![
+                DiffStatLabelSegment {
+                    text: "+8".to_string(),
+                    class_name: "text-success",
+                },
+                DiffStatLabelSegment {
+                    text: "/".to_string(),
+                    class_name: "mx-0.5 text-muted-foreground/70",
+                },
+                DiffStatLabelSegment {
+                    text: "-3".to_string(),
+                    class_name: "text-destructive",
+                },
+            ]
+        );
+        assert_eq!(
+            diff_stat_label_segments(
+                TurnDiffStat {
+                    additions: 0,
+                    deletions: 0,
+                },
+                true
+            ),
+            vec![
+                DiffStatLabelSegment {
+                    text: "(".to_string(),
+                    class_name: "text-muted-foreground/70",
+                },
+                DiffStatLabelSegment {
+                    text: "+0".to_string(),
+                    class_name: "text-success",
+                },
+                DiffStatLabelSegment {
+                    text: "/".to_string(),
+                    class_name: "mx-0.5 text-muted-foreground/70",
+                },
+                DiffStatLabelSegment {
+                    text: "-0".to_string(),
+                    class_name: "text-destructive",
+                },
+                DiffStatLabelSegment {
+                    text: ")".to_string(),
+                    class_name: "text-muted-foreground/70",
+                },
+            ]
+        );
     }
 
     #[test]
