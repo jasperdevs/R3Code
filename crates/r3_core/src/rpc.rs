@@ -1324,6 +1324,342 @@ fn emit_server_config_updated(
     state.next_config_updated_notification_id += 1;
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WsRpcClientTransportKind {
+    Request,
+    RequestNoArg,
+    Subscribe,
+    SubscribeWithInput,
+    RequestStream,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WsRpcClientMethodBinding {
+    pub group: &'static str,
+    pub action: &'static str,
+    pub method: WsRpcMethod,
+    pub transport_kind: WsRpcClientTransportKind,
+    pub sends_empty_input: bool,
+    pub subscribe_tag: Option<&'static str>,
+    pub wraps_settings_patch: bool,
+    pub disables_tracing: bool,
+    pub reduces_vcs_status_stream: bool,
+    pub requires_final_git_result: bool,
+}
+
+pub const GIT_ACTION_STREAM_MISSING_FINAL_RESULT_ERROR: &str =
+    "Git action stream completed without a final result.";
+
+pub const WS_RPC_CLIENT_METHOD_BINDING_COUNT: usize = 46;
+
+pub const WS_RPC_CLIENT_METHOD_BINDINGS: [WsRpcClientMethodBinding;
+    WS_RPC_CLIENT_METHOD_BINDING_COUNT] = [
+    client_request("terminal", "open", WsRpcMethod::TerminalOpen),
+    client_request("terminal", "write", WsRpcMethod::TerminalWrite),
+    client_request("terminal", "resize", WsRpcMethod::TerminalResize),
+    client_request("terminal", "clear", WsRpcMethod::TerminalClear),
+    client_request("terminal", "restart", WsRpcMethod::TerminalRestart),
+    client_request("terminal", "close", WsRpcMethod::TerminalClose),
+    client_subscribe(
+        "terminal",
+        "onEvent",
+        WsRpcMethod::SubscribeTerminalEvents,
+        "subscribeTerminalEvents",
+        false,
+        false,
+    ),
+    client_request(
+        "projects",
+        "searchEntries",
+        WsRpcMethod::ProjectsSearchEntries,
+    ),
+    client_request("projects", "writeFile", WsRpcMethod::ProjectsWriteFile),
+    client_request("filesystem", "browse", WsRpcMethod::FilesystemBrowse),
+    client_request(
+        "sourceControl",
+        "lookupRepository",
+        WsRpcMethod::SourceControlLookupRepository,
+    ),
+    client_request(
+        "sourceControl",
+        "cloneRepository",
+        WsRpcMethod::SourceControlCloneRepository,
+    ),
+    client_request(
+        "sourceControl",
+        "publishRepository",
+        WsRpcMethod::SourceControlPublishRepository,
+    ),
+    client_request("shell", "openInEditor", WsRpcMethod::ShellOpenInEditor),
+    client_request("vcs", "pull", WsRpcMethod::VcsPull),
+    client_request("vcs", "refreshStatus", WsRpcMethod::VcsRefreshStatus),
+    client_subscribe(
+        "vcs",
+        "onStatus",
+        WsRpcMethod::SubscribeVcsStatus,
+        "subscribeVcsStatus",
+        true,
+        true,
+    ),
+    client_request("vcs", "listRefs", WsRpcMethod::VcsListRefs),
+    client_request("vcs", "createWorktree", WsRpcMethod::VcsCreateWorktree),
+    client_request("vcs", "removeWorktree", WsRpcMethod::VcsRemoveWorktree),
+    client_request("vcs", "createRef", WsRpcMethod::VcsCreateRef),
+    client_request("vcs", "switchRef", WsRpcMethod::VcsSwitchRef),
+    client_request("vcs", "init", WsRpcMethod::VcsInit),
+    client_request_stream("git", "runStackedAction", WsRpcMethod::GitRunStackedAction),
+    client_request(
+        "git",
+        "resolvePullRequest",
+        WsRpcMethod::GitResolvePullRequest,
+    ),
+    client_request(
+        "git",
+        "preparePullRequestThread",
+        WsRpcMethod::GitPreparePullRequestThread,
+    ),
+    client_no_arg("server", "getConfig", WsRpcMethod::ServerGetConfig),
+    client_optional_empty_request(
+        "server",
+        "refreshProviders",
+        WsRpcMethod::ServerRefreshProviders,
+    ),
+    client_request(
+        "server",
+        "updateProvider",
+        WsRpcMethod::ServerUpdateProvider,
+    ),
+    client_request(
+        "server",
+        "upsertKeybinding",
+        WsRpcMethod::ServerUpsertKeybinding,
+    ),
+    client_request(
+        "server",
+        "removeKeybinding",
+        WsRpcMethod::ServerRemoveKeybinding,
+    ),
+    client_no_arg("server", "getSettings", WsRpcMethod::ServerGetSettings),
+    client_settings_patch(
+        "server",
+        "updateSettings",
+        WsRpcMethod::ServerUpdateSettings,
+    ),
+    client_no_arg(
+        "server",
+        "discoverSourceControl",
+        WsRpcMethod::ServerDiscoverSourceControl,
+    ),
+    client_no_arg_without_tracing(
+        "server",
+        "getTraceDiagnostics",
+        WsRpcMethod::ServerGetTraceDiagnostics,
+    ),
+    client_no_arg_without_tracing(
+        "server",
+        "getProcessDiagnostics",
+        WsRpcMethod::ServerGetProcessDiagnostics,
+    ),
+    client_request_without_tracing("server", "signalProcess", WsRpcMethod::ServerSignalProcess),
+    client_subscribe(
+        "server",
+        "subscribeConfig",
+        WsRpcMethod::SubscribeServerConfig,
+        "subscribeServerConfig",
+        false,
+        false,
+    ),
+    client_subscribe(
+        "server",
+        "subscribeLifecycle",
+        WsRpcMethod::SubscribeServerLifecycle,
+        "subscribeServerLifecycle",
+        false,
+        false,
+    ),
+    client_subscribe(
+        "server",
+        "subscribeAuthAccess",
+        WsRpcMethod::SubscribeAuthAccess,
+        "subscribeAuthAccess",
+        false,
+        false,
+    ),
+    client_request(
+        "orchestration",
+        "dispatchCommand",
+        WsRpcMethod::OrchestrationDispatchCommand,
+    ),
+    client_request(
+        "orchestration",
+        "getTurnDiff",
+        WsRpcMethod::OrchestrationGetTurnDiff,
+    ),
+    client_request(
+        "orchestration",
+        "getFullThreadDiff",
+        WsRpcMethod::OrchestrationGetFullThreadDiff,
+    ),
+    client_no_arg(
+        "orchestration",
+        "getArchivedShellSnapshot",
+        WsRpcMethod::OrchestrationGetArchivedShellSnapshot,
+    ),
+    client_subscribe(
+        "orchestration",
+        "subscribeShell",
+        WsRpcMethod::OrchestrationSubscribeShell,
+        "orchestration.subscribeShell",
+        false,
+        false,
+    ),
+    client_subscribe(
+        "orchestration",
+        "subscribeThread",
+        WsRpcMethod::OrchestrationSubscribeThread,
+        "orchestration.subscribeThread",
+        true,
+        false,
+    ),
+];
+
+const fn client_request(
+    group: &'static str,
+    action: &'static str,
+    method: WsRpcMethod,
+) -> WsRpcClientMethodBinding {
+    WsRpcClientMethodBinding {
+        group,
+        action,
+        method,
+        transport_kind: WsRpcClientTransportKind::Request,
+        sends_empty_input: false,
+        subscribe_tag: None,
+        wraps_settings_patch: false,
+        disables_tracing: false,
+        reduces_vcs_status_stream: false,
+        requires_final_git_result: false,
+    }
+}
+
+const fn client_no_arg(
+    group: &'static str,
+    action: &'static str,
+    method: WsRpcMethod,
+) -> WsRpcClientMethodBinding {
+    WsRpcClientMethodBinding {
+        sends_empty_input: true,
+        transport_kind: WsRpcClientTransportKind::RequestNoArg,
+        ..client_request(group, action, method)
+    }
+}
+
+const fn client_optional_empty_request(
+    group: &'static str,
+    action: &'static str,
+    method: WsRpcMethod,
+) -> WsRpcClientMethodBinding {
+    WsRpcClientMethodBinding {
+        sends_empty_input: true,
+        ..client_request(group, action, method)
+    }
+}
+
+const fn client_settings_patch(
+    group: &'static str,
+    action: &'static str,
+    method: WsRpcMethod,
+) -> WsRpcClientMethodBinding {
+    WsRpcClientMethodBinding {
+        wraps_settings_patch: true,
+        ..client_request(group, action, method)
+    }
+}
+
+const fn client_request_without_tracing(
+    group: &'static str,
+    action: &'static str,
+    method: WsRpcMethod,
+) -> WsRpcClientMethodBinding {
+    WsRpcClientMethodBinding {
+        disables_tracing: true,
+        ..client_request(group, action, method)
+    }
+}
+
+const fn client_no_arg_without_tracing(
+    group: &'static str,
+    action: &'static str,
+    method: WsRpcMethod,
+) -> WsRpcClientMethodBinding {
+    WsRpcClientMethodBinding {
+        disables_tracing: true,
+        ..client_no_arg(group, action, method)
+    }
+}
+
+const fn client_subscribe(
+    group: &'static str,
+    action: &'static str,
+    method: WsRpcMethod,
+    tag: &'static str,
+    with_input: bool,
+    reduces_vcs_status_stream: bool,
+) -> WsRpcClientMethodBinding {
+    WsRpcClientMethodBinding {
+        group,
+        action,
+        method,
+        transport_kind: if with_input {
+            WsRpcClientTransportKind::SubscribeWithInput
+        } else {
+            WsRpcClientTransportKind::Subscribe
+        },
+        sends_empty_input: !with_input,
+        subscribe_tag: Some(tag),
+        wraps_settings_patch: false,
+        disables_tracing: false,
+        reduces_vcs_status_stream,
+        requires_final_git_result: false,
+    }
+}
+
+const fn client_request_stream(
+    group: &'static str,
+    action: &'static str,
+    method: WsRpcMethod,
+) -> WsRpcClientMethodBinding {
+    WsRpcClientMethodBinding {
+        transport_kind: WsRpcClientTransportKind::RequestStream,
+        requires_final_git_result: true,
+        ..client_request(group, action, method)
+    }
+}
+
+pub fn ws_rpc_client_method_binding(group: &str, action: &str) -> Option<WsRpcClientMethodBinding> {
+    WS_RPC_CLIENT_METHOD_BINDINGS
+        .iter()
+        .copied()
+        .find(|binding| binding.group == group && binding.action == action)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WsRpcClientReconnectPlan {
+    pub reset_ws_reconnect_backoff_before_reconnect: bool,
+    pub await_transport_reconnect: bool,
+}
+
+pub fn ws_rpc_client_reconnect_plan() -> WsRpcClientReconnectPlan {
+    WsRpcClientReconnectPlan {
+        reset_ws_reconnect_backoff_before_reconnect: true,
+        await_transport_reconnect: true,
+    }
+}
+
+pub fn ws_rpc_client_git_stream_result<T: Clone>(result: Option<T>) -> Result<T, &'static str> {
+    result.ok_or(GIT_ACTION_STREAM_MISSING_FINAL_RESULT_ERROR)
+}
+
 pub const WS_RPC_PROTOCOL_SOCKET_PATH: &str = "/ws";
 pub const WS_RPC_PROTOCOL_SERIALIZATION_LAYER: &str = "RpcSerialization.layerJson";
 pub const WS_RPC_PROTOCOL_RETRY_TRANSIENT_ERRORS: bool = true;
@@ -2513,6 +2849,118 @@ mod tests {
         assert_eq!(
             apply_server_lifecycle_event(&welcomed, ServerLifecycleStreamEvent::Other),
             welcomed
+        );
+    }
+
+    #[test]
+    fn ws_rpc_client_method_bindings_match_upstream_facade() {
+        assert_eq!(
+            WS_RPC_CLIENT_METHOD_BINDINGS.len(),
+            WS_RPC_CLIENT_METHOD_BINDING_COUNT
+        );
+        assert_eq!(
+            WS_RPC_CLIENT_METHOD_BINDINGS
+                .iter()
+                .map(|binding| (binding.group, binding.action))
+                .collect::<BTreeSet<_>>()
+                .len(),
+            WS_RPC_CLIENT_METHOD_BINDING_COUNT
+        );
+
+        let terminal_events = ws_rpc_client_method_binding("terminal", "onEvent").unwrap();
+        assert_eq!(terminal_events.method, WsRpcMethod::SubscribeTerminalEvents);
+        assert_eq!(
+            terminal_events.transport_kind,
+            WsRpcClientTransportKind::Subscribe
+        );
+        assert_eq!(
+            terminal_events.subscribe_tag,
+            Some("subscribeTerminalEvents")
+        );
+        assert!(terminal_events.sends_empty_input);
+
+        let vcs_status = ws_rpc_client_method_binding("vcs", "onStatus").unwrap();
+        assert_eq!(vcs_status.method, WsRpcMethod::SubscribeVcsStatus);
+        assert_eq!(
+            vcs_status.transport_kind,
+            WsRpcClientTransportKind::SubscribeWithInput
+        );
+        assert_eq!(vcs_status.subscribe_tag, Some("subscribeVcsStatus"));
+        assert!(!vcs_status.sends_empty_input);
+        assert!(vcs_status.reduces_vcs_status_stream);
+
+        let get_config = ws_rpc_client_method_binding("server", "getConfig").unwrap();
+        assert_eq!(get_config.method, WsRpcMethod::ServerGetConfig);
+        assert_eq!(
+            get_config.transport_kind,
+            WsRpcClientTransportKind::RequestNoArg
+        );
+        assert!(get_config.sends_empty_input);
+
+        let refresh_providers = ws_rpc_client_method_binding("server", "refreshProviders").unwrap();
+        assert_eq!(
+            refresh_providers.method,
+            WsRpcMethod::ServerRefreshProviders
+        );
+        assert_eq!(
+            refresh_providers.transport_kind,
+            WsRpcClientTransportKind::Request
+        );
+        assert!(refresh_providers.sends_empty_input);
+
+        let update_settings = ws_rpc_client_method_binding("server", "updateSettings").unwrap();
+        assert_eq!(update_settings.method, WsRpcMethod::ServerUpdateSettings);
+        assert!(update_settings.wraps_settings_patch);
+
+        let trace = ws_rpc_client_method_binding("server", "getTraceDiagnostics").unwrap();
+        assert_eq!(trace.method, WsRpcMethod::ServerGetTraceDiagnostics);
+        assert!(trace.disables_tracing);
+        assert!(trace.sends_empty_input);
+
+        let signal = ws_rpc_client_method_binding("server", "signalProcess").unwrap();
+        assert_eq!(signal.method, WsRpcMethod::ServerSignalProcess);
+        assert!(signal.disables_tracing);
+        assert!(!signal.sends_empty_input);
+
+        let stacked = ws_rpc_client_method_binding("git", "runStackedAction").unwrap();
+        assert_eq!(stacked.method, WsRpcMethod::GitRunStackedAction);
+        assert_eq!(
+            stacked.transport_kind,
+            WsRpcClientTransportKind::RequestStream
+        );
+        assert!(stacked.requires_final_git_result);
+
+        let subscribe_thread =
+            ws_rpc_client_method_binding("orchestration", "subscribeThread").unwrap();
+        assert_eq!(
+            subscribe_thread.method,
+            WsRpcMethod::OrchestrationSubscribeThread
+        );
+        assert_eq!(
+            subscribe_thread.transport_kind,
+            WsRpcClientTransportKind::SubscribeWithInput
+        );
+        assert_eq!(
+            subscribe_thread.subscribe_tag,
+            Some("orchestration.subscribeThread")
+        );
+
+        assert!(ws_rpc_client_method_binding("orchestration", "replayEvents").is_none());
+    }
+
+    #[test]
+    fn ws_rpc_client_reconnect_and_git_stream_completion_match_upstream() {
+        assert_eq!(
+            ws_rpc_client_reconnect_plan(),
+            WsRpcClientReconnectPlan {
+                reset_ws_reconnect_backoff_before_reconnect: true,
+                await_transport_reconnect: true,
+            }
+        );
+        assert_eq!(ws_rpc_client_git_stream_result(Some("ok")), Ok("ok"));
+        assert_eq!(
+            ws_rpc_client_git_stream_result::<&str>(None),
+            Err("Git action stream completed without a final result.")
         );
     }
 

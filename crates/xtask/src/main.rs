@@ -1836,6 +1836,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core server_state_`",
             "Wire pure server-state transitions into live GPUI/reactivity subscriptions, websocket RPC client sync, and hook selectors.",
         )
+    } else if path == "apps/web/src/rpc/wsRpcClient.ts"
+        || path == "apps/web/src/rpc/wsRpcClient.test.ts"
+    {
+        (
+            "websocket RPC client facade table for terminal/projects/filesystem/source-control/shell/vcs/git/server/orchestration methods, subscribe tags, no-arg empty inputs, settings patch wrapping, diagnostics tracing suppression, reconnect backoff reset, VCS status stream reduction, git stream final-result enforcement, and omitted replayEvents facade in crates/r3_core/src/rpc.rs",
+            "partial",
+            "`cargo test -p r3_core ws_rpc_client`; `cargo test -p r3_core shared::tests::ports_shared_git_and_source_control_helpers`",
+            "Wire facade bindings into the live GPUI websocket transport client and end-to-end subscription/request execution.",
+        )
     } else if path == "apps/web/src/markdown-links.ts"
         || path == "apps/web/src/markdown-links.test.ts"
     {
