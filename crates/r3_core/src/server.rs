@@ -1127,6 +1127,44 @@ pub enum StaticRequestPathDecision {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StaticAndDevRouteDecision {
+    BadRequest {
+        body: &'static str,
+        status: u16,
+    },
+    Redirect {
+        location: String,
+        status: u16,
+    },
+    ServiceUnavailable {
+        body: &'static str,
+        status: u16,
+    },
+    InvalidStaticPath {
+        body: &'static str,
+        status: u16,
+    },
+    ServeFile {
+        relative_path: String,
+        status: u16,
+        content_type: &'static str,
+    },
+    FallbackIndex {
+        relative_path: &'static str,
+        status: u16,
+        content_type: &'static str,
+    },
+    NotFound {
+        body: &'static str,
+        status: u16,
+    },
+    InternalServerError {
+        body: &'static str,
+        status: u16,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProjectFaviconRouteDecision {
     BadRequest {
         body: &'static str,
@@ -1503,6 +1541,90 @@ pub fn normalize_static_request_path(pathname: &str) -> StaticRequestPathDecisio
     }
 }
 
+pub fn static_and_dev_route_decision(
+    request_url: Option<&str>,
+    dev_url: Option<&str>,
+    static_dir_configured: bool,
+    file_exists: bool,
+    file_read_ok: bool,
+    index_read_ok: bool,
+) -> StaticAndDevRouteDecision {
+    let Some(request_url) = request_url else {
+        return StaticAndDevRouteDecision::BadRequest {
+            body: "Bad Request",
+            status: 400,
+        };
+    };
+    if let Some(dev_url) = dev_url.filter(|url| !url.is_empty()) {
+        if is_loopback_hostname_for_dev_redirect(&url_hostname(request_url)) {
+            return StaticAndDevRouteDecision::Redirect {
+                location: resolve_dev_redirect_url(dev_url, request_url),
+                status: 302,
+            };
+        }
+    }
+    if !static_dir_configured && dev_url.filter(|url| !url.is_empty()).is_none() {
+        return StaticAndDevRouteDecision::ServiceUnavailable {
+            body: "No static directory configured and no dev URL set.",
+            status: 503,
+        };
+    }
+    let pathname = url_pathname(request_url);
+    let relative_path = match normalize_static_request_path(&pathname) {
+        StaticRequestPathDecision::ServeRelativePath(relative_path) => relative_path,
+        StaticRequestPathDecision::Invalid { message, status } => {
+            return StaticAndDevRouteDecision::InvalidStaticPath {
+                body: message,
+                status,
+            };
+        }
+    };
+    if file_exists {
+        if !file_read_ok {
+            return StaticAndDevRouteDecision::InternalServerError {
+                body: "Internal Server Error",
+                status: 500,
+            };
+        }
+        return StaticAndDevRouteDecision::ServeFile {
+            content_type: static_content_type_for_path(&relative_path),
+            relative_path,
+            status: 200,
+        };
+    }
+    if index_read_ok {
+        return StaticAndDevRouteDecision::FallbackIndex {
+            relative_path: "index.html",
+            status: 200,
+            content_type: "text/html; charset=utf-8",
+        };
+    }
+    StaticAndDevRouteDecision::NotFound {
+        body: "Not Found",
+        status: 404,
+    }
+}
+
+pub fn static_content_type_for_path(path: &str) -> &'static str {
+    match path
+        .rsplit_once('.')
+        .map(|(_, extension)| extension.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("html") | Some("htm") => "text/html; charset=utf-8",
+        Some("js") | Some("mjs") => "text/javascript",
+        Some("css") => "text/css",
+        Some("json") | Some("map") => "application/json",
+        Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        Some("ico") => "image/x-icon",
+        Some("wasm") => "application/wasm",
+        _ => "application/octet-stream",
+    }
+}
+
 pub fn browser_api_cors_headers() -> BTreeMap<&'static str, String> {
     BTreeMap::from([
         ("access-control-allow-origin", "*".to_string()),
@@ -1654,6 +1776,38 @@ fn url_path_search_hash(url: &str) -> String {
     } else {
         tail.to_string()
     }
+}
+
+fn url_hostname(url: &str) -> String {
+    let origin = url_origin(url);
+    let authority = origin
+        .split_once("://")
+        .map(|(_, authority)| authority)
+        .unwrap_or(origin);
+    let host_port = authority
+        .rsplit_once('@')
+        .map(|(_, host)| host)
+        .unwrap_or(authority);
+    if let Some(rest) = host_port.strip_prefix('[') {
+        return rest
+            .split_once(']')
+            .map(|(host, _)| host.to_string())
+            .unwrap_or_else(|| host_port.to_string());
+    }
+    host_port
+        .split_once(':')
+        .map(|(host, _)| host.to_string())
+        .unwrap_or_else(|| host_port.to_string())
+}
+
+fn url_pathname(url: &str) -> String {
+    let path_search_hash = url_path_search_hash(url);
+    let pathname = path_search_hash
+        .split(['?', '#'])
+        .next()
+        .filter(|value| !value.is_empty())
+        .unwrap_or("/");
+    pathname.to_string()
 }
 
 fn query_param(url: &str, key: &str) -> Option<String> {
@@ -3153,6 +3307,119 @@ mod tests {
                 message: "Invalid static file path",
                 status: 400,
             }
+        );
+        assert_eq!(
+            static_and_dev_route_decision(
+                Some("http://127.0.0.1:3773/projects/demo?thread=1#turn"),
+                Some("http://localhost:5173/base"),
+                false,
+                false,
+                false,
+                false,
+            ),
+            StaticAndDevRouteDecision::Redirect {
+                location: "http://localhost:5173/projects/demo?thread=1#turn".to_string(),
+                status: 302,
+            }
+        );
+        assert_eq!(
+            static_and_dev_route_decision(None, None, false, false, false, false),
+            StaticAndDevRouteDecision::BadRequest {
+                body: "Bad Request",
+                status: 400,
+            }
+        );
+        assert_eq!(
+            static_and_dev_route_decision(
+                Some("http://example.com:3773/assets/app.js"),
+                None,
+                false,
+                false,
+                false,
+                false,
+            ),
+            StaticAndDevRouteDecision::ServiceUnavailable {
+                body: "No static directory configured and no dev URL set.",
+                status: 503,
+            }
+        );
+        assert_eq!(
+            static_and_dev_route_decision(
+                Some("http://example.com:3773/../secret"),
+                None,
+                true,
+                false,
+                false,
+                false,
+            ),
+            StaticAndDevRouteDecision::InvalidStaticPath {
+                body: "Invalid static file path",
+                status: 400,
+            }
+        );
+        assert_eq!(
+            static_and_dev_route_decision(
+                Some("http://example.com:3773/assets/app.js"),
+                None,
+                true,
+                true,
+                true,
+                false,
+            ),
+            StaticAndDevRouteDecision::ServeFile {
+                relative_path: "assets/app.js".to_string(),
+                status: 200,
+                content_type: "text/javascript",
+            }
+        );
+        assert_eq!(
+            static_and_dev_route_decision(
+                Some("http://example.com:3773/missing"),
+                None,
+                true,
+                false,
+                false,
+                true,
+            ),
+            StaticAndDevRouteDecision::FallbackIndex {
+                relative_path: "index.html",
+                status: 200,
+                content_type: "text/html; charset=utf-8",
+            }
+        );
+        assert_eq!(
+            static_and_dev_route_decision(
+                Some("http://example.com:3773/missing"),
+                None,
+                true,
+                false,
+                false,
+                false,
+            ),
+            StaticAndDevRouteDecision::NotFound {
+                body: "Not Found",
+                status: 404,
+            }
+        );
+        assert_eq!(
+            static_and_dev_route_decision(
+                Some("http://example.com:3773/assets/app.js"),
+                None,
+                true,
+                true,
+                false,
+                false,
+            ),
+            StaticAndDevRouteDecision::InternalServerError {
+                body: "Internal Server Error",
+                status: 500,
+            }
+        );
+        assert_eq!(static_content_type_for_path("style.css"), "text/css");
+        assert_eq!(static_content_type_for_path("icon.svg"), "image/svg+xml");
+        assert_eq!(
+            static_content_type_for_path("asset.unknown"),
+            "application/octet-stream"
         );
         assert_eq!(BROWSER_API_CORS_ALLOWED_METHODS, ["GET", "POST", "OPTIONS"]);
         assert_eq!(
