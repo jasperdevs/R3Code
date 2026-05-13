@@ -6065,6 +6065,14 @@ pub enum ChangeRequestState {
     Merged,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChangeRequestListState {
+    Open,
+    Closed,
+    Merged,
+    All,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ChangeRequest {
     pub provider: SourceControlProviderKind,
@@ -6113,6 +6121,23 @@ pub struct SourceControlChangeRequestSummary {
     pub is_cross_repository: Option<bool>,
     pub head_repository_name_with_owner: Option<Option<String>>,
     pub head_repository_owner_login: Option<Option<String>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlCommandPlan {
+    pub operation: &'static str,
+    pub command: &'static str,
+    pub args: Vec<String>,
+    pub cwd: String,
+    pub timeout_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BitbucketApiRequestPlan {
+    pub method: &'static str,
+    pub url: String,
+    pub query_params: Vec<(String, String)>,
+    pub json_body: Option<String>,
 }
 
 impl SourceControlProviderErrorContract {
@@ -6219,6 +6244,7 @@ pub const SOURCE_CONTROL_MISSING_CLI_AUTH_DETAIL: &str =
     "Hosting integration command was not found on the server PATH.";
 pub const SOURCE_CONTROL_PROVIDER_DETECTION_CACHE_CAPACITY: usize = 2_048;
 pub const SOURCE_CONTROL_PROVIDER_DETECTION_CACHE_TTL_MS: u64 = 5_000;
+pub const SOURCE_CONTROL_PROVIDER_CLI_TIMEOUT_MS: u64 = 30_000;
 
 pub fn normalize_git_fetch_interval_seconds(value: Option<f64>) -> u32 {
     let Some(value) = value else {
@@ -6260,6 +6286,874 @@ pub fn source_control_repository_visibility_contract_value(
     match visibility {
         SourceControlRepositoryVisibility::Private => "private",
         SourceControlRepositoryVisibility::Public => "public",
+    }
+}
+
+pub fn change_request_list_state_contract_value(state: ChangeRequestListState) -> &'static str {
+    match state {
+        ChangeRequestListState::Open => "open",
+        ChangeRequestListState::Closed => "closed",
+        ChangeRequestListState::Merged => "merged",
+        ChangeRequestListState::All => "all",
+    }
+}
+
+fn source_control_command_plan(
+    operation: &'static str,
+    command: &'static str,
+    cwd: &str,
+    args: Vec<String>,
+) -> SourceControlCommandPlan {
+    SourceControlCommandPlan {
+        operation,
+        command,
+        args,
+        cwd: cwd.to_string(),
+        timeout_ms: SOURCE_CONTROL_PROVIDER_CLI_TIMEOUT_MS,
+    }
+}
+
+fn strings(args: &[&str]) -> Vec<String> {
+    args.iter().map(|arg| (*arg).to_string()).collect()
+}
+
+fn push_optional_flag(args: &mut Vec<String>, flag: &str, value: Option<&str>) {
+    if let Some(value) = value {
+        args.push(flag.to_string());
+        args.push(value.to_string());
+    }
+}
+
+pub fn github_list_open_pull_requests_plan(
+    cwd: &str,
+    head_selector: &str,
+    limit: Option<u32>,
+) -> SourceControlCommandPlan {
+    source_control_command_plan(
+        "GitHubCli.execute",
+        "gh",
+        cwd,
+        vec![
+            "pr".to_string(),
+            "list".to_string(),
+            "--head".to_string(),
+            head_selector.to_string(),
+            "--state".to_string(),
+            "open".to_string(),
+            "--limit".to_string(),
+            limit.unwrap_or(1).to_string(),
+            "--json".to_string(),
+            "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner".to_string(),
+        ],
+    )
+}
+
+pub fn github_list_change_requests_plan(
+    cwd: &str,
+    head_selector: &str,
+    state: ChangeRequestListState,
+    limit: Option<u32>,
+) -> SourceControlCommandPlan {
+    source_control_command_plan(
+        "GitHubCli.execute",
+        "gh",
+        cwd,
+        vec![
+            "pr".to_string(),
+            "list".to_string(),
+            "--head".to_string(),
+            head_selector.to_string(),
+            "--state".to_string(),
+            change_request_list_state_contract_value(state).to_string(),
+            "--limit".to_string(),
+            limit.unwrap_or(20).to_string(),
+            "--json".to_string(),
+            "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner".to_string(),
+        ],
+    )
+}
+
+pub fn github_get_pull_request_plan(cwd: &str, reference: &str) -> SourceControlCommandPlan {
+    source_control_command_plan(
+        "GitHubCli.execute",
+        "gh",
+        cwd,
+        vec![
+            "pr".to_string(),
+            "view".to_string(),
+            reference.to_string(),
+            "--json".to_string(),
+            "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner".to_string(),
+        ],
+    )
+}
+
+pub fn github_get_repository_clone_urls_plan(
+    cwd: &str,
+    repository: &str,
+) -> SourceControlCommandPlan {
+    source_control_command_plan(
+        "GitHubCli.execute",
+        "gh",
+        cwd,
+        strings(&[
+            "repo",
+            "view",
+            repository,
+            "--json",
+            "nameWithOwner,url,sshUrl",
+        ]),
+    )
+}
+
+pub fn github_create_repository_plan(
+    cwd: &str,
+    repository: &str,
+    visibility: SourceControlRepositoryVisibility,
+) -> SourceControlCommandPlan {
+    source_control_command_plan(
+        "GitHubCli.execute",
+        "gh",
+        cwd,
+        vec![
+            "repo".to_string(),
+            "create".to_string(),
+            repository.to_string(),
+            format!(
+                "--{}",
+                source_control_repository_visibility_contract_value(visibility)
+            ),
+        ],
+    )
+}
+
+pub fn github_create_pull_request_plan(
+    cwd: &str,
+    base_branch: &str,
+    head_selector: &str,
+    title: &str,
+    body_file: &str,
+) -> SourceControlCommandPlan {
+    source_control_command_plan(
+        "GitHubCli.execute",
+        "gh",
+        cwd,
+        strings(&[
+            "pr",
+            "create",
+            "--base",
+            base_branch,
+            "--head",
+            head_selector,
+            "--title",
+            title,
+            "--body-file",
+            body_file,
+        ]),
+    )
+}
+
+pub fn github_get_default_branch_plan(cwd: &str) -> SourceControlCommandPlan {
+    source_control_command_plan(
+        "GitHubCli.execute",
+        "gh",
+        cwd,
+        strings(&[
+            "repo",
+            "view",
+            "--json",
+            "defaultBranchRef",
+            "--jq",
+            ".defaultBranchRef.name",
+        ]),
+    )
+}
+
+pub fn github_checkout_pull_request_plan(
+    cwd: &str,
+    reference: &str,
+    force: bool,
+) -> SourceControlCommandPlan {
+    let mut args = strings(&["pr", "checkout", reference]);
+    if force {
+        args.push("--force".to_string());
+    }
+    source_control_command_plan("GitHubCli.execute", "gh", cwd, args)
+}
+
+pub fn derive_github_repository_clone_urls_from_create_output(
+    stdout: &str,
+    repository: &str,
+) -> SourceControlRepositoryCloneUrls {
+    let fallback_host = "github.com";
+    if let Some(start) = stdout.find("http://").or_else(|| stdout.find("https://")) {
+        let url = stdout[start..]
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .trim_end_matches(".git");
+        let without_scheme = url
+            .strip_prefix("https://")
+            .or_else(|| url.strip_prefix("http://"));
+        if let Some(without_scheme) = without_scheme {
+            if let Some((host, path)) = without_scheme.split_once('/') {
+                let segments = path
+                    .trim_matches('/')
+                    .split('/')
+                    .filter(|segment| !segment.is_empty())
+                    .collect::<Vec<_>>();
+                if segments.len() == 2 {
+                    let name_with_owner = format!("{}/{}", segments[0], segments[1]);
+                    return SourceControlRepositoryCloneUrls {
+                        name_with_owner: name_with_owner.clone(),
+                        url: format!("https://{host}/{name_with_owner}"),
+                        ssh_url: format!("git@{host}:{name_with_owner}.git"),
+                    };
+                }
+            }
+        }
+    }
+    SourceControlRepositoryCloneUrls {
+        name_with_owner: repository.to_string(),
+        url: format!("https://{fallback_host}/{repository}"),
+        ssh_url: format!("git@{fallback_host}:{repository}.git"),
+    }
+}
+
+fn encode_uri_component(value: &str) -> String {
+    let mut encoded = String::new();
+    for byte in value.bytes() {
+        let character = byte as char;
+        if character.is_ascii_alphanumeric()
+            || matches!(
+                character,
+                '-' | '_' | '.' | '!' | '~' | '*' | '\'' | '(' | ')'
+            )
+        {
+            encoded.push(character);
+        } else {
+            encoded.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    encoded
+}
+
+fn gitlab_state_args(state: ChangeRequestListState) -> Vec<String> {
+    match state {
+        ChangeRequestListState::Open => Vec::new(),
+        ChangeRequestListState::Closed => strings(&["--closed"]),
+        ChangeRequestListState::Merged => strings(&["--merged"]),
+        ChangeRequestListState::All => strings(&["--all"]),
+    }
+}
+
+fn source_project_identifier(source: Option<&SourceControlRefSelector>) -> Option<&str> {
+    source
+        .and_then(|source| source.repository.as_deref())
+        .or_else(|| source.and_then(|source| source.owner.as_deref()))
+}
+
+fn parse_repository_path(repository: &str) -> (Option<String>, String) {
+    let parts = repository
+        .split('/')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    let project_path = parts
+        .last()
+        .copied()
+        .unwrap_or_else(|| repository.trim())
+        .to_string();
+    let namespace_path = (parts.len() > 1).then(|| parts[..parts.len() - 1].join("/"));
+    (namespace_path, project_path)
+}
+
+pub fn gitlab_list_merge_requests_plan(
+    cwd: &str,
+    head_selector: &str,
+    source: Option<&SourceControlRefSelector>,
+    state: ChangeRequestListState,
+    limit: Option<u32>,
+) -> SourceControlCommandPlan {
+    let mut args = strings(&["mr", "list", "--source-branch"]);
+    args.push(source_control_branch(head_selector, source));
+    args.extend(gitlab_state_args(state));
+    args.extend(strings(&[
+        "--per-page",
+        &limit.unwrap_or(20).to_string(),
+        "--output",
+        "json",
+    ]));
+    source_control_command_plan("GitLabCli.execute", "glab", cwd, args)
+}
+
+pub fn gitlab_get_merge_request_plan(cwd: &str, reference: &str) -> SourceControlCommandPlan {
+    source_control_command_plan(
+        "GitLabCli.execute",
+        "glab",
+        cwd,
+        strings(&["mr", "view", reference, "--output", "json"]),
+    )
+}
+
+pub fn gitlab_get_repository_clone_urls_plan(
+    cwd: &str,
+    repository: &str,
+) -> SourceControlCommandPlan {
+    source_control_command_plan(
+        "GitLabCli.execute",
+        "glab",
+        cwd,
+        vec![
+            "api".to_string(),
+            format!("projects/{}", encode_uri_component(repository)),
+        ],
+    )
+}
+
+pub fn gitlab_create_repository_namespace_plan(
+    cwd: &str,
+    repository: &str,
+) -> Option<SourceControlCommandPlan> {
+    let (namespace_path, _) = parse_repository_path(repository);
+    namespace_path.map(|namespace_path| {
+        source_control_command_plan(
+            "GitLabCli.execute",
+            "glab",
+            cwd,
+            vec![
+                "api".to_string(),
+                format!("namespaces/{}", encode_uri_component(&namespace_path)),
+            ],
+        )
+    })
+}
+
+pub fn gitlab_create_repository_plan(
+    cwd: &str,
+    repository: &str,
+    visibility: SourceControlRepositoryVisibility,
+    namespace_id: Option<u32>,
+) -> SourceControlCommandPlan {
+    let (_, project_path) = parse_repository_path(repository);
+    let mut args = strings(&[
+        "api",
+        "--method",
+        "POST",
+        "projects",
+        "--raw-field",
+        &format!("path={project_path}"),
+        "--raw-field",
+        &format!("name={project_path}"),
+        "--raw-field",
+        &format!(
+            "visibility={}",
+            source_control_repository_visibility_contract_value(visibility)
+        ),
+    ]);
+    if let Some(namespace_id) = namespace_id {
+        args.extend(strings(&[
+            "--raw-field",
+            &format!("namespace_id={namespace_id}"),
+        ]));
+    }
+    source_control_command_plan("GitLabCli.execute", "glab", cwd, args)
+}
+
+pub fn gitlab_create_merge_request_plan(
+    cwd: &str,
+    base_branch: &str,
+    head_selector: &str,
+    source: Option<&SourceControlRefSelector>,
+    target: Option<&SourceControlRefSelector>,
+    title: &str,
+    body_file: &str,
+) -> SourceControlCommandPlan {
+    let mut args = strings(&[
+        "api",
+        "--method",
+        "POST",
+        "projects/:fullpath/merge_requests",
+        "--raw-field",
+        &format!(
+            "source_branch={}",
+            source_control_branch(head_selector, source)
+        ),
+        "--raw-field",
+        &format!(
+            "target_branch={}",
+            target.map_or(base_branch, |target| target.ref_name.as_str())
+        ),
+    ]);
+    if let Some(source_project) = source_project_identifier(source) {
+        args.extend(strings(&[
+            "--raw-field",
+            &format!("source_project_id={source_project}"),
+        ]));
+    }
+    args.extend(strings(&[
+        "--raw-field",
+        &format!("title={title}"),
+        "--field",
+        &format!("description=@{body_file}"),
+    ]));
+    source_control_command_plan("GitLabCli.execute", "glab", cwd, args)
+}
+
+pub fn gitlab_get_default_branch_plan(cwd: &str) -> SourceControlCommandPlan {
+    source_control_command_plan(
+        "GitLabCli.execute",
+        "glab",
+        cwd,
+        strings(&["api", "projects/:fullpath"]),
+    )
+}
+
+pub fn gitlab_checkout_merge_request_plan(cwd: &str, reference: &str) -> SourceControlCommandPlan {
+    source_control_command_plan(
+        "GitLabCli.execute",
+        "glab",
+        cwd,
+        strings(&["mr", "checkout", reference]),
+    )
+}
+
+pub fn normalize_azure_devops_change_request_id(reference: &str) -> String {
+    let trimmed = reference.trim().trim_start_matches('#');
+    let lower = trimmed.to_ascii_lowercase();
+    for marker in ["pullrequest/", "pull-request/", "pull/", "_pulls/"] {
+        if let Some(index) = lower.rfind(marker) {
+            let rest = &trimmed[index + marker.len()..];
+            let digits = rest
+                .chars()
+                .take_while(|character| character.is_ascii_digit())
+                .collect::<String>();
+            if !digits.is_empty() {
+                return digits;
+            }
+        }
+    }
+    trimmed.to_string()
+}
+
+fn azure_status(state: ChangeRequestListState) -> &'static str {
+    match state {
+        ChangeRequestListState::Open => "active",
+        ChangeRequestListState::Closed => "abandoned",
+        ChangeRequestListState::Merged => "completed",
+        ChangeRequestListState::All => "all",
+    }
+}
+
+fn azure_json_args(mut args: Vec<String>) -> Vec<String> {
+    args.extend(strings(&["--only-show-errors", "--output", "json"]));
+    args
+}
+
+fn parse_azure_repository_specifier(repository: &str) -> (Option<String>, String) {
+    let parts = repository
+        .split('/')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    (
+        (parts.len() > 1).then(|| parts[parts.len() - 2].to_string()),
+        parts
+            .last()
+            .copied()
+            .unwrap_or(repository.trim())
+            .to_string(),
+    )
+}
+
+pub fn azure_devops_list_pull_requests_plan(
+    cwd: &str,
+    head_selector: &str,
+    source: Option<&SourceControlRefSelector>,
+    state: ChangeRequestListState,
+    limit: Option<u32>,
+) -> SourceControlCommandPlan {
+    source_control_command_plan(
+        "AzureDevOpsCli.execute",
+        "az",
+        cwd,
+        azure_json_args(strings(&[
+            "repos",
+            "pr",
+            "list",
+            "--detect",
+            "true",
+            "--source-branch",
+            &source_control_branch(head_selector, source),
+            "--status",
+            azure_status(state),
+            "--top",
+            &limit.unwrap_or(20).to_string(),
+        ])),
+    )
+}
+
+pub fn azure_devops_get_pull_request_plan(cwd: &str, reference: &str) -> SourceControlCommandPlan {
+    source_control_command_plan(
+        "AzureDevOpsCli.execute",
+        "az",
+        cwd,
+        azure_json_args(strings(&[
+            "repos",
+            "pr",
+            "show",
+            "--detect",
+            "true",
+            "--id",
+            &normalize_azure_devops_change_request_id(reference),
+        ])),
+    )
+}
+
+pub fn azure_devops_get_repository_clone_urls_plan(
+    cwd: &str,
+    repository: &str,
+) -> SourceControlCommandPlan {
+    source_control_command_plan(
+        "AzureDevOpsCli.execute",
+        "az",
+        cwd,
+        azure_json_args(strings(&[
+            "repos",
+            "show",
+            "--detect",
+            "true",
+            "--repository",
+            repository,
+        ])),
+    )
+}
+
+pub fn azure_devops_create_repository_plan(
+    cwd: &str,
+    repository: &str,
+) -> SourceControlCommandPlan {
+    let (project, name) = parse_azure_repository_specifier(repository);
+    let mut args = strings(&["repos", "create", "--detect", "true", "--name", &name]);
+    push_optional_flag(&mut args, "--project", project.as_deref());
+    source_control_command_plan("AzureDevOpsCli.execute", "az", cwd, azure_json_args(args))
+}
+
+pub fn azure_devops_create_pull_request_plan(
+    cwd: &str,
+    base_branch: &str,
+    head_selector: &str,
+    source: Option<&SourceControlRefSelector>,
+    target: Option<&SourceControlRefSelector>,
+    title: &str,
+    body_file: &str,
+) -> SourceControlCommandPlan {
+    source_control_command_plan(
+        "AzureDevOpsCli.execute",
+        "az",
+        cwd,
+        strings(&[
+            "repos",
+            "pr",
+            "create",
+            "--only-show-errors",
+            "--detect",
+            "true",
+            "--target-branch",
+            target.map_or(base_branch, |target| target.ref_name.as_str()),
+            "--source-branch",
+            &source_control_branch(head_selector, source),
+            "--title",
+            title,
+            "--description",
+            &format!("@{body_file}"),
+        ]),
+    )
+}
+
+pub fn azure_devops_get_default_branch_plan(cwd: &str) -> SourceControlCommandPlan {
+    source_control_command_plan(
+        "AzureDevOpsCli.execute",
+        "az",
+        cwd,
+        azure_json_args(strings(&["repos", "show", "--detect", "true"])),
+    )
+}
+
+pub fn azure_devops_checkout_pull_request_plan(
+    cwd: &str,
+    reference: &str,
+    remote_name: Option<&str>,
+) -> SourceControlCommandPlan {
+    source_control_command_plan(
+        "AzureDevOpsCli.execute",
+        "az",
+        cwd,
+        strings(&[
+            "repos",
+            "pr",
+            "checkout",
+            "--only-show-errors",
+            "--detect",
+            "true",
+            "--id",
+            &normalize_azure_devops_change_request_id(reference),
+            "--remote-name",
+            remote_name.unwrap_or("origin"),
+        ]),
+    )
+}
+
+pub fn normalize_bitbucket_change_request_id(reference: &str) -> String {
+    let trimmed = reference.trim().trim_start_matches('#');
+    let lower = trimmed.to_ascii_lowercase();
+    for marker in [
+        "pull-requests/",
+        "pullrequests/",
+        "pull-request/",
+        "pull/",
+        "pr/",
+    ] {
+        if let Some(index) = lower.rfind(marker) {
+            let rest = &trimmed[index + marker.len()..];
+            let digits = rest
+                .chars()
+                .take_while(|character| character.is_ascii_digit())
+                .collect::<String>();
+            if !digits.is_empty() {
+                return digits;
+            }
+        }
+    }
+    trimmed.to_string()
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BitbucketRepositoryLocator {
+    pub workspace: String,
+    pub repo_slug: String,
+}
+
+fn parse_bitbucket_repository_slug(value: &str) -> Option<BitbucketRepositoryLocator> {
+    let normalized = value.trim().trim_end_matches(".git");
+    let parts = normalized
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    if parts.len() < 2 {
+        return None;
+    }
+    Some(BitbucketRepositoryLocator {
+        workspace: parts[parts.len() - 2].to_string(),
+        repo_slug: parts[parts.len() - 1].to_string(),
+    })
+}
+
+pub fn parse_bitbucket_remote_url(remote_url: &str) -> Option<BitbucketRepositoryLocator> {
+    let trimmed = remote_url.trim();
+    if trimmed.starts_with("git@") {
+        let (_, path) = trimmed.split_once(':')?;
+        return parse_bitbucket_repository_slug(path);
+    }
+    if let Some(rest) = trimmed
+        .strip_prefix("https://")
+        .or_else(|| trimmed.strip_prefix("http://"))
+    {
+        let (_, path) = rest.split_once('/')?;
+        return parse_bitbucket_repository_slug(path);
+    }
+    parse_bitbucket_repository_slug(trimmed)
+}
+
+fn bitbucket_api_url(base_url: &str, path: &str) -> String {
+    format!("{}{}", base_url.trim_end_matches('/'), path)
+}
+
+fn to_bitbucket_states(state: ChangeRequestListState) -> Vec<&'static str> {
+    match state {
+        ChangeRequestListState::Open => vec!["OPEN"],
+        ChangeRequestListState::Closed => vec!["DECLINED", "SUPERSEDED"],
+        ChangeRequestListState::Merged => vec!["MERGED"],
+        ChangeRequestListState::All => vec!["OPEN", "MERGED", "DECLINED", "SUPERSEDED"],
+    }
+}
+
+fn bitbucket_state_filter(states: &[&str]) -> String {
+    if states.len() == 1 {
+        format!("state = \"{}\"", states[0])
+    } else {
+        format!(
+            "({})",
+            states
+                .iter()
+                .map(|state| format!("state = \"{state}\""))
+                .collect::<Vec<_>>()
+                .join(" OR ")
+        )
+    }
+}
+
+fn bitbucket_query_string(filters: &[String]) -> String {
+    filters.join(" AND ")
+}
+
+fn bitbucket_source_workspace(
+    head_selector: &str,
+    source: Option<&SourceControlRefSelector>,
+) -> Option<String> {
+    source
+        .and_then(|source| source.owner.clone())
+        .or_else(|| parse_source_control_owner_ref(head_selector).and_then(|source| source.owner))
+}
+
+pub fn bitbucket_list_pull_requests_request_plan(
+    base_url: &str,
+    repository: &BitbucketRepositoryLocator,
+    head_selector: &str,
+    source: Option<&SourceControlRefSelector>,
+    state: ChangeRequestListState,
+    limit: Option<u32>,
+) -> BitbucketApiRequestPlan {
+    let states = to_bitbucket_states(state);
+    let escaped_branch = source_control_branch(head_selector, source).replace('"', "\\\"");
+    let filters = vec![
+        format!("source.branch.name = \"{escaped_branch}\""),
+        bitbucket_state_filter(&states),
+    ];
+    let mut query_params = vec![
+        ("pagelen".to_string(), limit.unwrap_or(20).to_string()),
+        ("sort".to_string(), "-updated_on".to_string()),
+        ("q".to_string(), bitbucket_query_string(&filters)),
+    ];
+    query_params.extend(
+        states
+            .iter()
+            .map(|state| ("state".to_string(), (*state).to_string())),
+    );
+
+    BitbucketApiRequestPlan {
+        method: "GET",
+        url: bitbucket_api_url(
+            base_url,
+            &format!(
+                "/repositories/{}/{}/pullrequests",
+                encode_uri_component(&repository.workspace),
+                encode_uri_component(&repository.repo_slug)
+            ),
+        ),
+        query_params,
+        json_body: None,
+    }
+}
+
+pub fn bitbucket_get_pull_request_request_plan(
+    base_url: &str,
+    repository: &BitbucketRepositoryLocator,
+    reference: &str,
+) -> BitbucketApiRequestPlan {
+    BitbucketApiRequestPlan {
+        method: "GET",
+        url: bitbucket_api_url(
+            base_url,
+            &format!(
+                "/repositories/{}/{}/pullrequests/{}",
+                encode_uri_component(&repository.workspace),
+                encode_uri_component(&repository.repo_slug),
+                encode_uri_component(&normalize_bitbucket_change_request_id(reference))
+            ),
+        ),
+        query_params: Vec::new(),
+        json_body: None,
+    }
+}
+
+pub fn bitbucket_repository_request_plan(
+    base_url: &str,
+    repository: &BitbucketRepositoryLocator,
+) -> BitbucketApiRequestPlan {
+    BitbucketApiRequestPlan {
+        method: "GET",
+        url: bitbucket_api_url(
+            base_url,
+            &format!(
+                "/repositories/{}/{}",
+                encode_uri_component(&repository.workspace),
+                encode_uri_component(&repository.repo_slug)
+            ),
+        ),
+        query_params: Vec::new(),
+        json_body: None,
+    }
+}
+
+pub fn bitbucket_branching_model_request_plan(
+    base_url: &str,
+    repository: &BitbucketRepositoryLocator,
+) -> BitbucketApiRequestPlan {
+    let mut plan = bitbucket_repository_request_plan(base_url, repository);
+    plan.url.push_str("/branching-model");
+    plan
+}
+
+pub fn bitbucket_create_repository_request_plan(
+    base_url: &str,
+    repository: &BitbucketRepositoryLocator,
+    visibility: SourceControlRepositoryVisibility,
+) -> BitbucketApiRequestPlan {
+    let mut plan = bitbucket_repository_request_plan(base_url, repository);
+    plan.method = "POST";
+    plan.json_body = Some(
+        serde_json::json!({
+            "scm": "git",
+            "is_private": visibility == SourceControlRepositoryVisibility::Private,
+        })
+        .to_string(),
+    );
+    plan
+}
+
+pub fn bitbucket_create_pull_request_request_plan(
+    base_url: &str,
+    repository: &BitbucketRepositoryLocator,
+    base_branch: &str,
+    head_selector: &str,
+    source: Option<&SourceControlRefSelector>,
+    target: Option<&SourceControlRefSelector>,
+    title: &str,
+    body: &str,
+) -> BitbucketApiRequestPlan {
+    let branch = source_control_branch(head_selector, source);
+    let mut source_object = serde_json::json!({
+        "branch": { "name": branch },
+    });
+    if let Some(workspace) = bitbucket_source_workspace(head_selector, source) {
+        source_object["repository"] = serde_json::json!({
+            "full_name": format!("{}/{}", workspace, repository.repo_slug),
+        });
+    }
+    let destination_branch = target.map_or(base_branch, |target| target.ref_name.as_str());
+    BitbucketApiRequestPlan {
+        method: "POST",
+        url: bitbucket_api_url(
+            base_url,
+            &format!(
+                "/repositories/{}/{}/pullrequests",
+                encode_uri_component(&repository.workspace),
+                encode_uri_component(&repository.repo_slug)
+            ),
+        ),
+        query_params: Vec::new(),
+        json_body: Some(
+            serde_json::json!({
+                "title": title,
+                "description": body,
+                "source": source_object,
+                "destination": {
+                    "branch": { "name": destination_branch },
+                },
+            })
+            .to_string(),
+        ),
     }
 }
 
@@ -18247,6 +19141,382 @@ mod tests {
         assert_eq!(
             bitbucket_normalized.head_repository_owner_login,
             Some(Some("fork".to_string()))
+        );
+    }
+
+    #[test]
+    fn source_control_provider_command_plans_match_upstream_cli_and_api_args() {
+        assert_eq!(
+            github_list_open_pull_requests_plan("/repo", "feature/pr-list", None).args,
+            vec![
+                "pr",
+                "list",
+                "--head",
+                "feature/pr-list",
+                "--state",
+                "open",
+                "--limit",
+                "1",
+                "--json",
+                "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+            ]
+        );
+        assert_eq!(
+            github_list_change_requests_plan(
+                "/repo",
+                "feature/all",
+                ChangeRequestListState::All,
+                Some(10)
+            )
+            .args,
+            vec![
+                "pr",
+                "list",
+                "--head",
+                "feature/all",
+                "--state",
+                "all",
+                "--limit",
+                "10",
+                "--json",
+                "number,title,url,baseRefName,headRefName,state,mergedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
+            ]
+        );
+        assert_eq!(
+            github_get_pull_request_plan("/repo", "#42").args,
+            vec![
+                "pr",
+                "view",
+                "#42",
+                "--json",
+                "number,title,url,baseRefName,headRefName,state,mergedAt,isCrossRepository,headRepository,headRepositoryOwner",
+            ]
+        );
+        assert_eq!(
+            github_create_repository_plan(
+                "/repo",
+                "octocat/t3code",
+                SourceControlRepositoryVisibility::Private
+            )
+            .args,
+            vec!["repo", "create", "octocat/t3code", "--private"]
+        );
+        assert_eq!(
+            github_create_pull_request_plan(
+                "/repo",
+                "main",
+                "feature/provider",
+                "Provider PR",
+                "/tmp/body.md"
+            )
+            .args,
+            vec![
+                "pr",
+                "create",
+                "--base",
+                "main",
+                "--head",
+                "feature/provider",
+                "--title",
+                "Provider PR",
+                "--body-file",
+                "/tmp/body.md",
+            ]
+        );
+        assert_eq!(
+            github_checkout_pull_request_plan("/repo", "42", true).args,
+            vec!["pr", "checkout", "42", "--force"]
+        );
+        assert_eq!(
+            derive_github_repository_clone_urls_from_create_output(
+                "Created\nhttps://github.com/octocat/t3code\n",
+                "fallback/repo"
+            ),
+            SourceControlRepositoryCloneUrls {
+                name_with_owner: "octocat/t3code".to_string(),
+                url: "https://github.com/octocat/t3code".to_string(),
+                ssh_url: "git@github.com:octocat/t3code.git".to_string(),
+            }
+        );
+
+        let explicit_source = SourceControlRefSelector {
+            owner: Some("owner".to_string()),
+            repository: Some("1234".to_string()),
+            ref_name: "feature/provider".to_string(),
+        };
+        assert_eq!(
+            gitlab_list_merge_requests_plan(
+                "/repo",
+                "ignored:branch",
+                Some(&explicit_source),
+                ChangeRequestListState::All,
+                Some(20)
+            )
+            .args,
+            vec![
+                "mr",
+                "list",
+                "--source-branch",
+                "feature/provider",
+                "--all",
+                "--per-page",
+                "20",
+                "--output",
+                "json",
+            ]
+        );
+        assert_eq!(
+            gitlab_create_repository_namespace_plan("/repo", "octocat/t3code")
+                .unwrap()
+                .args,
+            vec!["api", "namespaces/octocat"]
+        );
+        assert_eq!(
+            gitlab_create_repository_plan(
+                "/repo",
+                "octocat/t3code",
+                SourceControlRepositoryVisibility::Public,
+                Some(1234)
+            )
+            .args,
+            vec![
+                "api",
+                "--method",
+                "POST",
+                "projects",
+                "--raw-field",
+                "path=t3code",
+                "--raw-field",
+                "name=t3code",
+                "--raw-field",
+                "visibility=public",
+                "--raw-field",
+                "namespace_id=1234",
+            ]
+        );
+        assert_eq!(
+            gitlab_create_merge_request_plan(
+                "/repo",
+                "main",
+                "owner:feature/provider",
+                Some(&explicit_source),
+                None,
+                "Provider MR",
+                "/tmp/t3-mr-body.md"
+            )
+            .args,
+            vec![
+                "api",
+                "--method",
+                "POST",
+                "projects/:fullpath/merge_requests",
+                "--raw-field",
+                "source_branch=feature/provider",
+                "--raw-field",
+                "target_branch=main",
+                "--raw-field",
+                "source_project_id=1234",
+                "--raw-field",
+                "title=Provider MR",
+                "--field",
+                "description=@/tmp/t3-mr-body.md",
+            ]
+        );
+        assert_eq!(
+            gitlab_checkout_merge_request_plan("/repo", "42").args,
+            vec!["mr", "checkout", "42"]
+        );
+
+        assert_eq!(
+            normalize_azure_devops_change_request_id(
+                "https://dev.azure.com/acme/project/_git/repo/pullrequest/42"
+            ),
+            "42"
+        );
+        assert_eq!(
+            azure_devops_list_pull_requests_plan(
+                "/repo",
+                "origin:feature/merged",
+                None,
+                ChangeRequestListState::Merged,
+                Some(10)
+            )
+            .args,
+            vec![
+                "repos",
+                "pr",
+                "list",
+                "--detect",
+                "true",
+                "--source-branch",
+                "feature/merged",
+                "--status",
+                "completed",
+                "--top",
+                "10",
+                "--only-show-errors",
+                "--output",
+                "json",
+            ]
+        );
+        assert_eq!(
+            azure_devops_create_repository_plan("/repo", "project/repo").args,
+            vec![
+                "repos",
+                "create",
+                "--detect",
+                "true",
+                "--name",
+                "repo",
+                "--project",
+                "project",
+                "--only-show-errors",
+                "--output",
+                "json",
+            ]
+        );
+        assert_eq!(
+            azure_devops_create_pull_request_plan(
+                "/repo",
+                "main",
+                "feature/provider",
+                None,
+                None,
+                "Provider PR",
+                "/tmp/body.md"
+            )
+            .args,
+            vec![
+                "repos",
+                "pr",
+                "create",
+                "--only-show-errors",
+                "--detect",
+                "true",
+                "--target-branch",
+                "main",
+                "--source-branch",
+                "feature/provider",
+                "--title",
+                "Provider PR",
+                "--description",
+                "@/tmp/body.md",
+            ]
+        );
+        assert_eq!(
+            azure_devops_checkout_pull_request_plan("/repo", "#42", None).args,
+            vec![
+                "repos",
+                "pr",
+                "checkout",
+                "--only-show-errors",
+                "--detect",
+                "true",
+                "--id",
+                "42",
+                "--remote-name",
+                "origin",
+            ]
+        );
+
+        let bitbucket_repo =
+            parse_bitbucket_remote_url("git@bitbucket.org:pingdotgg/t3code.git").unwrap();
+        assert_eq!(
+            bitbucket_repo,
+            BitbucketRepositoryLocator {
+                workspace: "pingdotgg".to_string(),
+                repo_slug: "t3code".to_string(),
+            }
+        );
+        let bitbucket_list = bitbucket_list_pull_requests_request_plan(
+            "https://api.test.local/2.0/",
+            &bitbucket_repo,
+            "origin:feature/merged",
+            None,
+            ChangeRequestListState::Merged,
+            Some(10),
+        );
+        assert_eq!(
+            bitbucket_list.url,
+            "https://api.test.local/2.0/repositories/pingdotgg/t3code/pullrequests"
+        );
+        assert_eq!(
+            bitbucket_list.query_params,
+            vec![
+                ("pagelen".to_string(), "10".to_string()),
+                ("sort".to_string(), "-updated_on".to_string()),
+                (
+                    "q".to_string(),
+                    "source.branch.name = \"feature/merged\" AND state = \"MERGED\"".to_string()
+                ),
+                ("state".to_string(), "MERGED".to_string()),
+            ]
+        );
+        assert_eq!(
+            bitbucket_list_pull_requests_request_plan(
+                "https://api.test.local/2.0",
+                &bitbucket_repo,
+                "feature/closed",
+                None,
+                ChangeRequestListState::Closed,
+                Some(10),
+            )
+            .query_params,
+            vec![
+                ("pagelen".to_string(), "10".to_string()),
+                ("sort".to_string(), "-updated_on".to_string()),
+                (
+                    "q".to_string(),
+                    "source.branch.name = \"feature/closed\" AND (state = \"DECLINED\" OR state = \"SUPERSEDED\")".to_string()
+                ),
+                ("state".to_string(), "DECLINED".to_string()),
+                ("state".to_string(), "SUPERSEDED".to_string()),
+            ]
+        );
+        assert_eq!(
+            bitbucket_get_pull_request_request_plan(
+                "https://api.test.local/2.0",
+                &bitbucket_repo,
+                "https://bitbucket.org/pingdotgg/t3code/pull-requests/42"
+            )
+            .url,
+            "https://api.test.local/2.0/repositories/pingdotgg/t3code/pullrequests/42"
+        );
+        let create_repo = bitbucket_create_repository_request_plan(
+            "https://api.test.local/2.0",
+            &bitbucket_repo,
+            SourceControlRepositoryVisibility::Private,
+        );
+        assert_eq!(create_repo.method, "POST");
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(create_repo.json_body.as_deref().unwrap())
+                .unwrap(),
+            serde_json::json!({ "scm": "git", "is_private": true })
+        );
+        let create_pr = bitbucket_create_pull_request_request_plan(
+            "https://api.test.local/2.0",
+            &bitbucket_repo,
+            "main",
+            "owner:feature/provider",
+            None,
+            None,
+            "Provider PR",
+            "PR body",
+        );
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(create_pr.json_body.as_deref().unwrap())
+                .unwrap(),
+            serde_json::json!({
+                "title": "Provider PR",
+                "description": "PR body",
+                "source": {
+                    "branch": { "name": "feature/provider" },
+                    "repository": { "full_name": "owner/t3code" },
+                },
+                "destination": {
+                    "branch": { "name": "main" },
+                },
+            })
         );
     }
 
