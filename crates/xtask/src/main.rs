@@ -1759,6 +1759,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core diagnostics_state_constants`",
             "Wire helpers into live GPUI diagnostics SWR loading and refresh controls.",
         )
+    } else if path == "apps/web/src/pendingUserInput.ts"
+        || path == "apps/web/src/pendingUserInput.test.ts"
+    {
+        (
+            "pending user input draft normalization, custom-answer precedence, single-select and multi-select resolution, option toggling, complete answer map creation, answered counts, first-unanswered selection, and active progress derivation in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core pending_user_input`",
+            "Wire helpers into live GPUI pending-user-input panel state, answer submission, and multi-question navigation.",
+        )
     } else if path == "apps/web/src/shortcutModifierState.ts"
         || path == "apps/web/src/shortcutModifierState.test.ts"
     {

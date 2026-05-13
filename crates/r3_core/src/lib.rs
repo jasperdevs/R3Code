@@ -32867,6 +32867,32 @@ mod tests {
     }
 
     #[test]
+    fn pending_user_input_answer_normalizes_single_select_options() {
+        let question = user_input_question("scope");
+        let draft = PendingUserInputDraftAnswer {
+            selected_option_labels: vec![
+                "  Tight  ".to_string(),
+                "Tight".to_string(),
+                String::new(),
+                "Loose".to_string(),
+            ],
+            custom_answer: Some("   ".to_string()),
+        };
+
+        assert_eq!(
+            resolve_pending_user_input_answer(&question, Some(&draft)),
+            Some(PendingUserInputAnswer::Text("Tight".to_string()))
+        );
+        assert_eq!(
+            set_pending_user_input_custom_answer(Some(&draft), " "),
+            PendingUserInputDraftAnswer {
+                selected_option_labels: vec!["Tight".to_string(), "Loose".to_string()],
+                custom_answer: Some(" ".to_string()),
+            }
+        );
+    }
+
+    #[test]
     fn pending_user_input_answer_returns_multi_select_arrays() {
         let question = multi_select_question("areas");
         let draft = PendingUserInputDraftAnswer {
@@ -33008,6 +33034,31 @@ mod tests {
             find_first_unanswered_pending_user_input_question_index(&questions, &draft_answers),
             1
         );
+    }
+
+    #[test]
+    fn pending_user_input_progress_treats_multi_select_options_as_complete() {
+        let questions = vec![multi_select_question("areas")];
+        let draft_answers = BTreeMap::from([(
+            "areas".to_string(),
+            PendingUserInputDraftAnswer {
+                selected_option_labels: vec!["Server".to_string(), "Web".to_string()],
+                custom_answer: None,
+            },
+        )]);
+
+        let progress = derive_pending_user_input_progress(&questions, &draft_answers, 0);
+
+        assert_eq!(progress.selected_option_labels, vec!["Server", "Web"]);
+        assert_eq!(
+            progress.resolved_answer,
+            Some(PendingUserInputAnswer::Multiple(vec![
+                "Server".to_string(),
+                "Web".to_string(),
+            ]))
+        );
+        assert!(progress.can_advance);
+        assert!(progress.is_complete);
     }
 
     #[test]
