@@ -2441,6 +2441,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace websocket_connection_state_matches_upstream_reconnect_logic`; `cargo test --workspace request_latency_state_matches_upstream_ack_tracking`",
             "Wire live GPUI toast lifecycle, browser online/focus listeners, debounce timers, manual reconnect action, and slow request expandable details.",
         )
+    } else if path == "apps/web/src/components/chat/ComposerPrimaryActions.test.ts"
+        || path == "apps/web/src/components/chat/ComposerPrimaryActions.tsx"
+    {
+        (
+            "ComposerPrimaryActions pending user-input primary button labels for responding, compact submit/next, non-compact next-question, singular submit-answer, and plural submit-answers states in crates/r3_core/src/lib.rs plus GPUI shell usage in crates/r3_ui/src/shell.rs",
+            "partial",
+            "`cargo test --workspace composer_primary_action_labels_match_upstream_contract`",
+            "Wire the remaining primary action UI states, pointer-focus preservation, stop/refine/implement controls, and exact GPUI button/icon rendering.",
+        )
     } else if path.starts_with("apps/web/src/components/")
         || path.starts_with("apps/web/src/composer")
         || path.starts_with("apps/web/src/diff")

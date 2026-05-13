@@ -27,8 +27,9 @@ use r3_core::{
     composer_menu_search_key, default_resolved_keybindings, default_sidebar_options_state,
     detect_composer_trigger, filter_command_palette_groups, format_diagnostics_bytes,
     format_diagnostics_count, format_diagnostics_description, format_diagnostics_duration_ms,
-    format_provider_skill_display_name, format_working_timer_at, get_display_model_name,
-    get_provider_summary, get_provider_version_advisory_presentation, get_provider_version_label,
+    format_pending_primary_action_label, format_provider_skill_display_name,
+    format_working_timer_at, get_display_model_name, get_provider_summary,
+    get_provider_version_advisory_presentation, get_provider_version_label,
     group_composer_command_items, keybinding_command_label,
     markdown::{ChatMarkdownBlock, ChatMarkdownInline, render_chat_markdown_blocks},
     new_thread_terminal, nudge_composer_menu_highlight, ordered_turn_diff_files,
@@ -4482,15 +4483,12 @@ impl R3Shell {
             .active_pending_user_input()
             .map(|prompt| self.snapshot.is_responding_to_request(&prompt.request_id))
             .unwrap_or(false);
-        let label = if is_responding {
-            "Submitting..."
-        } else if !progress.is_last_question {
-            "Next question"
-        } else if progress.question_index > 0 {
-            "Submit answers"
-        } else {
-            "Submit answer"
-        };
+        let label = format_pending_primary_action_label(
+            false,
+            progress.is_last_question,
+            is_responding,
+            progress.question_index,
+        );
 
         div()
             .id("chat-composer-pending-user-input-submit")

@@ -24024,6 +24024,28 @@ pub fn derive_pending_user_input_progress(
     }
 }
 
+pub fn format_pending_primary_action_label(
+    compact: bool,
+    is_last_question: bool,
+    is_responding: bool,
+    question_index: usize,
+) -> &'static str {
+    if is_responding {
+        return "Submitting...";
+    }
+    if compact {
+        return if is_last_question { "Submit" } else { "Next" };
+    }
+    if !is_last_question {
+        return "Next question";
+    }
+    if question_index > 0 {
+        "Submit answers"
+    } else {
+        "Submit answer"
+    }
+}
+
 pub const DEFAULT_THREAD_TERMINAL_HEIGHT: u32 = 280;
 pub const DEFAULT_THREAD_TERMINAL_ID: &str = "default";
 pub const MAX_TERMINALS_PER_GROUP: usize = 4;
@@ -43882,6 +43904,42 @@ mod tests {
         );
         assert!(progress.can_advance);
         assert!(progress.is_complete);
+    }
+
+    #[test]
+    fn composer_primary_action_labels_match_upstream_contract() {
+        assert_eq!(
+            format_pending_primary_action_label(false, false, true, 0),
+            "Submitting..."
+        );
+        assert_eq!(
+            format_pending_primary_action_label(true, true, true, 3),
+            "Submitting..."
+        );
+        assert_eq!(
+            format_pending_primary_action_label(true, true, false, 0),
+            "Submit"
+        );
+        assert_eq!(
+            format_pending_primary_action_label(true, false, false, 1),
+            "Next"
+        );
+        assert_eq!(
+            format_pending_primary_action_label(false, false, false, 0),
+            "Next question"
+        );
+        assert_eq!(
+            format_pending_primary_action_label(false, true, false, 0),
+            "Submit answer"
+        );
+        assert_eq!(
+            format_pending_primary_action_label(false, true, false, 1),
+            "Submit answers"
+        );
+        assert_eq!(
+            format_pending_primary_action_label(false, true, false, 5),
+            "Submit answers"
+        );
     }
 
     #[test]
