@@ -80,8 +80,8 @@ pub struct ContractsPackageSurface {
     pub metadata: PackageSurfaceMetadata,
     pub exports: BTreeMap<&'static str, BTreeMap<&'static str, &'static str>>,
     pub scripts: BTreeMap<&'static str, &'static str>,
-    pub dependencies: Vec<&'static str>,
-    pub dev_dependencies: Vec<&'static str>,
+    pub dependencies: BTreeMap<&'static str, &'static str>,
+    pub dev_dependencies: BTreeMap<&'static str, &'static str>,
     pub tsconfig_extends: &'static str,
     pub tsconfig_include: Vec<&'static str>,
 }
@@ -91,8 +91,8 @@ pub struct SharedPackageSurface {
     pub metadata: PackageSurfaceMetadata,
     pub exports: BTreeMap<&'static str, BTreeMap<&'static str, &'static str>>,
     pub scripts: BTreeMap<&'static str, &'static str>,
-    pub dependencies: Vec<&'static str>,
-    pub dev_dependencies: Vec<&'static str>,
+    pub dependencies: BTreeMap<&'static str, &'static str>,
+    pub dev_dependencies: BTreeMap<&'static str, &'static str>,
     pub tsconfig_extends: &'static str,
     pub tsconfig_include: Vec<&'static str>,
 }
@@ -1050,14 +1050,14 @@ pub fn contracts_package_surface() -> ContractsPackageSurface {
             ("typecheck", "tsc --noEmit"),
             ("test", "vitest run"),
         ]),
-        dependencies: vec!["effect"],
-        dev_dependencies: vec![
-            "@effect/language-service",
-            "@effect/vitest",
-            "tsdown",
-            "typescript",
-            "vitest",
-        ],
+        dependencies: BTreeMap::from([("effect", "catalog:")]),
+        dev_dependencies: BTreeMap::from([
+            ("@effect/language-service", "catalog:"),
+            ("@effect/vitest", "catalog:"),
+            ("tsdown", "catalog:"),
+            ("typescript", "catalog:"),
+            ("vitest", "catalog:"),
+        ]),
         tsconfig_extends: "../../tsconfig.base.json",
         tsconfig_include: vec!["src"],
     }
@@ -1099,15 +1099,18 @@ pub fn shared_package_surface() -> SharedPackageSurface {
             shared_export("./keybindings", "./src/keybindings.ts"),
         ]),
         scripts: BTreeMap::from([("typecheck", "tsc --noEmit"), ("test", "vitest run")]),
-        dependencies: vec!["@t3tools/contracts", "effect"],
-        dev_dependencies: vec![
-            "@effect/language-service",
-            "@effect/platform-node",
-            "@effect/vitest",
-            "@types/node",
-            "typescript",
-            "vitest",
-        ],
+        dependencies: BTreeMap::from([
+            ("@t3tools/contracts", "workspace:*"),
+            ("effect", "catalog:"),
+        ]),
+        dev_dependencies: BTreeMap::from([
+            ("@effect/language-service", "catalog:"),
+            ("@effect/platform-node", "catalog:"),
+            ("@effect/vitest", "catalog:"),
+            ("@types/node", "catalog:"),
+            ("typescript", "catalog:"),
+            ("vitest", "catalog:"),
+        ]),
         tsconfig_extends: "../../tsconfig.base.json",
         tsconfig_include: vec!["src"],
     }
@@ -1300,6 +1303,13 @@ mod tests {
             contracts.scripts["build"],
             "tsdown src/index.ts --format esm,cjs --dts --clean"
         );
+        assert_eq!(contracts.dependencies["effect"], "catalog:");
+        assert_eq!(
+            contracts.dev_dependencies["@effect/language-service"],
+            "catalog:"
+        );
+        assert_eq!(contracts.dev_dependencies["@effect/vitest"], "catalog:");
+        assert_eq!(contracts.dev_dependencies["tsdown"], "catalog:");
         assert_eq!(contracts.tsconfig_extends, "../../tsconfig.base.json");
         assert_eq!(contracts.tsconfig_include, vec!["src"]);
     }
@@ -1601,9 +1611,10 @@ mod tests {
         );
         assert_eq!(shared.scripts["typecheck"], "tsc --noEmit");
         assert_eq!(shared.scripts["test"], "vitest run");
-        assert_eq!(shared.dependencies, vec!["@t3tools/contracts", "effect"]);
-        assert!(shared.dev_dependencies.contains(&"@effect/platform-node"));
-        assert!(shared.dev_dependencies.contains(&"@types/node"));
+        assert_eq!(shared.dependencies["@t3tools/contracts"], "workspace:*");
+        assert_eq!(shared.dependencies["effect"], "catalog:");
+        assert_eq!(shared.dev_dependencies["@effect/platform-node"], "catalog:");
+        assert_eq!(shared.dev_dependencies["@types/node"], "catalog:");
         assert_eq!(shared.tsconfig_extends, "../../tsconfig.base.json");
         assert_eq!(shared.tsconfig_include, vec!["src"]);
     }

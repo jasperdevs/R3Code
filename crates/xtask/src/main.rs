@@ -3098,7 +3098,7 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
         )
     } else if path == "packages/shared/package.json" || path == "packages/shared/tsconfig.json" {
         (
-            "shared package metadata, scripts, export map, dependency list, and tsconfig include/extends contracts in crates/r3_core/src/package_surfaces.rs",
+            "shared package metadata, scripts, export map, dependency/version map, and tsconfig include/extends contracts in crates/r3_core/src/package_surfaces.rs",
             "partial",
             "`cargo test -p r3_core package_surfaces`",
             "Generate native Rust package exports and align build/typecheck outputs with crate/package layout.",
@@ -3200,7 +3200,7 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
         || path == "packages/contracts/tsconfig.json"
     {
         (
-            "contracts package metadata, scripts, export map, dependency list, and tsconfig include/extends contracts in crates/r3_core/src/package_surfaces.rs",
+            "contracts package metadata, scripts, export map, dependency/version map, and tsconfig include/extends contracts in crates/r3_core/src/package_surfaces.rs",
             "partial",
             "`cargo test -p r3_core package_surfaces`",
             "Generate or port complete Rust schema package exports and align build/typecheck outputs with the native crate layout.",
