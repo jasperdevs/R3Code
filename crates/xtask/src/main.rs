@@ -2050,6 +2050,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core terminal_context`; `cargo test -p r3_core inline_terminal_context`",
             "Wire terminal context helpers into live GPUI terminal snapshot capture, composer chips, and displayed user-message rendering.",
         )
+    } else if path == "apps/web/src/lib/turnDiffTree.ts"
+        || path == "apps/web/src/lib/turnDiffTree.test.ts"
+    {
+        (
+            "turn-diff stat summing, path separator normalization, numeric/base-name sorting, directory stat aggregation, single-directory-chain compaction, missing-stat preservation, and whitespace-preserving path segments in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core turn_diff_tree`; `cargo test -p r3_core turn_diff_stats`",
+            "Wire helper output into live GPUI diff panel expansion, selection, and exact row rendering for all upstream tree states.",
+        )
     } else if path == "apps/web/src/lib/threadSort.ts"
         || path == "apps/web/src/lib/threadSort.test.ts"
     {

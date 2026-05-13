@@ -31885,6 +31885,34 @@ mod tests {
     }
 
     #[test]
+    fn turn_diff_tree_preserves_whitespace_in_path_segments() {
+        let tree = build_turn_diff_tree(&[
+            diff_file("a/file.ts", Some(1), Some(0)),
+            diff_file(" a/file.ts", Some(2), Some(0)),
+        ]);
+
+        assert_eq!(tree.len(), 2);
+        assert_eq!(
+            tree.iter()
+                .map(|node| match node {
+                    TurnDiffTreeNode::Directory { name, .. } => name.as_str(),
+                    TurnDiffTreeNode::File { name, .. } => name.as_str(),
+                })
+                .collect::<Vec<_>>(),
+            vec![" a", "a"]
+        );
+        assert_eq!(
+            tree.iter()
+                .map(|node| match node {
+                    TurnDiffTreeNode::Directory { path, .. } => path.as_str(),
+                    TurnDiffTreeNode::File { path, .. } => path.as_str(),
+                })
+                .collect::<Vec<_>>(),
+            vec![" a", "a"]
+        );
+    }
+
+    #[test]
     fn diff_panel_reference_state_exposes_selected_turn_and_file() {
         let snapshot = AppSnapshot::diff_panel_reference_state();
         let selected = snapshot.selected_turn_diff_summary().unwrap();
