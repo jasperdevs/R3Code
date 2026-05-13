@@ -1776,6 +1776,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core pull_request_reference_parser_matches_upstream_contract`",
             "Wire parser into the live GPUI pull-request checkout/reference entry points.",
         )
+    } else if path == "apps/web/src/providerInstances.ts"
+        || path == "apps/web/src/providerInstances.test.ts"
+    {
+        (
+            "provider instance entry projection, display-name fallback, accent-color normalization, default-first sorting, exact instance lookup, model-list lookup, selectable fallback, and instance-to-driver resolution in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core provider_instance_helpers_match_upstream_contract`; `cargo test -p r3_core provider_instance_projection_matches_upstream_logic`",
+            "Wire helpers into every live GPUI provider instance picker, settings row, model list, and composer routing path.",
+        )
     } else if path == "apps/web/src/pendingUserInput.ts"
         || path == "apps/web/src/pendingUserInput.test.ts"
     {

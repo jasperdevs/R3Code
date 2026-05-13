@@ -5220,6 +5220,15 @@ pub fn get_provider_instance_entry(
         .find(|entry| entry.instance_id == instance_id)
 }
 
+pub fn get_provider_instance_models(
+    providers: &[ServerProvider],
+    instance_id: &str,
+) -> Vec<ServerProviderModel> {
+    get_provider_instance_entry(providers, instance_id)
+        .map(|entry| entry.models)
+        .unwrap_or_default()
+}
+
 pub fn resolve_selectable_provider_instance(
     providers: &[ServerProvider],
     instance_id: Option<&str>,
@@ -30107,6 +30116,100 @@ mod tests {
             .position(|entry| entry.instance_id == "codex_personal")
             .unwrap();
         assert!(codex_index < personal_index);
+    }
+
+    #[test]
+    fn provider_instance_helpers_match_upstream_contract() {
+        let codex = make_server_provider(|provider| {
+            provider.driver = "codex".to_string();
+            provider.instance_id = "codex".to_string();
+            provider.display_name = Some("Codex".to_string());
+            provider.enabled = false;
+        });
+        let requested = make_server_provider(|provider| {
+            provider.driver = "claudeAgent".to_string();
+            provider.instance_id = "claude_work".to_string();
+            provider.display_name = Some("Claude".to_string());
+            provider.models = vec![ServerProviderModel {
+                slug: "claude-sonnet-4-6".to_string(),
+                name: "Claude Sonnet 4.6".to_string(),
+                short_name: Some("Sonnet".to_string()),
+                sub_provider: None,
+                is_custom: false,
+            }];
+        });
+        let unavailable = make_server_provider(|provider| {
+            provider.driver = "cursor".to_string();
+            provider.instance_id = "cursor".to_string();
+            provider.display_name = Some("Cursor".to_string());
+            provider.availability = ServerProviderAvailability::Unavailable;
+        });
+        let providers = vec![codex, requested, unavailable];
+
+        let entries = derive_provider_instance_entries(&providers);
+        let claude = entries
+            .iter()
+            .find(|entry| entry.instance_id == "claude_work")
+            .unwrap();
+        assert_eq!(claude.driver_kind, "claudeAgent");
+        assert_eq!(claude.display_name, "Claude Work");
+        assert!(!claude.is_default);
+        assert!(claude.is_available);
+
+        assert_eq!(
+            resolve_selectable_provider_instance(&providers, Some("claude_work")).as_deref(),
+            Some("claude_work")
+        );
+        assert_eq!(
+            resolve_selectable_provider_instance(&providers, Some("codex")).as_deref(),
+            Some("claude_work")
+        );
+        assert_eq!(
+            resolve_selectable_provider_instance(&providers, Some("removed_instance")).as_deref(),
+            Some("claude_work")
+        );
+        assert_eq!(
+            resolve_provider_driver_kind_for_instance_selection(&providers, Some("claude_work"))
+                .as_deref(),
+            Some("claudeAgent")
+        );
+        assert_eq!(
+            resolve_provider_driver_kind_for_instance_selection(
+                &providers,
+                Some("removed_instance"),
+            ),
+            None
+        );
+        assert_eq!(
+            get_provider_instance_models(&providers, "claude_work")[0].slug,
+            "claude-sonnet-4-6"
+        );
+        assert!(get_provider_instance_models(&providers, "missing").is_empty());
+
+        let no_sendable = vec![
+            make_server_provider(|provider| {
+                provider.driver = "codex".to_string();
+                provider.instance_id = "codex".to_string();
+                provider.enabled = false;
+            }),
+            make_server_provider(|provider| {
+                provider.driver = "claudeAgent".to_string();
+                provider.instance_id = "claudeAgent".to_string();
+                provider.availability = ServerProviderAvailability::Unavailable;
+            }),
+        ];
+        assert_eq!(
+            resolve_selectable_provider_instance(&no_sendable, Some("codex")),
+            None
+        );
+        assert_eq!(
+            resolve_selectable_provider_instance(&no_sendable, Some("claudeAgent")),
+            None
+        );
+        assert_eq!(
+            resolve_selectable_provider_instance(&no_sendable, Some("removed_instance")),
+            None
+        );
     }
 
     #[test]
