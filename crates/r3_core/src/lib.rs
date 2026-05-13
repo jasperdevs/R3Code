@@ -16639,6 +16639,55 @@ pub struct ThreadActivity {
     pub created_at: String,
 }
 
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ContextWindowUsagePayload {
+    pub used_tokens: Option<f64>,
+    pub total_processed_tokens: Option<f64>,
+    pub max_tokens: Option<f64>,
+    pub input_tokens: Option<f64>,
+    pub cached_input_tokens: Option<f64>,
+    pub output_tokens: Option<f64>,
+    pub reasoning_output_tokens: Option<f64>,
+    pub last_used_tokens: Option<f64>,
+    pub last_input_tokens: Option<f64>,
+    pub last_cached_input_tokens: Option<f64>,
+    pub last_output_tokens: Option<f64>,
+    pub last_reasoning_output_tokens: Option<f64>,
+    pub tool_uses: Option<f64>,
+    pub duration_ms: Option<f64>,
+    pub compacts_automatically: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContextWindowActivity {
+    pub kind: String,
+    pub payload: Option<ContextWindowUsagePayload>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ContextWindowSnapshot {
+    pub used_tokens: f64,
+    pub total_processed_tokens: Option<f64>,
+    pub max_tokens: Option<f64>,
+    pub remaining_tokens: Option<f64>,
+    pub used_percentage: Option<f64>,
+    pub remaining_percentage: Option<f64>,
+    pub input_tokens: Option<f64>,
+    pub cached_input_tokens: Option<f64>,
+    pub output_tokens: Option<f64>,
+    pub reasoning_output_tokens: Option<f64>,
+    pub last_used_tokens: Option<f64>,
+    pub last_input_tokens: Option<f64>,
+    pub last_cached_input_tokens: Option<f64>,
+    pub last_output_tokens: Option<f64>,
+    pub last_reasoning_output_tokens: Option<f64>,
+    pub tool_uses: Option<f64>,
+    pub duration_ms: Option<f64>,
+    pub compacts_automatically: bool,
+    pub updated_at: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PendingApproval {
     pub request_id: String,
@@ -16648,6 +16697,79 @@ pub struct PendingApproval {
 }
 
 pub const MAX_VISIBLE_WORK_LOG_ENTRIES: usize = 6;
+
+fn finite_context_window_number(value: Option<f64>) -> Option<f64> {
+    value.filter(|value| value.is_finite())
+}
+
+pub fn derive_latest_context_window_snapshot(
+    activities: &[ContextWindowActivity],
+) -> Option<ContextWindowSnapshot> {
+    for activity in activities.iter().rev() {
+        if activity.kind != "context-window.updated" {
+            continue;
+        }
+        let payload = activity.payload.as_ref()?;
+        let used_tokens = finite_context_window_number(payload.used_tokens)?;
+        if used_tokens <= 0.0 {
+            continue;
+        }
+
+        let max_tokens = finite_context_window_number(payload.max_tokens);
+        let used_percentage = max_tokens
+            .filter(|max_tokens| *max_tokens > 0.0)
+            .map(|max_tokens| 100.0_f64.min((used_tokens / max_tokens) * 100.0));
+        let remaining_tokens =
+            max_tokens.map(|max_tokens| 0.0_f64.max((max_tokens - used_tokens).round()));
+        let remaining_percentage =
+            used_percentage.map(|used_percentage| 0.0_f64.max(100.0 - used_percentage));
+
+        return Some(ContextWindowSnapshot {
+            used_tokens,
+            total_processed_tokens: finite_context_window_number(payload.total_processed_tokens),
+            max_tokens,
+            remaining_tokens,
+            used_percentage,
+            remaining_percentage,
+            input_tokens: finite_context_window_number(payload.input_tokens),
+            cached_input_tokens: finite_context_window_number(payload.cached_input_tokens),
+            output_tokens: finite_context_window_number(payload.output_tokens),
+            reasoning_output_tokens: finite_context_window_number(payload.reasoning_output_tokens),
+            last_used_tokens: finite_context_window_number(payload.last_used_tokens),
+            last_input_tokens: finite_context_window_number(payload.last_input_tokens),
+            last_cached_input_tokens: finite_context_window_number(
+                payload.last_cached_input_tokens,
+            ),
+            last_output_tokens: finite_context_window_number(payload.last_output_tokens),
+            last_reasoning_output_tokens: finite_context_window_number(
+                payload.last_reasoning_output_tokens,
+            ),
+            tool_uses: finite_context_window_number(payload.tool_uses),
+            duration_ms: finite_context_window_number(payload.duration_ms),
+            compacts_automatically: payload.compacts_automatically.unwrap_or(false),
+            updated_at: activity.created_at.clone(),
+        });
+    }
+    None
+}
+
+pub fn format_context_window_tokens(value: Option<f64>) -> String {
+    let Some(value) = value.filter(|value| value.is_finite()) else {
+        return "0".to_string();
+    };
+    if value < 1_000.0 {
+        return format!("{:.0}", value.round());
+    }
+    if value < 10_000.0 {
+        let formatted = format!("{:.1}", value / 1_000.0);
+        return format!("{}k", formatted.trim_end_matches(".0"));
+    }
+    if value < 1_000_000.0 {
+        return format!("{:.0}k", (value / 1_000.0).round());
+    }
+    let formatted = format!("{:.1}", value / 1_000_000.0);
+    format!("{}m", formatted.trim_end_matches(".0"))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkLogEntry {
@@ -27421,6 +27543,72 @@ mod tests {
         assert_eq!(entries[0].id, "completed");
         assert_eq!(entries[0].command.as_deref(), Some("cargo check"));
         assert_eq!(entries[0].detail.as_deref(), Some("Finished in 1s"));
+    }
+
+    #[test]
+    fn context_window_snapshot_and_token_format_match_upstream() {
+        let activity =
+            |kind: &str, payload: Option<ContextWindowUsagePayload>| ContextWindowActivity {
+                kind: kind.to_string(),
+                payload,
+                created_at: "2026-03-23T00:00:00.000Z".to_string(),
+            };
+
+        let snapshot = derive_latest_context_window_snapshot(&[
+            activity(
+                "context-window.updated",
+                Some(ContextWindowUsagePayload {
+                    used_tokens: Some(1_000.0),
+                    ..ContextWindowUsagePayload::default()
+                }),
+            ),
+            activity("tool.started", Some(ContextWindowUsagePayload::default())),
+            activity(
+                "context-window.updated",
+                Some(ContextWindowUsagePayload {
+                    used_tokens: Some(14_000.0),
+                    max_tokens: Some(258_000.0),
+                    compacts_automatically: Some(true),
+                    ..ContextWindowUsagePayload::default()
+                }),
+            ),
+        ])
+        .unwrap();
+
+        assert_eq!(snapshot.used_tokens, 14_000.0);
+        assert_eq!(snapshot.total_processed_tokens, None);
+        assert_eq!(snapshot.max_tokens, Some(258_000.0));
+        assert_eq!(snapshot.remaining_tokens, Some(244_000.0));
+        assert_eq!(snapshot.compacts_automatically, true);
+        assert_eq!(
+            derive_latest_context_window_snapshot(&[activity(
+                "context-window.updated",
+                Some(ContextWindowUsagePayload::default())
+            )]),
+            None
+        );
+
+        assert_eq!(format_context_window_tokens(Some(999.0)), "999");
+        assert_eq!(format_context_window_tokens(Some(1_400.0)), "1.4k");
+        assert_eq!(format_context_window_tokens(Some(14_000.0)), "14k");
+        assert_eq!(format_context_window_tokens(Some(258_000.0)), "258k");
+        assert_eq!(format_context_window_tokens(Some(1_250_000.0)), "1.2m");
+        assert_eq!(format_context_window_tokens(None), "0");
+
+        let processed = derive_latest_context_window_snapshot(&[activity(
+            "context-window.updated",
+            Some(ContextWindowUsagePayload {
+                used_tokens: Some(81_659.0),
+                total_processed_tokens: Some(748_126.0),
+                max_tokens: Some(258_400.0),
+                last_used_tokens: Some(81_659.0),
+                ..ContextWindowUsagePayload::default()
+            }),
+        )])
+        .unwrap();
+        assert_eq!(processed.used_tokens, 81_659.0);
+        assert_eq!(processed.total_processed_tokens, Some(748_126.0));
+        assert_eq!(processed.last_used_tokens, Some(81_659.0));
     }
 
     #[test]

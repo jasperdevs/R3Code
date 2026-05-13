@@ -1973,6 +1973,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core chat_thread_action_plans_match_upstream_context_resolution`",
             "Wire plans into live GPUI new-thread commands and async handler dispatch.",
         )
+    } else if path == "apps/web/src/lib/contextWindow.ts"
+        || path == "apps/web/src/lib/contextWindow.test.ts"
+    {
+        (
+            "context-window activity snapshot derivation, token usage percentages/remaining counts, compaction flag defaulting, and compact token formatting in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core context_window_snapshot_and_token_format`",
+            "Wire snapshot derivation into live GPUI ContextWindowMeter state.",
+        )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
             "logical project path normalization, physical/grouping/order keys, repository-scoped keys, settings override resolution, ref fallback, and group-label helpers in crates/r3_core/src/lib.rs",
