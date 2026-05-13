@@ -6045,6 +6045,31 @@ pub struct SourceControlProviderContext {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlRefSelector {
+    pub ref_name: String,
+    pub owner: Option<String>,
+    pub repository: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlProviderErrorContract {
+    pub provider: SourceControlProviderKind,
+    pub operation: String,
+    pub detail: String,
+}
+
+impl SourceControlProviderErrorContract {
+    pub fn message(&self) -> String {
+        format!(
+            "Source control provider {} failed in {}: {}",
+            source_control_provider_kind_contract_value(self.provider),
+            self.operation,
+            self.detail
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceControlAuthProbeInput {
     pub stdout: String,
     pub stderr: String,
@@ -6150,6 +6175,93 @@ pub fn normalize_git_fetch_interval_seconds(value: Option<f64>) -> u32 {
 
 pub fn git_fetch_interval_seconds_from_millis(milliseconds: i64) -> i64 {
     ((milliseconds as f64) / 1_000.0).round() as i64
+}
+
+pub fn source_control_provider_kind_contract_value(
+    kind: SourceControlProviderKind,
+) -> &'static str {
+    match kind {
+        SourceControlProviderKind::Github => "github",
+        SourceControlProviderKind::Gitlab => "gitlab",
+        SourceControlProviderKind::AzureDevops => "azure-devops",
+        SourceControlProviderKind::Bitbucket => "bitbucket",
+        SourceControlProviderKind::Unknown => "unknown",
+    }
+}
+
+pub fn parse_source_control_owner_ref(head_selector: &str) -> Option<SourceControlRefSelector> {
+    let trimmed = head_selector.trim();
+    let separator_index = trimmed.find(':')?;
+    let owner = trimmed[..separator_index].trim();
+    let ref_name = trimmed[separator_index + 1..].trim();
+    if owner.is_empty()
+        || ref_name.is_empty()
+        || owner.contains('/')
+        || owner.chars().any(char::is_whitespace)
+    {
+        return None;
+    }
+    Some(SourceControlRefSelector {
+        owner: Some(owner.to_string()),
+        ref_name: ref_name.to_string(),
+        repository: None,
+    })
+}
+
+pub fn normalize_source_control_branch(head_selector: &str) -> String {
+    parse_source_control_owner_ref(head_selector)
+        .map(|selector| selector.ref_name)
+        .unwrap_or_else(|| head_selector.trim().to_string())
+}
+
+pub fn source_control_branch(
+    head_selector: &str,
+    source: Option<&SourceControlRefSelector>,
+) -> String {
+    source
+        .map(|source| source.ref_name.clone())
+        .unwrap_or_else(|| normalize_source_control_branch(head_selector))
+}
+
+pub fn source_control_ref_from_input(
+    head_selector: &str,
+    source: Option<&SourceControlRefSelector>,
+) -> Option<SourceControlRefSelector> {
+    source
+        .cloned()
+        .or_else(|| parse_source_control_owner_ref(head_selector))
+}
+
+pub fn source_control_effective_context(
+    input_context: Option<&SourceControlProviderContext>,
+    bound_context: Option<&SourceControlProviderContext>,
+) -> Option<SourceControlProviderContext> {
+    input_context.cloned().or_else(|| bound_context.cloned())
+}
+
+pub fn unsupported_source_control_provider_error(
+    kind: SourceControlProviderKind,
+    operation: &str,
+) -> SourceControlProviderErrorContract {
+    SourceControlProviderErrorContract {
+        provider: kind,
+        operation: operation.to_string(),
+        detail: format!(
+            "No {} source control provider is registered.",
+            source_control_provider_kind_contract_value(kind)
+        ),
+    }
+}
+
+pub fn source_control_provider_detection_error(
+    operation: &str,
+    cwd: &str,
+) -> SourceControlProviderErrorContract {
+    SourceControlProviderErrorContract {
+        provider: SourceControlProviderKind::Unknown,
+        operation: operation.to_string(),
+        detail: format!("Failed to detect source control provider for {cwd}."),
+    }
 }
 
 fn trimmed_optional_string(value: Option<&str>) -> Option<String> {
@@ -17623,6 +17735,58 @@ mod tests {
         );
         assert_eq!(SOURCE_CONTROL_PROVIDER_DETECTION_CACHE_CAPACITY, 2_048);
         assert_eq!(SOURCE_CONTROL_PROVIDER_DETECTION_CACHE_TTL_MS, 5_000);
+        assert_eq!(
+            source_control_provider_kind_contract_value(SourceControlProviderKind::AzureDevops),
+            "azure-devops"
+        );
+        assert_eq!(
+            parse_source_control_owner_ref(" jasper:feature/demo "),
+            Some(SourceControlRefSelector {
+                owner: Some("jasper".to_string()),
+                repository: None,
+                ref_name: "feature/demo".to_string(),
+            })
+        );
+        assert_eq!(parse_source_control_owner_ref("owner-only:"), None);
+        assert_eq!(parse_source_control_owner_ref("bad owner:branch"), None);
+        assert_eq!(
+            normalize_source_control_branch(" jasper:feature/demo "),
+            "feature/demo"
+        );
+        assert_eq!(normalize_source_control_branch(" main "), "main");
+        let explicit_source = SourceControlRefSelector {
+            owner: Some("explicit".to_string()),
+            repository: Some("repo".to_string()),
+            ref_name: "branch".to_string(),
+        };
+        assert_eq!(
+            source_control_branch("jasper:ignored", Some(&explicit_source)),
+            "branch"
+        );
+        assert_eq!(
+            source_control_ref_from_input("jasper:feature/demo", None),
+            Some(SourceControlRefSelector {
+                owner: Some("jasper".to_string()),
+                repository: None,
+                ref_name: "feature/demo".to_string(),
+            })
+        );
+        assert_eq!(
+            source_control_ref_from_input("jasper:feature/demo", Some(&explicit_source)),
+            Some(explicit_source.clone())
+        );
+        assert_eq!(
+            unsupported_source_control_provider_error(
+                SourceControlProviderKind::Gitlab,
+                "listChangeRequests"
+            )
+            .message(),
+            "Source control provider gitlab failed in listChangeRequests: No gitlab source control provider is registered."
+        );
+        assert_eq!(
+            source_control_provider_detection_error("detectProvider", "/repo").message(),
+            "Source control provider unknown failed in detectProvider: Failed to detect source control provider for /repo."
+        );
 
         let provider_context = select_source_control_provider_context(&[VcsRemote {
             name: "origin".to_string(),
@@ -17704,6 +17868,32 @@ mod tests {
             .provider
             .kind,
             SourceControlProviderKind::AzureDevops
+        );
+        let bound_context = SourceControlProviderContext {
+            provider: SourceControlProviderInfo {
+                kind: SourceControlProviderKind::Github,
+                name: "GitHub".to_string(),
+                base_url: "https://github.com".to_string(),
+            },
+            remote_name: "origin".to_string(),
+            remote_url: "git@github.com:pingdotgg/t3code.git".to_string(),
+        };
+        let explicit_context = SourceControlProviderContext {
+            provider: SourceControlProviderInfo {
+                kind: SourceControlProviderKind::Gitlab,
+                name: "GitLab".to_string(),
+                base_url: "https://gitlab.com".to_string(),
+            },
+            remote_name: "upstream".to_string(),
+            remote_url: "git@gitlab.com:group/project.git".to_string(),
+        };
+        assert_eq!(
+            source_control_effective_context(None, Some(&bound_context)),
+            Some(bound_context.clone())
+        );
+        assert_eq!(
+            source_control_effective_context(Some(&explicit_context), Some(&bound_context)),
+            Some(explicit_context)
         );
 
         let github_cli = SourceControlCliDiscoverySpec {
