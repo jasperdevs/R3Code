@@ -2539,6 +2539,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace composer_prompt_editor_render_contract_matches_upstream_component`; `cargo test --workspace composer_inline_token_adjacency_matches_upstream_contract`",
             "Wire full GPUI editor input behavior, controlled cursor/selection updates, paste handling, inline token editing, keyboard command interception, and browser composition/dead-key behavior.",
         )
+    } else if path == "apps/web/src/components/DiffPanel.tsx"
+        || path == "apps/web/src/components/DiffPanelShell.tsx"
+    {
+        (
+            "DiffPanel and DiffPanelShell mode/root/header classes, drag-region rules, turn-strip controls, toggle labels, empty/loading/raw/file render states, virtualizer settings, collapse buttons, diff style/overflow/theme, and center-state copy in crates/r3_core/src/lib.rs and crates/r3_ui/src/shell.rs",
+            "partial",
+            "`cargo test --workspace diff_panel_render_contract_matches_upstream_components`; `cargo test --workspace diff_route_search_matches_upstream_parser_contract`",
+            "Wire exact GPUI diff rendering, turn strip scrolling, file collapse state, checkpoint diff query lifecycle, raw patch fallback, editor-open actions, and browser visual parity.",
+        )
     } else if path == "apps/web/src/components/GitActionsControl.logic.test.ts"
         || path == "apps/web/src/components/GitActionsControl.logic.ts"
     {

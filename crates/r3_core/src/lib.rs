@@ -52,6 +52,89 @@ pub enum DiffColorScheme {
     Dark,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffPanelMode {
+    Inline,
+    Sheet,
+    Sidebar,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffPanelRenderMode {
+    Stacked,
+    Split,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffPanelPatchState {
+    Loading,
+    Files,
+    Raw,
+    EmptyNetChanges,
+    EmptyUnavailable,
+    Error,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffPanelFileType {
+    New,
+    Deleted,
+    Changed,
+    RenamePure,
+    RenameChanged,
+    Other,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffPanelShellContract {
+    pub root_class_name: String,
+    pub header_row_class_name: String,
+    pub header_border_wrapper_class_name: Option<&'static str>,
+    pub should_use_drag_region: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiffPanelRenderContract {
+    pub shell: DiffPanelShellContract,
+    pub header_strip_wrapper_class_name: &'static str,
+    pub turn_strip_class_name: &'static str,
+    pub left_scroll_button_class_name: String,
+    pub right_scroll_button_class_name: String,
+    pub left_scroll_aria_label: &'static str,
+    pub right_scroll_aria_label: &'static str,
+    pub scroll_icon_class_name: &'static str,
+    pub turn_chip_button_class_name: &'static str,
+    pub selected_turn_chip_class_name: String,
+    pub idle_turn_chip_class_name: String,
+    pub all_turns_label: &'static str,
+    pub turn_label_prefix: &'static str,
+    pub header_actions_class_name: &'static str,
+    pub toggle_group_class_name: &'static str,
+    pub toggle_icon_class_name: &'static str,
+    pub stacked_aria_label: &'static str,
+    pub split_aria_label: &'static str,
+    pub wrap_toggle_aria_label: &'static str,
+    pub whitespace_toggle_aria_label: &'static str,
+    pub center_state_class_name: Option<&'static str>,
+    pub center_state_label: Option<&'static str>,
+    pub viewport_class_name: Option<&'static str>,
+    pub loading_label: Option<&'static str>,
+    pub virtualizer_class_name: Option<&'static str>,
+    pub virtualizer_overscroll_size: Option<u32>,
+    pub virtualizer_intersection_margin: Option<u32>,
+    pub file_wrapper_class_name: Option<&'static str>,
+    pub collapse_button_class_name: Option<String>,
+    pub collapse_icon_class_name: Option<&'static str>,
+    pub collapse_button_aria_label: Option<String>,
+    pub collapse_button_title: Option<&'static str>,
+    pub diff_style: Option<&'static str>,
+    pub diff_overflow: Option<&'static str>,
+    pub diff_theme: &'static str,
+    pub raw_wrapper_class_name: Option<&'static str>,
+    pub raw_reason_class_name: Option<&'static str>,
+    pub raw_pre_class_name: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WebDesktopAppBranding {
     pub base_name: String,
@@ -731,6 +814,201 @@ pub fn resolve_diff_theme_name(theme: DiffColorScheme) -> &'static str {
     }
 }
 
+pub fn derive_diff_panel_shell_contract(
+    mode: DiffPanelMode,
+    is_electron: bool,
+) -> DiffPanelShellContract {
+    let should_use_drag_region = is_electron && mode != DiffPanelMode::Sheet;
+    let root_class_name = join_class_names([
+        DIFF_PANEL_SHELL_ROOT_CLASS_NAME,
+        if mode == DiffPanelMode::Inline {
+            DIFF_PANEL_SHELL_INLINE_CLASS_NAME
+        } else {
+            DIFF_PANEL_SHELL_FULL_CLASS_NAME
+        },
+    ]);
+    let header_row_class_name = join_class_names([
+        DIFF_PANEL_HEADER_ROW_BASE_CLASS_NAME,
+        if should_use_drag_region {
+            DIFF_PANEL_HEADER_ROW_DRAG_CLASS_NAME
+        } else {
+            DIFF_PANEL_HEADER_ROW_NORMAL_CLASS_NAME
+        },
+    ]);
+
+    DiffPanelShellContract {
+        root_class_name,
+        header_row_class_name,
+        header_border_wrapper_class_name: (!should_use_drag_region)
+            .then_some(DIFF_PANEL_HEADER_BORDER_WRAPPER_CLASS_NAME),
+        should_use_drag_region,
+    }
+}
+
+pub fn diff_panel_file_collapse_icon_class(file_type: DiffPanelFileType) -> &'static str {
+    match file_type {
+        DiffPanelFileType::New => DIFF_PANEL_FILE_ADDITION_ICON_CLASS_NAME,
+        DiffPanelFileType::Deleted => DIFF_PANEL_FILE_DELETION_ICON_CLASS_NAME,
+        DiffPanelFileType::Changed
+        | DiffPanelFileType::RenamePure
+        | DiffPanelFileType::RenameChanged => DIFF_PANEL_FILE_MODIFIED_ICON_CLASS_NAME,
+        DiffPanelFileType::Other => DIFF_PANEL_FILE_FALLBACK_ICON_CLASS_NAME,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn derive_diff_panel_render_contract(
+    mode: DiffPanelMode,
+    is_electron: bool,
+    has_active_thread: bool,
+    is_git_repo: bool,
+    turn_count: usize,
+    patch_state: DiffPanelPatchState,
+    render_mode: DiffPanelRenderMode,
+    word_wrap: bool,
+    ignore_whitespace: bool,
+    can_scroll_left: bool,
+    can_scroll_right: bool,
+    selected_file_path: Option<&str>,
+    selected_file_collapsed: bool,
+    selected_file_type: DiffPanelFileType,
+    theme: DiffColorScheme,
+) -> DiffPanelRenderContract {
+    let center_state_label = if !has_active_thread {
+        Some(DIFF_PANEL_SELECT_THREAD_LABEL)
+    } else if !is_git_repo {
+        Some(DIFF_PANEL_NON_GIT_LABEL)
+    } else if turn_count == 0 {
+        Some(DIFF_PANEL_NO_COMPLETED_TURNS_LABEL)
+    } else {
+        None
+    };
+    let show_patch_viewport = center_state_label.is_none();
+    let file_collapse_icon_class = diff_panel_file_collapse_icon_class(selected_file_type);
+    let collapse_button_class_name = show_patch_viewport
+        .then(|| {
+            join_class_names([
+                DIFF_PANEL_FILE_COLLAPSE_BUTTON_BASE_CLASS_NAME,
+                file_collapse_icon_class,
+            ])
+        })
+        .filter(|_| patch_state == DiffPanelPatchState::Files);
+    let raw_pre_class_name = (patch_state == DiffPanelPatchState::Raw).then(|| {
+        join_class_names([
+            DIFF_PANEL_RAW_PRE_BASE_CLASS_NAME,
+            if word_wrap {
+                DIFF_PANEL_RAW_PRE_WRAP_CLASS_NAME
+            } else {
+                DIFF_PANEL_RAW_PRE_SCROLL_CLASS_NAME
+            },
+        ])
+    });
+
+    DiffPanelRenderContract {
+        shell: derive_diff_panel_shell_contract(mode, is_electron),
+        header_strip_wrapper_class_name: DIFF_PANEL_HEADER_STRIP_WRAPPER_CLASS_NAME,
+        turn_strip_class_name: DIFF_PANEL_TURN_STRIP_CLASS_NAME,
+        left_scroll_button_class_name: join_class_names([
+            DIFF_PANEL_TURN_SCROLL_BUTTON_BASE_CLASS_NAME,
+            if can_scroll_left {
+                DIFF_PANEL_TURN_SCROLL_BUTTON_ENABLED_CLASS_NAME
+            } else {
+                DIFF_PANEL_TURN_SCROLL_BUTTON_DISABLED_CLASS_NAME
+            },
+        ]),
+        right_scroll_button_class_name: join_class_names([
+            DIFF_PANEL_TURN_SCROLL_RIGHT_BUTTON_BASE_CLASS_NAME,
+            if can_scroll_right {
+                DIFF_PANEL_TURN_SCROLL_BUTTON_ENABLED_CLASS_NAME
+            } else {
+                DIFF_PANEL_TURN_SCROLL_BUTTON_DISABLED_CLASS_NAME
+            },
+        ]),
+        left_scroll_aria_label: DIFF_PANEL_TURN_SCROLL_LEFT_ARIA_LABEL,
+        right_scroll_aria_label: DIFF_PANEL_TURN_SCROLL_RIGHT_ARIA_LABEL,
+        scroll_icon_class_name: "size-3.5",
+        turn_chip_button_class_name: DIFF_PANEL_TURN_CHIP_BUTTON_CLASS_NAME,
+        selected_turn_chip_class_name: join_class_names([
+            DIFF_PANEL_TURN_CHIP_BASE_CLASS_NAME,
+            DIFF_PANEL_TURN_CHIP_SELECTED_CLASS_NAME,
+        ]),
+        idle_turn_chip_class_name: join_class_names([
+            DIFF_PANEL_TURN_CHIP_BASE_CLASS_NAME,
+            DIFF_PANEL_TURN_CHIP_IDLE_CLASS_NAME,
+        ]),
+        all_turns_label: DIFF_PANEL_ALL_TURNS_LABEL,
+        turn_label_prefix: DIFF_PANEL_TURN_LABEL_PREFIX,
+        header_actions_class_name: DIFF_PANEL_HEADER_ACTIONS_CLASS_NAME,
+        toggle_group_class_name: DIFF_PANEL_TOGGLE_GROUP_CLASS_NAME,
+        toggle_icon_class_name: DIFF_PANEL_TOGGLE_ICON_CLASS_NAME,
+        stacked_aria_label: DIFF_PANEL_STACKED_ARIA_LABEL,
+        split_aria_label: DIFF_PANEL_SPLIT_ARIA_LABEL,
+        wrap_toggle_aria_label: if word_wrap {
+            DIFF_PANEL_WRAP_DISABLE_ARIA_LABEL
+        } else {
+            DIFF_PANEL_WRAP_ENABLE_ARIA_LABEL
+        },
+        whitespace_toggle_aria_label: if ignore_whitespace {
+            DIFF_PANEL_WHITESPACE_SHOW_ARIA_LABEL
+        } else {
+            DIFF_PANEL_WHITESPACE_HIDE_ARIA_LABEL
+        },
+        center_state_class_name: center_state_label.map(|_| DIFF_PANEL_CENTER_STATE_CLASS_NAME),
+        center_state_label,
+        viewport_class_name: show_patch_viewport.then_some(DIFF_PANEL_VIEWPORT_CLASS_NAME),
+        loading_label: (show_patch_viewport && patch_state == DiffPanelPatchState::Loading)
+            .then_some(DIFF_PANEL_LOADING_LABEL),
+        virtualizer_class_name: (show_patch_viewport && patch_state == DiffPanelPatchState::Files)
+            .then_some(DIFF_PANEL_VIRTUALIZER_CLASS_NAME),
+        virtualizer_overscroll_size: (show_patch_viewport
+            && patch_state == DiffPanelPatchState::Files)
+            .then_some(DIFF_PANEL_VIRTUALIZER_OVERSCROLL_SIZE),
+        virtualizer_intersection_margin: (show_patch_viewport
+            && patch_state == DiffPanelPatchState::Files)
+            .then_some(DIFF_PANEL_VIRTUALIZER_INTERSECTION_MARGIN),
+        file_wrapper_class_name: (show_patch_viewport && patch_state == DiffPanelPatchState::Files)
+            .then_some(DIFF_PANEL_FILE_WRAPPER_CLASS_NAME),
+        collapse_button_class_name,
+        collapse_icon_class_name: (show_patch_viewport
+            && patch_state == DiffPanelPatchState::Files)
+            .then_some(DIFF_PANEL_FILE_ICON_CLASS_NAME),
+        collapse_button_aria_label: (show_patch_viewport
+            && patch_state == DiffPanelPatchState::Files)
+            .then(|| {
+                format!(
+                    "{} {}",
+                    if selected_file_collapsed {
+                        "Expand"
+                    } else {
+                        "Collapse"
+                    },
+                    selected_file_path.unwrap_or_default()
+                )
+            }),
+        collapse_button_title: (show_patch_viewport && patch_state == DiffPanelPatchState::Files)
+            .then_some(if selected_file_collapsed {
+                "Expand diff"
+            } else {
+                "Collapse diff"
+            }),
+        diff_style: (show_patch_viewport && patch_state == DiffPanelPatchState::Files).then_some(
+            if render_mode == DiffPanelRenderMode::Split {
+                "split"
+            } else {
+                "unified"
+            },
+        ),
+        diff_overflow: (show_patch_viewport && patch_state == DiffPanelPatchState::Files)
+            .then_some(if word_wrap { "wrap" } else { "scroll" }),
+        diff_theme: resolve_diff_theme_name(theme),
+        raw_wrapper_class_name: (patch_state == DiffPanelPatchState::Raw)
+            .then_some(DIFF_PANEL_RAW_WRAPPER_CLASS_NAME),
+        raw_reason_class_name: (patch_state == DiffPanelPatchState::Raw)
+            .then_some(DIFF_PANEL_RAW_REASON_CLASS_NAME),
+        raw_pre_class_name,
+    }
+}
+
 pub fn fnv1a32(input: &str, seed: u32, multiplier: u32) -> u32 {
     let mut hash = seed;
     for code_unit in input.encode_utf16() {
@@ -1179,6 +1457,80 @@ pub const TERMINAL_HELPER_TEXTAREA_CLASS: &str = "xterm-helper-textarea";
 pub const THREAD_TERMINAL_DRAWER_XTERM_SELECTOR: &str = ".thread-terminal-drawer .xterm";
 pub const DIFF_THEME_LIGHT_NAME: &str = "pierre-light";
 pub const DIFF_THEME_DARK_NAME: &str = "pierre-dark";
+pub const DIFF_PANEL_SHELL_ROOT_CLASS_NAME: &str = "flex h-full min-w-0 flex-col bg-background";
+pub const DIFF_PANEL_SHELL_INLINE_CLASS_NAME: &str =
+    "w-[42vw] min-w-[360px] max-w-[560px] shrink-0 border-l border-border";
+pub const DIFF_PANEL_SHELL_FULL_CLASS_NAME: &str = "w-full";
+pub const DIFF_PANEL_HEADER_ROW_BASE_CLASS_NAME: &str =
+    "flex items-center justify-between gap-2 px-4";
+pub const DIFF_PANEL_HEADER_ROW_DRAG_CLASS_NAME: &str = "drag-region h-[52px] border-b border-border wco:h-[env(titlebar-area-height)] wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]";
+pub const DIFF_PANEL_HEADER_ROW_NORMAL_CLASS_NAME: &str =
+    "h-12 wco:max-h-[env(titlebar-area-height)]";
+pub const DIFF_PANEL_HEADER_BORDER_WRAPPER_CLASS_NAME: &str = "border-b border-border";
+pub const DIFF_PANEL_HEADER_STRIP_WRAPPER_CLASS_NAME: &str =
+    "relative min-w-0 flex-1 [-webkit-app-region:no-drag]";
+pub const DIFF_PANEL_TURN_SCROLL_BUTTON_BASE_CLASS_NAME: &str = "absolute left-0 top-1/2 z-20 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-md border bg-background/90 text-muted-foreground transition-colors";
+pub const DIFF_PANEL_TURN_SCROLL_RIGHT_BUTTON_BASE_CLASS_NAME: &str = "absolute right-0 top-1/2 z-20 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-md border bg-background/90 text-muted-foreground transition-colors";
+pub const DIFF_PANEL_TURN_SCROLL_BUTTON_ENABLED_CLASS_NAME: &str =
+    "border-border/70 hover:border-border hover:text-foreground";
+pub const DIFF_PANEL_TURN_SCROLL_BUTTON_DISABLED_CLASS_NAME: &str =
+    "cursor-not-allowed border-border/40 text-muted-foreground/40";
+pub const DIFF_PANEL_TURN_SCROLL_LEFT_ARIA_LABEL: &str = "Scroll turn list left";
+pub const DIFF_PANEL_TURN_SCROLL_RIGHT_ARIA_LABEL: &str = "Scroll turn list right";
+pub const DIFF_PANEL_TURN_STRIP_CLASS_NAME: &str =
+    "turn-chip-strip flex gap-1 overflow-x-auto px-8 py-0.5";
+pub const DIFF_PANEL_TURN_CHIP_BUTTON_CLASS_NAME: &str = "shrink-0 rounded-md";
+pub const DIFF_PANEL_TURN_CHIP_BASE_CLASS_NAME: &str =
+    "rounded-md border px-2 py-1 text-left transition-colors";
+pub const DIFF_PANEL_TURN_CHIP_SELECTED_CLASS_NAME: &str =
+    "border-border bg-accent text-accent-foreground";
+pub const DIFF_PANEL_TURN_CHIP_IDLE_CLASS_NAME: &str = "border-border/70 bg-background/70 text-muted-foreground/80 hover:border-border hover:text-foreground/80";
+pub const DIFF_PANEL_ALL_TURNS_LABEL: &str = "All turns";
+pub const DIFF_PANEL_TURN_LABEL_PREFIX: &str = "Turn";
+pub const DIFF_PANEL_HEADER_ACTIONS_CLASS_NAME: &str =
+    "flex shrink-0 items-center gap-1 [-webkit-app-region:no-drag]";
+pub const DIFF_PANEL_TOGGLE_GROUP_CLASS_NAME: &str = "shrink-0";
+pub const DIFF_PANEL_TOGGLE_ICON_CLASS_NAME: &str = "size-3";
+pub const DIFF_PANEL_STACKED_ARIA_LABEL: &str = "Stacked diff view";
+pub const DIFF_PANEL_SPLIT_ARIA_LABEL: &str = "Split diff view";
+pub const DIFF_PANEL_WRAP_DISABLE_ARIA_LABEL: &str = "Disable diff line wrapping";
+pub const DIFF_PANEL_WRAP_ENABLE_ARIA_LABEL: &str = "Enable diff line wrapping";
+pub const DIFF_PANEL_WHITESPACE_SHOW_ARIA_LABEL: &str = "Show whitespace changes";
+pub const DIFF_PANEL_WHITESPACE_HIDE_ARIA_LABEL: &str = "Hide whitespace changes";
+pub const DIFF_PANEL_CENTER_STATE_CLASS_NAME: &str =
+    "flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground/70";
+pub const DIFF_PANEL_SELECT_THREAD_LABEL: &str = "Select a thread to inspect turn diffs.";
+pub const DIFF_PANEL_NON_GIT_LABEL: &str =
+    "Turn diffs are unavailable because this project is not a git repository.";
+pub const DIFF_PANEL_NO_COMPLETED_TURNS_LABEL: &str = "No completed turns yet.";
+pub const DIFF_PANEL_VIEWPORT_CLASS_NAME: &str =
+    "diff-panel-viewport min-h-0 min-w-0 flex-1 overflow-hidden";
+pub const DIFF_PANEL_ERROR_WRAPPER_CLASS_NAME: &str = "px-3";
+pub const DIFF_PANEL_ERROR_TEXT_CLASS_NAME: &str = "mb-2 text-[11px] text-red-500/80";
+pub const DIFF_PANEL_LOADING_LABEL: &str = "Loading checkpoint diff...";
+pub const DIFF_PANEL_EMPTY_PATCH_CLASS_NAME: &str =
+    "flex h-full items-center justify-center px-3 py-2 text-xs text-muted-foreground/70";
+pub const DIFF_PANEL_NO_NET_CHANGES_LABEL: &str = "No net changes in this selection.";
+pub const DIFF_PANEL_NO_PATCH_LABEL: &str = "No patch available for this selection.";
+pub const DIFF_PANEL_VIRTUALIZER_CLASS_NAME: &str =
+    "diff-render-surface h-full min-h-0 overflow-auto px-2 pb-2";
+pub const DIFF_PANEL_VIRTUALIZER_OVERSCROLL_SIZE: u32 = 600;
+pub const DIFF_PANEL_VIRTUALIZER_INTERSECTION_MARGIN: u32 = 1200;
+pub const DIFF_PANEL_FILE_WRAPPER_CLASS_NAME: &str =
+    "diff-render-file group/diff-file mb-2 rounded-md first:mt-2 last:mb-0";
+pub const DIFF_PANEL_FILE_COLLAPSE_BUTTON_BASE_CLASS_NAME: &str = "inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm border-0 bg-transparent p-0 transition-colors hover:bg-foreground/10 focus-visible:outline-hidden";
+pub const DIFF_PANEL_FILE_ADDITION_ICON_CLASS_NAME: &str = "text-[var(--diffs-addition-base)]";
+pub const DIFF_PANEL_FILE_DELETION_ICON_CLASS_NAME: &str = "text-[var(--diffs-deletion-base)]";
+pub const DIFF_PANEL_FILE_MODIFIED_ICON_CLASS_NAME: &str = "text-[var(--diffs-modified-base)]";
+pub const DIFF_PANEL_FILE_FALLBACK_ICON_CLASS_NAME: &str = "text-muted-foreground/80";
+pub const DIFF_PANEL_FILE_ICON_CLASS_NAME: &str = "size-4";
+pub const DIFF_PANEL_RAW_WRAPPER_CLASS_NAME: &str = "h-full overflow-auto p-2";
+pub const DIFF_PANEL_RAW_STACK_CLASS_NAME: &str = "space-y-2";
+pub const DIFF_PANEL_RAW_REASON_CLASS_NAME: &str = "text-[11px] text-muted-foreground/75";
+pub const DIFF_PANEL_RAW_PRE_BASE_CLASS_NAME: &str = "max-h-[72vh] rounded-md border border-border/70 bg-background/70 p-3 font-mono text-[11px] leading-relaxed text-muted-foreground/90";
+pub const DIFF_PANEL_RAW_PRE_WRAP_CLASS_NAME: &str =
+    "overflow-auto whitespace-pre-wrap wrap-break-word";
+pub const DIFF_PANEL_RAW_PRE_SCROLL_CLASS_NAME: &str = "overflow-auto";
 pub const FNV_OFFSET_BASIS_32: u32 = 0x811c9dc5;
 pub const FNV_PRIME_32: u32 = 0x01000193;
 pub const SECONDARY_HASH_SEED: u32 = 0x9e3779b9;
@@ -45517,6 +45869,247 @@ mod tests {
             vec!["terminal-2"]
         );
         assert_eq!(snapshot.terminal_event_entries.len(), 2);
+    }
+
+    #[test]
+    fn diff_panel_render_contract_matches_upstream_components() {
+        let inline = derive_diff_panel_render_contract(
+            DiffPanelMode::Inline,
+            true,
+            true,
+            true,
+            2,
+            DiffPanelPatchState::Files,
+            DiffPanelRenderMode::Split,
+            true,
+            false,
+            true,
+            false,
+            Some("src/lib.rs"),
+            false,
+            DiffPanelFileType::Changed,
+            DiffColorScheme::Dark,
+        );
+        assert!(inline.shell.should_use_drag_region);
+        assert_eq!(
+            inline.shell.root_class_name,
+            format!(
+                "{} {}",
+                DIFF_PANEL_SHELL_ROOT_CLASS_NAME, DIFF_PANEL_SHELL_INLINE_CLASS_NAME
+            )
+        );
+        assert_eq!(
+            inline.shell.header_row_class_name,
+            format!(
+                "{} {}",
+                DIFF_PANEL_HEADER_ROW_BASE_CLASS_NAME, DIFF_PANEL_HEADER_ROW_DRAG_CLASS_NAME
+            )
+        );
+        assert_eq!(inline.shell.header_border_wrapper_class_name, None);
+        assert_eq!(
+            inline.header_strip_wrapper_class_name,
+            DIFF_PANEL_HEADER_STRIP_WRAPPER_CLASS_NAME
+        );
+        assert_eq!(
+            inline.left_scroll_button_class_name,
+            format!(
+                "{} {}",
+                DIFF_PANEL_TURN_SCROLL_BUTTON_BASE_CLASS_NAME,
+                DIFF_PANEL_TURN_SCROLL_BUTTON_ENABLED_CLASS_NAME
+            )
+        );
+        assert_eq!(
+            inline.right_scroll_button_class_name,
+            format!(
+                "{} {}",
+                DIFF_PANEL_TURN_SCROLL_RIGHT_BUTTON_BASE_CLASS_NAME,
+                DIFF_PANEL_TURN_SCROLL_BUTTON_DISABLED_CLASS_NAME
+            )
+        );
+        assert_eq!(
+            inline.left_scroll_aria_label,
+            DIFF_PANEL_TURN_SCROLL_LEFT_ARIA_LABEL
+        );
+        assert_eq!(
+            inline.right_scroll_aria_label,
+            DIFF_PANEL_TURN_SCROLL_RIGHT_ARIA_LABEL
+        );
+        assert_eq!(
+            inline.turn_strip_class_name,
+            DIFF_PANEL_TURN_STRIP_CLASS_NAME
+        );
+        assert_eq!(
+            inline.selected_turn_chip_class_name,
+            format!(
+                "{} {}",
+                DIFF_PANEL_TURN_CHIP_BASE_CLASS_NAME, DIFF_PANEL_TURN_CHIP_SELECTED_CLASS_NAME
+            )
+        );
+        assert_eq!(
+            inline.idle_turn_chip_class_name,
+            format!(
+                "{} {}",
+                DIFF_PANEL_TURN_CHIP_BASE_CLASS_NAME, DIFF_PANEL_TURN_CHIP_IDLE_CLASS_NAME
+            )
+        );
+        assert_eq!(inline.all_turns_label, DIFF_PANEL_ALL_TURNS_LABEL);
+        assert_eq!(inline.turn_label_prefix, DIFF_PANEL_TURN_LABEL_PREFIX);
+        assert_eq!(
+            inline.toggle_group_class_name,
+            DIFF_PANEL_TOGGLE_GROUP_CLASS_NAME
+        );
+        assert_eq!(inline.stacked_aria_label, DIFF_PANEL_STACKED_ARIA_LABEL);
+        assert_eq!(inline.split_aria_label, DIFF_PANEL_SPLIT_ARIA_LABEL);
+        assert_eq!(
+            inline.wrap_toggle_aria_label,
+            DIFF_PANEL_WRAP_DISABLE_ARIA_LABEL
+        );
+        assert_eq!(
+            inline.whitespace_toggle_aria_label,
+            DIFF_PANEL_WHITESPACE_HIDE_ARIA_LABEL
+        );
+        assert_eq!(inline.center_state_label, None);
+        assert_eq!(
+            inline.viewport_class_name,
+            Some(DIFF_PANEL_VIEWPORT_CLASS_NAME)
+        );
+        assert_eq!(
+            inline.virtualizer_class_name,
+            Some(DIFF_PANEL_VIRTUALIZER_CLASS_NAME)
+        );
+        assert_eq!(
+            inline.virtualizer_overscroll_size,
+            Some(DIFF_PANEL_VIRTUALIZER_OVERSCROLL_SIZE)
+        );
+        assert_eq!(
+            inline.virtualizer_intersection_margin,
+            Some(DIFF_PANEL_VIRTUALIZER_INTERSECTION_MARGIN)
+        );
+        assert_eq!(
+            inline.file_wrapper_class_name,
+            Some(DIFF_PANEL_FILE_WRAPPER_CLASS_NAME)
+        );
+        assert_eq!(
+            inline.collapse_button_class_name,
+            Some(format!(
+                "{} {}",
+                DIFF_PANEL_FILE_COLLAPSE_BUTTON_BASE_CLASS_NAME,
+                DIFF_PANEL_FILE_MODIFIED_ICON_CLASS_NAME
+            ))
+        );
+        assert_eq!(
+            inline.collapse_icon_class_name,
+            Some(DIFF_PANEL_FILE_ICON_CLASS_NAME)
+        );
+        assert_eq!(
+            inline.collapse_button_aria_label,
+            Some("Collapse src/lib.rs".to_string())
+        );
+        assert_eq!(inline.collapse_button_title, Some("Collapse diff"));
+        assert_eq!(inline.diff_style, Some("split"));
+        assert_eq!(inline.diff_overflow, Some("wrap"));
+        assert_eq!(inline.diff_theme, DIFF_THEME_DARK_NAME);
+
+        let empty_thread = derive_diff_panel_render_contract(
+            DiffPanelMode::Sheet,
+            true,
+            false,
+            true,
+            0,
+            DiffPanelPatchState::Loading,
+            DiffPanelRenderMode::Stacked,
+            false,
+            true,
+            false,
+            false,
+            None,
+            false,
+            DiffPanelFileType::Other,
+            DiffColorScheme::Light,
+        );
+        assert!(!empty_thread.shell.should_use_drag_region);
+        assert_eq!(
+            empty_thread.shell.root_class_name,
+            format!(
+                "{} {}",
+                DIFF_PANEL_SHELL_ROOT_CLASS_NAME, DIFF_PANEL_SHELL_FULL_CLASS_NAME
+            )
+        );
+        assert_eq!(
+            empty_thread.shell.header_border_wrapper_class_name,
+            Some(DIFF_PANEL_HEADER_BORDER_WRAPPER_CLASS_NAME)
+        );
+        assert_eq!(
+            empty_thread.center_state_class_name,
+            Some(DIFF_PANEL_CENTER_STATE_CLASS_NAME)
+        );
+        assert_eq!(
+            empty_thread.center_state_label,
+            Some(DIFF_PANEL_SELECT_THREAD_LABEL)
+        );
+        assert_eq!(empty_thread.viewport_class_name, None);
+
+        let raw = derive_diff_panel_render_contract(
+            DiffPanelMode::Sidebar,
+            false,
+            true,
+            true,
+            1,
+            DiffPanelPatchState::Raw,
+            DiffPanelRenderMode::Stacked,
+            false,
+            true,
+            false,
+            true,
+            Some("README.md"),
+            true,
+            DiffPanelFileType::Deleted,
+            DiffColorScheme::Light,
+        );
+        assert_eq!(
+            raw.shell.header_row_class_name,
+            format!(
+                "{} {}",
+                DIFF_PANEL_HEADER_ROW_BASE_CLASS_NAME, DIFF_PANEL_HEADER_ROW_NORMAL_CLASS_NAME
+            )
+        );
+        assert_eq!(
+            raw.wrap_toggle_aria_label,
+            DIFF_PANEL_WRAP_ENABLE_ARIA_LABEL
+        );
+        assert_eq!(
+            raw.whitespace_toggle_aria_label,
+            DIFF_PANEL_WHITESPACE_SHOW_ARIA_LABEL
+        );
+        assert_eq!(
+            raw.raw_wrapper_class_name,
+            Some(DIFF_PANEL_RAW_WRAPPER_CLASS_NAME)
+        );
+        assert_eq!(
+            raw.raw_reason_class_name,
+            Some(DIFF_PANEL_RAW_REASON_CLASS_NAME)
+        );
+        assert_eq!(
+            raw.raw_pre_class_name,
+            Some(format!(
+                "{} {}",
+                DIFF_PANEL_RAW_PRE_BASE_CLASS_NAME, DIFF_PANEL_RAW_PRE_SCROLL_CLASS_NAME
+            ))
+        );
+        assert_eq!(raw.diff_theme, DIFF_THEME_LIGHT_NAME);
+
+        assert_eq!(
+            diff_panel_file_collapse_icon_class(DiffPanelFileType::New),
+            DIFF_PANEL_FILE_ADDITION_ICON_CLASS_NAME
+        );
+        assert_eq!(
+            diff_panel_file_collapse_icon_class(DiffPanelFileType::Deleted),
+            DIFF_PANEL_FILE_DELETION_ICON_CLASS_NAME
+        );
+        assert_eq!(
+            diff_panel_file_collapse_icon_class(DiffPanelFileType::Other),
+            DIFF_PANEL_FILE_FALLBACK_ICON_CLASS_NAME
+        );
     }
 
     #[test]
