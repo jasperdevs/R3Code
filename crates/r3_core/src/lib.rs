@@ -8517,6 +8517,10 @@ pub fn source_control_combined_auth_output(input: &SourceControlAuthProbeInput) 
         .join("\n")
 }
 
+pub fn source_control_detail_from_cause(cause: Option<&str>) -> Option<String> {
+    trimmed_optional_string(cause)
+}
+
 fn is_token_auth_line(line: &str) -> bool {
     let normalized = line
         .trim_start_matches(|character: char| character == '-' || character.is_whitespace())
@@ -8542,6 +8546,36 @@ pub fn source_control_first_safe_auth_line(text: &str) -> Option<String> {
     source_control_sanitized_auth_lines(text).into_iter().next()
 }
 
+fn source_control_cli_host_is_valid(host: &str) -> bool {
+    let Some(first) = host.chars().next() else {
+        return false;
+    };
+    if !first.is_ascii_alphanumeric() {
+        return false;
+    }
+
+    let mut parts = host.split(':');
+    let hostname = parts.next().unwrap_or_default();
+    let port = parts.next();
+    if parts.next().is_some() {
+        return false;
+    }
+    if hostname.is_empty()
+        || !hostname
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '.' | '-'))
+    {
+        return false;
+    }
+
+    match port {
+        Some(value) => {
+            !value.is_empty() && value.chars().all(|character| character.is_ascii_digit())
+        }
+        None => true,
+    }
+}
+
 pub fn source_control_parse_cli_host(text: &str) -> Option<String> {
     source_control_sanitized_auth_lines(text)
         .into_iter()
@@ -8549,16 +8583,7 @@ pub fn source_control_parse_cli_host(text: &str) -> Option<String> {
             line.trim_start_matches(|character: char| !character.is_ascii_alphanumeric())
                 .to_string()
         })
-        .find(|line| {
-            !line.is_empty()
-                && line.chars().all(|character| {
-                    character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | ':')
-                })
-                && line
-                    .chars()
-                    .next()
-                    .is_some_and(|character| character.is_ascii_alphanumeric())
-        })
+        .find(|line| source_control_cli_host_is_valid(line))
 }
 
 pub fn source_control_provider_probe_plan(
@@ -8919,7 +8944,7 @@ pub fn source_control_vcs_probe_missing_item(
         status: SourceControlDiscoveryStatus::Missing,
         version: None,
         install_hint: spec.install_hint.to_string(),
-        detail: trimmed_optional_string(detail),
+        detail: source_control_detail_from_cause(detail),
     }
 }
 
@@ -21335,6 +21360,12 @@ mod tests {
             "github.com\n- Token: gho_secret\n\nwarning\n"
         );
         assert_eq!(
+            source_control_detail_from_cause(Some("  spawn ENOENT  ")),
+            Some("spawn ENOENT".to_string())
+        );
+        assert_eq!(source_control_detail_from_cause(Some("   ")), None);
+        assert_eq!(source_control_detail_from_cause(None), None);
+        assert_eq!(
             source_control_sanitized_auth_lines(
                 "github.com\n- Token: gho_secret\n- Token scopes: repo\nLogged in"
             ),
@@ -21347,6 +21378,14 @@ mod tests {
         assert_eq!(
             source_control_parse_cli_host("! gitlab.example.com:8443\nLogged in"),
             Some("gitlab.example.com:8443".to_string())
+        );
+        assert_eq!(
+            source_control_parse_cli_host("gitlab.example.com:abc"),
+            None
+        );
+        assert_eq!(
+            source_control_parse_cli_host("gitlab.example.com:8443:extra"),
+            None
         );
 
         assert_eq!(
