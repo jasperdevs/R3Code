@@ -1434,6 +1434,14 @@ pub struct WebSocketRpcRoutePlan {
     pub provided_layers: Vec<&'static str>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WebSocketRpcSessionLifecyclePlan {
+    pub session_id: String,
+    pub acquire_effect: &'static str,
+    pub use_effect: &'static str,
+    pub release_effect: &'static str,
+}
+
 pub fn websocket_rpc_route_plan() -> WebSocketRpcRoutePlan {
     WebSocketRpcRoutePlan {
         method: "GET",
@@ -1458,6 +1466,15 @@ pub fn websocket_rpc_route_plan() -> WebSocketRpcRoutePlan {
             "VcsProjectConfig.layer",
             "VcsProcess.layer",
         ],
+    }
+}
+
+pub fn websocket_rpc_session_lifecycle_plan(session_id: &str) -> WebSocketRpcSessionLifecyclePlan {
+    WebSocketRpcSessionLifecyclePlan {
+        session_id: session_id.to_string(),
+        acquire_effect: "sessions.markConnected(session.sessionId)",
+        use_effect: "rpcWebSocketHttpEffect",
+        release_effect: "sessions.markDisconnected(session.sessionId)",
     }
 }
 
@@ -3301,6 +3318,16 @@ mod tests {
                     "VcsProjectConfig.layer",
                     "VcsProcess.layer",
                 ],
+            }
+        );
+
+        assert_eq!(
+            websocket_rpc_session_lifecycle_plan("session-1"),
+            WebSocketRpcSessionLifecyclePlan {
+                session_id: "session-1".to_string(),
+                acquire_effect: "sessions.markConnected(session.sessionId)",
+                use_effect: "rpcWebSocketHttpEffect",
+                release_effect: "sessions.markDisconnected(session.sessionId)",
             }
         );
 
