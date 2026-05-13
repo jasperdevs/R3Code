@@ -687,6 +687,91 @@ pub const CHAT_VIEW_COMPOSER_ISOLATE_CLASS_NAME: &str = "relative isolate";
 pub const CHAT_VIEW_COMPOSER_BANNER_STACK_CLASS_NAME: &str = "relative z-0";
 pub const CHAT_VIEW_COMPOSER_STACK_CLASS_NAME: &str = "relative z-10";
 
+pub const NO_ACTIVE_THREAD_SIDEBAR_INSET_CLASS_NAME: &str =
+    "h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground";
+pub const NO_ACTIVE_THREAD_ROOT_CLASS_NAME: &str =
+    "flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background";
+pub const NO_ACTIVE_THREAD_HEADER_BASE_CLASS_NAME: &str = "border-b border-border px-3 sm:px-5";
+pub const NO_ACTIVE_THREAD_HEADER_ELECTRON_CLASS_NAME: &str =
+    "drag-region flex h-[52px] items-center wco:h-[env(titlebar-area-height)]";
+pub const NO_ACTIVE_THREAD_HEADER_WEB_CLASS_NAME: &str = "py-2 sm:py-3";
+pub const NO_ACTIVE_THREAD_TITLEBAR_INSET_CLASS_NAME: &str =
+    "wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]";
+pub const NO_ACTIVE_THREAD_TITLE: &str = "No active thread";
+pub const NO_ACTIVE_THREAD_ELECTRON_TITLE_CLASS_NAME: &str = "text-xs text-muted-foreground/50";
+pub const NO_ACTIVE_THREAD_WEB_TITLE_CLASS_NAME: &str =
+    "text-sm font-medium text-foreground md:text-muted-foreground/60";
+pub const NO_ACTIVE_THREAD_SIDEBAR_TRIGGER_CLASS_NAME: &str = "size-7 shrink-0 md:hidden";
+pub const NO_ACTIVE_THREAD_EMPTY_CLASS_NAME: &str = "flex-1";
+pub const NO_ACTIVE_THREAD_EMPTY_CARD_CLASS_NAME: &str =
+    "w-full max-w-lg rounded-3xl border border-border/55 bg-card/20 px-8 py-12 shadow-sm/5";
+pub const NO_ACTIVE_THREAD_EMPTY_HEADER_CLASS_NAME: &str = "max-w-none";
+pub const NO_ACTIVE_THREAD_EMPTY_TITLE_CLASS_NAME: &str = "text-foreground text-xl";
+pub const NO_ACTIVE_THREAD_EMPTY_TITLE: &str = "Pick a thread to continue";
+pub const NO_ACTIVE_THREAD_EMPTY_DESCRIPTION_CLASS_NAME: &str =
+    "mt-2 text-sm text-muted-foreground/78";
+pub const NO_ACTIVE_THREAD_EMPTY_DESCRIPTION: &str =
+    "Select an existing thread or create a new one to get started.";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NoActiveThreadStateContract {
+    pub sidebar_inset_class_name: &'static str,
+    pub root_class_name: &'static str,
+    pub header_class_name: String,
+    pub title_class_name: String,
+    pub title: &'static str,
+    pub sidebar_trigger_class_name: Option<&'static str>,
+    pub empty_class_name: &'static str,
+    pub empty_card_class_name: &'static str,
+    pub empty_header_class_name: &'static str,
+    pub empty_title_class_name: &'static str,
+    pub empty_title: &'static str,
+    pub empty_description_class_name: &'static str,
+    pub empty_description: &'static str,
+}
+
+pub fn derive_no_active_thread_state_contract(is_electron: bool) -> NoActiveThreadStateContract {
+    let header_class_name = if is_electron {
+        join_class_names([
+            NO_ACTIVE_THREAD_HEADER_BASE_CLASS_NAME,
+            NO_ACTIVE_THREAD_HEADER_ELECTRON_CLASS_NAME,
+            "",
+        ])
+    } else {
+        join_class_names([
+            NO_ACTIVE_THREAD_HEADER_BASE_CLASS_NAME,
+            NO_ACTIVE_THREAD_HEADER_WEB_CLASS_NAME,
+            "",
+        ])
+    };
+    let title_class_name = if is_electron {
+        join_class_names([
+            NO_ACTIVE_THREAD_ELECTRON_TITLE_CLASS_NAME,
+            NO_ACTIVE_THREAD_TITLEBAR_INSET_CLASS_NAME,
+            "",
+        ])
+    } else {
+        NO_ACTIVE_THREAD_WEB_TITLE_CLASS_NAME.to_string()
+    };
+
+    NoActiveThreadStateContract {
+        sidebar_inset_class_name: NO_ACTIVE_THREAD_SIDEBAR_INSET_CLASS_NAME,
+        root_class_name: NO_ACTIVE_THREAD_ROOT_CLASS_NAME,
+        header_class_name,
+        title_class_name,
+        title: NO_ACTIVE_THREAD_TITLE,
+        sidebar_trigger_class_name: (!is_electron)
+            .then_some(NO_ACTIVE_THREAD_SIDEBAR_TRIGGER_CLASS_NAME),
+        empty_class_name: NO_ACTIVE_THREAD_EMPTY_CLASS_NAME,
+        empty_card_class_name: NO_ACTIVE_THREAD_EMPTY_CARD_CLASS_NAME,
+        empty_header_class_name: NO_ACTIVE_THREAD_EMPTY_HEADER_CLASS_NAME,
+        empty_title_class_name: NO_ACTIVE_THREAD_EMPTY_TITLE_CLASS_NAME,
+        empty_title: NO_ACTIVE_THREAD_EMPTY_TITLE,
+        empty_description_class_name: NO_ACTIVE_THREAD_EMPTY_DESCRIPTION_CLASS_NAME,
+        empty_description: NO_ACTIVE_THREAD_EMPTY_DESCRIPTION,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChatViewPlanSidebarPlacement {
     Hidden,
@@ -36410,6 +36495,59 @@ mod tests {
             ChatViewPlanSidebarPlacement::Sheet
         );
         assert!(electron_sheet.render_expanded_image_dialog);
+    }
+
+    #[test]
+    fn no_active_thread_state_contract_matches_upstream_component() {
+        let web = derive_no_active_thread_state_contract(false);
+        assert_eq!(
+            web.sidebar_inset_class_name,
+            "h-dvh min-h-0 overflow-hidden overscroll-y-none bg-background text-foreground"
+        );
+        assert_eq!(
+            web.root_class_name,
+            "flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background"
+        );
+        assert_eq!(
+            web.header_class_name,
+            "border-b border-border px-3 sm:px-5 py-2 sm:py-3"
+        );
+        assert_eq!(
+            web.sidebar_trigger_class_name,
+            Some("size-7 shrink-0 md:hidden")
+        );
+        assert_eq!(
+            web.title_class_name,
+            "text-sm font-medium text-foreground md:text-muted-foreground/60"
+        );
+        assert_eq!(web.title, "No active thread");
+        assert_eq!(web.empty_class_name, "flex-1");
+        assert_eq!(
+            web.empty_card_class_name,
+            "w-full max-w-lg rounded-3xl border border-border/55 bg-card/20 px-8 py-12 shadow-sm/5"
+        );
+        assert_eq!(web.empty_header_class_name, "max-w-none");
+        assert_eq!(web.empty_title_class_name, "text-foreground text-xl");
+        assert_eq!(web.empty_title, "Pick a thread to continue");
+        assert_eq!(
+            web.empty_description_class_name,
+            "mt-2 text-sm text-muted-foreground/78"
+        );
+        assert_eq!(
+            web.empty_description,
+            "Select an existing thread or create a new one to get started."
+        );
+
+        let electron = derive_no_active_thread_state_contract(true);
+        assert_eq!(
+            electron.header_class_name,
+            "border-b border-border px-3 sm:px-5 drag-region flex h-[52px] items-center wco:h-[env(titlebar-area-height)]"
+        );
+        assert_eq!(
+            electron.title_class_name,
+            "text-xs text-muted-foreground/50 wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]"
+        );
+        assert_eq!(electron.sidebar_trigger_class_name, None);
     }
 
     #[test]

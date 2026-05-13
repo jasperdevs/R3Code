@@ -753,7 +753,7 @@ impl R3Shell {
         let toolbar_title = if renders_chat_view {
             self.snapshot.active_thread_title().to_string()
         } else {
-            "No active thread".to_string()
+            r3_core::NO_ACTIVE_THREAD_TITLE.to_string()
         };
         let project_name = self
             .snapshot
@@ -861,26 +861,33 @@ impl R3Shell {
                         .flex_col()
                         .items_center()
                         .justify_center()
-                        .rounded(px(18.0))
+                        .text_align(TextAlign::Center)
+                        .rounded(px(24.0))
                         .border_1()
-                        .border_color(self.theme.border)
-                        .bg(self.theme.background)
+                        .border_color(self.theme.border.opacity(0.55))
+                        .bg(self.theme.card.opacity(0.20))
                         .w(px(512.0))
-                        .h(px(151.0))
+                        .px_8()
+                        .py(px(48.0))
+                        .shadow(vec![BoxShadow {
+                            color: hsla(0.0, 0.0, 0.0, 0.05),
+                            offset: point(px(0.0), px(1.0)),
+                            blur_radius: px(2.0),
+                            spread_radius: px(0.0),
+                        }])
                         .child(
                             div()
                                 .text_size(px(20.0))
-                                .font_weight(FontWeight(700.0))
-                                .child("Pick a thread to continue"),
+                                .font_weight(FontWeight(600.0))
+                                .text_color(self.theme.foreground)
+                                .child(r3_core::NO_ACTIVE_THREAD_EMPTY_TITLE),
                         )
                         .child(
                             div()
-                                .mt_3()
+                                .mt_2()
                                 .text_size(px(14.0))
-                                .text_color(self.theme.muted_foreground)
-                                .child(
-                                    "Select an existing thread or create a new one to get started.",
-                                ),
+                                .text_color(self.theme.muted_foreground.opacity(0.78))
+                                .child(r3_core::NO_ACTIVE_THREAD_EMPTY_DESCRIPTION),
                         ),
                 )
                 .into_any_element();

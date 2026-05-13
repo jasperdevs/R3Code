@@ -12,8 +12,8 @@ Do not edit individual rows by hand; update `crates/xtask/src/main.rs` classific
 
 | Status | Files |
 | --- | ---: |
-| `covered` | 2 |
-| `partial` | 997 |
+| `covered` | 3 |
+| `partial` | 996 |
 
 ## Files
 
@@ -540,7 +540,7 @@ Do not edit individual rows by hand; update `crates/xtask/src/main.rs` classific
 | `apps/web/src/components/Icons.tsx` | provider/editor/model icon export list, SVG viewBox contracts, generated gradient/mask/clip/filter IDs, theme fill classes, Antigravity data-url image usage, native asset coverage map, and live editor/provider icon call sites in crates/r3_core/src/lib.rs, crates/r3_ui/src/shell.rs, and crates/r3_ui/assets/icons | `covered` | `cargo test --workspace upstream_icon_contracts_match_web_components` | Maintain asset parity when upstream adds or changes shared web icon exports. |
 | `apps/web/src/components/JetBrainsIcons.tsx` | JetBrains icon export list, shared useSvgGradientIds prefix/count contract, 64x64 viewBox, black tile path/fill, white glyph fill, native SVG asset paths, and editor icon call sites in crates/r3_core/src/lib.rs, crates/r3_ui/src/shell.rs, and crates/r3_ui/assets/icons | `covered` | `cargo test --workspace upstream_jetbrains_icon_contracts_match_shared_helper` | Maintain asset parity when upstream adds or changes JetBrains product SVG exports. |
 | `apps/web/src/components/KeybindingsToast.browser.tsx` | crates/r3_core/src/lib.rs; crates/r3_ui/src/shell.rs | `partial` | `cargo test --workspace`; current screenshot gates where captured | Replace seeded/static state with live GPUI state and port remaining component behavior. |
-| `apps/web/src/components/NoActiveThreadState.tsx` | crates/r3_core/src/lib.rs; crates/r3_ui/src/shell.rs | `partial` | `cargo test --workspace`; current screenshot gates where captured | Replace seeded/static state with live GPUI state and port remaining component behavior. |
+| `apps/web/src/components/NoActiveThreadState.tsx` | NoActiveThreadState header/electron/web classes, title copy, empty/card/header/title/description classes, and live GPUI empty-state styling in crates/r3_core/src/lib.rs and crates/r3_ui/src/shell.rs | `covered` | `cargo test --workspace no_active_thread_state_contract_matches_upstream_component`; current screenshot gates where captured | Maintain this contract if upstream changes the no-active-thread empty state. |
 | `apps/web/src/components/PlanSidebar.tsx` | crates/r3_core/src/lib.rs; crates/r3_ui/src/shell.rs | `partial` | `cargo test --workspace`; current screenshot gates where captured | Replace seeded/static state with live GPUI state and port remaining component behavior. |
 | `apps/web/src/components/ProjectFavicon.tsx` | crates/r3_core/src/lib.rs; crates/r3_ui/src/shell.rs | `partial` | `cargo test --workspace`; current screenshot gates where captured | Replace seeded/static state with live GPUI state and port remaining component behavior. |
 | `apps/web/src/components/ProjectScriptsControl.tsx` | crates/r3_core/src/lib.rs; crates/r3_ui/src/shell.rs | `partial` | `cargo test --workspace`; current screenshot gates where captured | Replace seeded/static state with live GPUI state and port remaining component behavior. |

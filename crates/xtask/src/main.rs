@@ -2722,6 +2722,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace sidebar_interactive_cursor_classes_match_upstream_contract`",
             "Wire any remaining sidebar primitive sizing, tooltip, hover, rail, input, skeleton, badge, and exact GPUI style states.",
         )
+    } else if path == "apps/web/src/components/NoActiveThreadState.tsx" {
+        (
+            "NoActiveThreadState header/electron/web classes, title copy, empty/card/header/title/description classes, and live GPUI empty-state styling in crates/r3_core/src/lib.rs and crates/r3_ui/src/shell.rs",
+            "covered",
+            "`cargo test --workspace no_active_thread_state_contract_matches_upstream_component`; current screenshot gates where captured",
+            "Maintain this contract if upstream changes the no-active-thread empty state.",
+        )
     } else if path.starts_with("apps/web/src/components/")
         || path.starts_with("apps/web/src/composer")
         || path.starts_with("apps/web/src/diff")
