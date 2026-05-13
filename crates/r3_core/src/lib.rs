@@ -16870,6 +16870,250 @@ pub fn get_command_palette_input_placeholder(mode: CommandPaletteMode) -> &'stat
     }
 }
 
+pub const COMMAND_PALETTE_POPUP_ARIA_LABEL: &str = "Command palette";
+pub const COMMAND_PALETTE_POPUP_CLASS_NAME: &str = "overflow-hidden p-0";
+pub const COMMAND_PALETTE_TEST_ID: &str = "command-palette";
+pub const COMMAND_PALETTE_COMMAND_MODE: &str = "none";
+pub const COMMAND_PALETTE_INPUT_CONTAINER_CLASS_NAME: &str = "relative";
+pub const COMMAND_PALETTE_INPUT_REPOSITORY_CLASS_NAME: &str = "pe-32";
+pub const COMMAND_PALETTE_INPUT_BROWSE_CREATE_CLASS_NAME: &str = "pe-36";
+pub const COMMAND_PALETTE_INPUT_BROWSE_CLASS_NAME: &str = "pe-16";
+pub const COMMAND_PALETTE_INPUT_SUBMENU_WRAPPER_CLASS_NAME: &str =
+    "[&_[data-slot=autocomplete-start-addon]]:pointer-events-auto";
+pub const COMMAND_PALETTE_BACK_BUTTON_CLASS_NAME: &str = "flex cursor-pointer items-center";
+pub const COMMAND_PALETTE_BACK_BUTTON_ARIA_LABEL: &str = "Back";
+pub const COMMAND_PALETTE_PANEL_CLASS_NAME: &str = "max-h-[min(28rem,70vh)]";
+pub const COMMAND_PALETTE_REPOSITORY_LABEL: &str = "Repository";
+pub const COMMAND_PALETTE_REPOSITORY_LABEL_CLASS_NAME: &str =
+    "px-2 py-1.5 font-medium text-muted-foreground text-xs";
+pub const COMMAND_PALETTE_REPOSITORY_CONTEXT_WRAPPER_CLASS_NAME: &str = "p-2 pb-0";
+pub const COMMAND_PALETTE_REPOSITORY_ROW_CLASS_NAME: &str =
+    "flex min-h-8 items-center gap-2 rounded-sm px-2 py-1.5";
+pub const COMMAND_PALETTE_REPOSITORY_TITLE_CLASS_NAME: &str = "truncate text-foreground text-sm";
+pub const COMMAND_PALETTE_REPOSITORY_DESCRIPTION_CLASS_NAME: &str =
+    "truncate text-muted-foreground/70 text-xs";
+pub const COMMAND_PALETTE_FOOTER_CLASS_NAME: &str = "gap-3 max-sm:flex-col max-sm:items-start";
+pub const COMMAND_PALETTE_FOOTER_KEYS_CLASS_NAME: &str = "flex items-center gap-3";
+pub const COMMAND_PALETTE_FOOTER_KBD_GROUP_CLASS_NAME: &str = "items-center gap-1.5";
+pub const COMMAND_PALETTE_FOOTER_TEXT_CLASS_NAME: &str = "text-muted-foreground/80";
+pub const COMMAND_PALETTE_FILE_MANAGER_BUTTON_CLASS_NAME: &str =
+    "h-auto px-2 text-xs text-muted-foreground/80 hover:bg-transparent hover:text-foreground";
+
+pub const COMMAND_PALETTE_RESULTS_EMPTY_CLASS_NAME: &str =
+    "py-10 text-center text-sm text-muted-foreground";
+pub const COMMAND_PALETTE_RESULTS_EMPTY_ACTIONS_LABEL: &str = "No matching actions.";
+pub const COMMAND_PALETTE_RESULTS_EMPTY_DEFAULT_LABEL: &str =
+    "No matching commands, projects, or threads.";
+pub const COMMAND_PALETTE_DISABLED_ROW_CLASS_NAME: &str = "flex min-h-8 select-none items-center gap-2 rounded-sm px-2 py-1.5 text-base opacity-64 sm:min-h-7 sm:text-sm";
+pub const COMMAND_PALETTE_RESULT_ROW_BASE_CLASS_NAME: &str = "cursor-pointer gap-2 hover:bg-transparent hover:text-inherit data-highlighted:bg-transparent data-highlighted:text-inherit data-selected:bg-transparent data-selected:text-inherit [&[data-highlighted][data-selected]]:bg-transparent [&[data-highlighted][data-selected]]:text-inherit";
+pub const COMMAND_PALETTE_RESULT_ROW_ACTIVE_CLASS_NAME: &str = "bg-accent! text-accent-foreground!";
+pub const COMMAND_PALETTE_ITEM_BODY_CLASS_NAME: &str = "flex min-w-0 flex-1 flex-col";
+pub const COMMAND_PALETTE_ITEM_TITLE_WITH_DESCRIPTION_CLASS_NAME: &str =
+    "flex min-w-0 items-center gap-1.5 text-sm text-foreground";
+pub const COMMAND_PALETTE_ITEM_DESCRIPTION_CLASS_NAME: &str =
+    "truncate text-muted-foreground/70 text-xs";
+pub const COMMAND_PALETTE_ITEM_TITLE_CLASS_NAME: &str =
+    "flex min-w-0 flex-1 items-center gap-1.5 text-sm text-foreground";
+pub const COMMAND_PALETTE_ITEM_TRUNCATE_CLASS_NAME: &str = "truncate";
+pub const COMMAND_PALETTE_ITEM_TIMESTAMP_CLASS_NAME: &str =
+    "min-w-12 shrink-0 text-right text-[10px] tabular-nums text-muted-foreground/70";
+pub const COMMAND_PALETTE_SUBMENU_CHEVRON_CLASS_NAME: &str =
+    "ml-auto size-4 shrink-0 text-muted-foreground/50";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandPaletteCloneFlowStep {
+    Repository,
+    Confirm,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandPaletteShellContract {
+    pub popup_aria_label: &'static str,
+    pub popup_class_name: &'static str,
+    pub test_id: &'static str,
+    pub command_aria_label: &'static str,
+    pub command_mode: &'static str,
+    pub auto_highlight: bool,
+    pub input_container_class_name: &'static str,
+    pub input_class_name: Option<&'static str>,
+    pub input_wrapper_class_name: Option<&'static str>,
+    pub start_addon: Option<&'static str>,
+    pub panel_class_name: &'static str,
+    pub show_repository_context: bool,
+    pub repository_label: Option<&'static str>,
+    pub repository_label_class_name: Option<&'static str>,
+    pub repository_context_wrapper_class_name: Option<&'static str>,
+    pub repository_row_class_name: Option<&'static str>,
+    pub footer_class_name: &'static str,
+    pub footer_keys_class_name: &'static str,
+    pub footer_kbd_group_class_name: &'static str,
+    pub footer_text_class_name: &'static str,
+    pub footer_labels: Vec<String>,
+    pub file_manager_button_class_name: Option<&'static str>,
+    pub file_manager_button_label: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandPaletteResultsContract {
+    pub empty_class_name: Option<&'static str>,
+    pub empty_message: Option<String>,
+    pub disabled_row_class_name: &'static str,
+    pub result_row_class_name: String,
+    pub item_body_class_name: Option<&'static str>,
+    pub item_title_class_name: &'static str,
+    pub item_description_class_name: Option<&'static str>,
+    pub item_truncate_class_name: &'static str,
+    pub timestamp_class_name: Option<&'static str>,
+    pub shortcut_visible: bool,
+    pub submenu_chevron_class_name: Option<&'static str>,
+}
+
+pub fn derive_command_palette_shell_contract(
+    palette_mode: CommandPaletteMode,
+    clone_flow_step: Option<CommandPaletteCloneFlowStep>,
+    is_browsing: bool,
+    is_remote_project_clone_flow: bool,
+    will_create_project_path: bool,
+    has_highlighted_browse_item: bool,
+    can_submit_browse_path: bool,
+    remote_project_button_label: Option<&str>,
+    can_open_project_from_file_manager: bool,
+    file_manager_name: Option<&str>,
+) -> CommandPaletteShellContract {
+    let is_submenu = matches!(
+        palette_mode,
+        CommandPaletteMode::Submenu | CommandPaletteMode::SubmenuBrowse
+    );
+    let input_class_name = match clone_flow_step {
+        Some(CommandPaletteCloneFlowStep::Repository) => {
+            Some(COMMAND_PALETTE_INPUT_REPOSITORY_CLASS_NAME)
+        }
+        _ if is_browsing && will_create_project_path => {
+            Some(COMMAND_PALETTE_INPUT_BROWSE_CREATE_CLASS_NAME)
+        }
+        _ if is_browsing => Some(COMMAND_PALETTE_INPUT_BROWSE_CLASS_NAME),
+        _ => None,
+    };
+    let mut footer_labels = vec!["Navigate".to_string()];
+    if clone_flow_step == Some(CommandPaletteCloneFlowStep::Repository) {
+        footer_labels.push(
+            remote_project_button_label
+                .filter(|label| !label.is_empty())
+                .unwrap_or("Continue")
+                .to_string(),
+        );
+    } else if !can_submit_browse_path || has_highlighted_browse_item {
+        footer_labels.push("Select".to_string());
+    }
+    if is_submenu {
+        footer_labels.push("Back".to_string());
+    }
+    footer_labels.push("Close".to_string());
+
+    CommandPaletteShellContract {
+        popup_aria_label: COMMAND_PALETTE_POPUP_ARIA_LABEL,
+        popup_class_name: COMMAND_PALETTE_POPUP_CLASS_NAME,
+        test_id: COMMAND_PALETTE_TEST_ID,
+        command_aria_label: COMMAND_PALETTE_POPUP_ARIA_LABEL,
+        command_mode: COMMAND_PALETTE_COMMAND_MODE,
+        auto_highlight: !(is_browsing || is_remote_project_clone_flow),
+        input_container_class_name: COMMAND_PALETTE_INPUT_CONTAINER_CLASS_NAME,
+        input_class_name,
+        input_wrapper_class_name: is_submenu
+            .then_some(COMMAND_PALETTE_INPUT_SUBMENU_WRAPPER_CLASS_NAME),
+        start_addon: if is_submenu {
+            Some("ArrowLeftIcon")
+        } else if is_browsing {
+            Some("FolderPlusIcon")
+        } else {
+            None
+        },
+        panel_class_name: COMMAND_PALETTE_PANEL_CLASS_NAME,
+        show_repository_context: clone_flow_step == Some(CommandPaletteCloneFlowStep::Confirm),
+        repository_label: (clone_flow_step == Some(CommandPaletteCloneFlowStep::Confirm))
+            .then_some(COMMAND_PALETTE_REPOSITORY_LABEL),
+        repository_label_class_name: (clone_flow_step
+            == Some(CommandPaletteCloneFlowStep::Confirm))
+        .then_some(COMMAND_PALETTE_REPOSITORY_LABEL_CLASS_NAME),
+        repository_context_wrapper_class_name: (clone_flow_step
+            == Some(CommandPaletteCloneFlowStep::Confirm))
+        .then_some(COMMAND_PALETTE_REPOSITORY_CONTEXT_WRAPPER_CLASS_NAME),
+        repository_row_class_name: (clone_flow_step == Some(CommandPaletteCloneFlowStep::Confirm))
+            .then_some(COMMAND_PALETTE_REPOSITORY_ROW_CLASS_NAME),
+        footer_class_name: COMMAND_PALETTE_FOOTER_CLASS_NAME,
+        footer_keys_class_name: COMMAND_PALETTE_FOOTER_KEYS_CLASS_NAME,
+        footer_kbd_group_class_name: COMMAND_PALETTE_FOOTER_KBD_GROUP_CLASS_NAME,
+        footer_text_class_name: COMMAND_PALETTE_FOOTER_TEXT_CLASS_NAME,
+        footer_labels,
+        file_manager_button_class_name: can_open_project_from_file_manager
+            .then_some(COMMAND_PALETTE_FILE_MANAGER_BUTTON_CLASS_NAME),
+        file_manager_button_label: can_open_project_from_file_manager.then(|| {
+            format!(
+                "Open in {}",
+                file_manager_name
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or("Files")
+            )
+        }),
+    }
+}
+
+pub fn derive_command_palette_results_contract(
+    group_count: usize,
+    is_actions_only: bool,
+    empty_state_message: Option<&str>,
+    item_disabled: bool,
+    item_active: bool,
+    item_has_description: bool,
+    item_has_timestamp: bool,
+    item_has_shortcut: bool,
+    item_is_submenu: bool,
+) -> CommandPaletteResultsContract {
+    let empty_message = (group_count == 0).then(|| {
+        empty_state_message
+            .unwrap_or(if is_actions_only {
+                COMMAND_PALETTE_RESULTS_EMPTY_ACTIONS_LABEL
+            } else {
+                COMMAND_PALETTE_RESULTS_EMPTY_DEFAULT_LABEL
+            })
+            .to_string()
+    });
+    let result_row_class_name = if item_active {
+        format!(
+            "{} {}",
+            COMMAND_PALETTE_RESULT_ROW_BASE_CLASS_NAME,
+            COMMAND_PALETTE_RESULT_ROW_ACTIVE_CLASS_NAME
+        )
+    } else {
+        COMMAND_PALETTE_RESULT_ROW_BASE_CLASS_NAME.to_string()
+    };
+
+    CommandPaletteResultsContract {
+        empty_class_name: (group_count == 0).then_some(COMMAND_PALETTE_RESULTS_EMPTY_CLASS_NAME),
+        empty_message,
+        disabled_row_class_name: COMMAND_PALETTE_DISABLED_ROW_CLASS_NAME,
+        result_row_class_name: if item_disabled {
+            COMMAND_PALETTE_DISABLED_ROW_CLASS_NAME.to_string()
+        } else {
+            result_row_class_name
+        },
+        item_body_class_name: item_has_description.then_some(COMMAND_PALETTE_ITEM_BODY_CLASS_NAME),
+        item_title_class_name: if item_has_description {
+            COMMAND_PALETTE_ITEM_TITLE_WITH_DESCRIPTION_CLASS_NAME
+        } else {
+            COMMAND_PALETTE_ITEM_TITLE_CLASS_NAME
+        },
+        item_description_class_name: item_has_description
+            .then_some(COMMAND_PALETTE_ITEM_DESCRIPTION_CLASS_NAME),
+        item_truncate_class_name: COMMAND_PALETTE_ITEM_TRUNCATE_CLASS_NAME,
+        timestamp_class_name: item_has_timestamp
+            .then_some(COMMAND_PALETTE_ITEM_TIMESTAMP_CLASS_NAME),
+        shortcut_visible: item_has_shortcut,
+        submenu_chevron_class_name: item_is_submenu
+            .then_some(COMMAND_PALETTE_SUBMENU_CHEVRON_CLASS_NAME),
+    }
+}
+
 fn get_thread_sort_timestamp(thread: &ThreadSummary, sort_order: SidebarThreadSortOrder) -> i64 {
     if sort_order == SidebarThreadSortOrder::CreatedAt {
         return iso_utc_timestamp_seconds(&thread.created_at).unwrap_or(i64::MIN);
@@ -35008,6 +35252,183 @@ mod tests {
         assert_eq!(snapshot.active_header_project_name(), Some("r3code"));
         assert!(snapshot.active_header_project().is_some());
         assert!(snapshot.turn_diff_summaries.is_empty());
+    }
+
+    #[test]
+    fn command_palette_render_contracts_match_upstream_components() {
+        let root = derive_command_palette_shell_contract(
+            CommandPaletteMode::Root,
+            None,
+            false,
+            false,
+            false,
+            false,
+            false,
+            None,
+            false,
+            None,
+        );
+        assert_eq!(root.popup_aria_label, "Command palette");
+        assert_eq!(root.popup_class_name, COMMAND_PALETTE_POPUP_CLASS_NAME);
+        assert_eq!(root.test_id, COMMAND_PALETTE_TEST_ID);
+        assert_eq!(root.command_mode, COMMAND_PALETTE_COMMAND_MODE);
+        assert!(root.auto_highlight);
+        assert_eq!(
+            root.input_container_class_name,
+            COMMAND_PALETTE_INPUT_CONTAINER_CLASS_NAME
+        );
+        assert_eq!(root.input_class_name, None);
+        assert_eq!(root.input_wrapper_class_name, None);
+        assert_eq!(root.start_addon, None);
+        assert_eq!(root.panel_class_name, COMMAND_PALETTE_PANEL_CLASS_NAME);
+        assert_eq!(root.footer_class_name, COMMAND_PALETTE_FOOTER_CLASS_NAME);
+        assert_eq!(root.footer_labels, vec!["Navigate", "Select", "Close"]);
+        assert_eq!(root.file_manager_button_label, None);
+
+        let submenu_browse = derive_command_palette_shell_contract(
+            CommandPaletteMode::SubmenuBrowse,
+            None,
+            true,
+            false,
+            true,
+            true,
+            true,
+            None,
+            true,
+            Some("Finder"),
+        );
+        assert!(!submenu_browse.auto_highlight);
+        assert_eq!(
+            submenu_browse.input_class_name,
+            Some(COMMAND_PALETTE_INPUT_BROWSE_CREATE_CLASS_NAME)
+        );
+        assert_eq!(
+            submenu_browse.input_wrapper_class_name,
+            Some(COMMAND_PALETTE_INPUT_SUBMENU_WRAPPER_CLASS_NAME)
+        );
+        assert_eq!(submenu_browse.start_addon, Some("ArrowLeftIcon"));
+        assert_eq!(
+            submenu_browse.footer_labels,
+            vec!["Navigate", "Select", "Back", "Close"]
+        );
+        assert_eq!(
+            submenu_browse.file_manager_button_class_name,
+            Some(COMMAND_PALETTE_FILE_MANAGER_BUTTON_CLASS_NAME)
+        );
+        assert_eq!(
+            submenu_browse.file_manager_button_label,
+            Some("Open in Finder".to_string())
+        );
+
+        let repository = derive_command_palette_shell_contract(
+            CommandPaletteMode::RootBrowse,
+            Some(CommandPaletteCloneFlowStep::Repository),
+            true,
+            true,
+            false,
+            false,
+            true,
+            Some("Lookup"),
+            false,
+            None,
+        );
+        assert_eq!(
+            repository.input_class_name,
+            Some(COMMAND_PALETTE_INPUT_REPOSITORY_CLASS_NAME)
+        );
+        assert!(!repository.auto_highlight);
+        assert_eq!(
+            repository.footer_labels,
+            vec!["Navigate", "Lookup", "Close"]
+        );
+        assert!(!repository.show_repository_context);
+
+        let confirm = derive_command_palette_shell_contract(
+            CommandPaletteMode::RootBrowse,
+            Some(CommandPaletteCloneFlowStep::Confirm),
+            true,
+            true,
+            false,
+            false,
+            true,
+            None,
+            false,
+            None,
+        );
+        assert!(confirm.show_repository_context);
+        assert_eq!(
+            confirm.repository_label,
+            Some(COMMAND_PALETTE_REPOSITORY_LABEL)
+        );
+        assert_eq!(
+            confirm.repository_label_class_name,
+            Some(COMMAND_PALETTE_REPOSITORY_LABEL_CLASS_NAME)
+        );
+        assert_eq!(
+            confirm.repository_context_wrapper_class_name,
+            Some(COMMAND_PALETTE_REPOSITORY_CONTEXT_WRAPPER_CLASS_NAME)
+        );
+        assert_eq!(
+            confirm.repository_row_class_name,
+            Some(COMMAND_PALETTE_REPOSITORY_ROW_CLASS_NAME)
+        );
+
+        let empty_actions = derive_command_palette_results_contract(
+            0, true, None, false, false, false, false, false, false,
+        );
+        assert_eq!(
+            empty_actions.empty_class_name,
+            Some(COMMAND_PALETTE_RESULTS_EMPTY_CLASS_NAME)
+        );
+        assert_eq!(
+            empty_actions.empty_message,
+            Some("No matching actions.".to_string())
+        );
+
+        let active_submenu_row = derive_command_palette_results_contract(
+            1, false, None, false, true, true, true, true, true,
+        );
+        assert_eq!(
+            active_submenu_row.result_row_class_name,
+            format!(
+                "{} {}",
+                COMMAND_PALETTE_RESULT_ROW_BASE_CLASS_NAME,
+                COMMAND_PALETTE_RESULT_ROW_ACTIVE_CLASS_NAME
+            )
+        );
+        assert_eq!(
+            active_submenu_row.item_body_class_name,
+            Some(COMMAND_PALETTE_ITEM_BODY_CLASS_NAME)
+        );
+        assert_eq!(
+            active_submenu_row.item_title_class_name,
+            COMMAND_PALETTE_ITEM_TITLE_WITH_DESCRIPTION_CLASS_NAME
+        );
+        assert_eq!(
+            active_submenu_row.item_description_class_name,
+            Some(COMMAND_PALETTE_ITEM_DESCRIPTION_CLASS_NAME)
+        );
+        assert_eq!(
+            active_submenu_row.timestamp_class_name,
+            Some(COMMAND_PALETTE_ITEM_TIMESTAMP_CLASS_NAME)
+        );
+        assert!(active_submenu_row.shortcut_visible);
+        assert_eq!(
+            active_submenu_row.submenu_chevron_class_name,
+            Some(COMMAND_PALETTE_SUBMENU_CHEVRON_CLASS_NAME)
+        );
+
+        let disabled = derive_command_palette_results_contract(
+            1, false, None, true, true, false, false, false, false,
+        );
+        assert_eq!(
+            disabled.result_row_class_name,
+            COMMAND_PALETTE_DISABLED_ROW_CLASS_NAME
+        );
+        assert_eq!(
+            disabled.item_title_class_name,
+            COMMAND_PALETTE_ITEM_TITLE_CLASS_NAME
+        );
     }
 
     #[test]

@@ -2523,6 +2523,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace command_palette_builds_recent_threads_with_upstream_sort_and_timestamp_rules`; `cargo test --workspace command_palette_search_ranks_titles_over_context_and_filters_archived_threads`; `cargo test --workspace command_palette_filters_action_only_queries_and_injects_projects_and_threads`; `cargo test --workspace command_palette_store_transitions_match_upstream_zustand_logic`",
             "Wire live GPUI command palette keyboard handling, async data refresh, project creation flow, and exact list rendering.",
         )
+    } else if path == "apps/web/src/components/CommandPalette.tsx"
+        || path == "apps/web/src/components/CommandPaletteResults.tsx"
+    {
+        (
+            "CommandPalette popup/input/panel/footer shell contracts, add-project repository/confirm states, file-manager action, results empty states, row classes, disabled/active row behavior, timestamp, shortcut, and submenu-chevron rendering in crates/r3_core/src/lib.rs and crates/r3_ui/src/shell.rs",
+            "partial",
+            "`cargo test --workspace command_palette_render_contracts_match_upstream_components`; `cargo test --workspace command_palette_filters_action_only_queries_and_injects_projects_and_threads`",
+            "Wire exact GPUI command primitives, browser keyboard/focus behavior, add-project browse/clone flows, source-control lookup, and live row rendering parity.",
+        )
     } else if path == "apps/web/src/components/GitActionsControl.logic.test.ts"
         || path == "apps/web/src/components/GitActionsControl.logic.ts"
     {
