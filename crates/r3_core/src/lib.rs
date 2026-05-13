@@ -4226,6 +4226,42 @@ pub struct ModelSelectionSettings {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextMenuFallbackItem {
+    pub id: String,
+    pub label: String,
+    pub destructive: bool,
+    pub disabled: bool,
+    pub children: Vec<ContextMenuFallbackItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextMenuFallbackButtonPlan {
+    pub id: String,
+    pub label: String,
+    pub has_children: bool,
+    pub is_leaf_destructive: bool,
+    pub is_disabled: bool,
+    pub class_name: &'static str,
+    pub label_class_name: &'static str,
+    pub chevron_text: Option<&'static str>,
+    pub chevron_class_name: Option<&'static str>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ContextMenuFallbackRect {
+    pub left: f64,
+    pub top: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ContextMenuFallbackPosition {
+    pub left: f64,
+    pub top: f64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelPickerState {
     pub active_entry: Option<ProviderInstanceEntry>,
     pub trigger_title: String,
@@ -7772,6 +7808,78 @@ pub fn resolve_app_model_selection_state(
         &model,
         Vec::new(),
     )
+}
+
+pub fn clamp_context_menu_fallback_position(
+    viewport_width: f64,
+    viewport_height: f64,
+    menu_width: f64,
+    menu_height: f64,
+    preferred_left: f64,
+    preferred_top: f64,
+) -> ContextMenuFallbackPosition {
+    let max_left = (viewport_width - menu_width - 4.0).max(4.0);
+    let max_top = (viewport_height - menu_height - 4.0).max(4.0);
+    ContextMenuFallbackPosition {
+        left: preferred_left.max(4.0).min(max_left),
+        top: preferred_top.max(4.0).min(max_top),
+    }
+}
+
+pub fn context_menu_fallback_button_plan(
+    item: &ContextMenuFallbackItem,
+) -> ContextMenuFallbackButtonPlan {
+    let has_children = !item.children.is_empty();
+    let is_leaf_destructive = !has_children && (item.destructive || item.id == "delete");
+    let class_name = if item.disabled {
+        "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-muted-foreground/60 cursor-not-allowed"
+    } else if is_leaf_destructive {
+        "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-destructive hover:bg-accent cursor-default"
+    } else {
+        "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-popover-foreground hover:bg-accent cursor-default"
+    };
+
+    ContextMenuFallbackButtonPlan {
+        id: item.id.clone(),
+        label: item.label.clone(),
+        has_children,
+        is_leaf_destructive,
+        is_disabled: item.disabled,
+        class_name,
+        label_class_name: "min-w-0 flex-1 truncate",
+        chevron_text: has_children.then_some("›"),
+        chevron_class_name: has_children.then_some("shrink-0 text-muted-foreground/70"),
+    }
+}
+
+pub fn context_menu_fallback_button_plans(
+    items: &[ContextMenuFallbackItem],
+) -> Vec<ContextMenuFallbackButtonPlan> {
+    items
+        .iter()
+        .map(context_menu_fallback_button_plan)
+        .collect()
+}
+
+pub fn context_menu_fallback_click_result(item: &ContextMenuFallbackItem) -> Option<String> {
+    if item.disabled || !item.children.is_empty() {
+        None
+    } else {
+        Some(item.id.clone())
+    }
+}
+
+pub fn context_menu_fallback_submenu_preferred_position(
+    parent_button: ContextMenuFallbackRect,
+    child_menu: ContextMenuFallbackRect,
+    viewport_width: f64,
+) -> ContextMenuFallbackPosition {
+    let mut left = parent_button.left + parent_button.width + 4.0;
+    let top = parent_button.top;
+    if left + child_menu.width > viewport_width {
+        left = parent_button.left - child_menu.width - 4.0;
+    }
+    ContextMenuFallbackPosition { left, top }
 }
 
 fn matches_locked_provider(
@@ -31519,6 +31627,90 @@ mod tests {
     }
 
     #[test]
+    fn context_menu_fallback_helpers_match_upstream_contract() {
+        let items = vec![
+            context_menu_item("rename", "Rename", |item| item),
+            context_menu_item("delete", "Delete", |mut item| {
+                item.destructive = true;
+                item
+            }),
+            context_menu_item("disabled", "Disabled", |mut item| {
+                item.disabled = true;
+                item
+            }),
+            context_menu_item("rename:submenu", "Rename project", |mut item| {
+                item.children = vec![
+                    context_menu_item("rename:project-a", "/tmp/project-a", |child| child),
+                    context_menu_item("rename:project-b", "/tmp/project-b", |child| child),
+                ];
+                item
+            }),
+        ];
+
+        let plans = context_menu_fallback_button_plans(&items);
+        assert_eq!(plans[0].label, "Rename");
+        assert_eq!(
+            plans[0].class_name,
+            "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-popover-foreground hover:bg-accent cursor-default"
+        );
+        assert_eq!(
+            context_menu_fallback_click_result(&items[0]).as_deref(),
+            Some("rename")
+        );
+        assert!(plans[1].is_leaf_destructive);
+        assert_eq!(
+            plans[1].class_name,
+            "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-destructive hover:bg-accent cursor-default"
+        );
+        assert!(plans[2].is_disabled);
+        assert_eq!(
+            plans[2].class_name,
+            "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-muted-foreground/60 cursor-not-allowed"
+        );
+        assert_eq!(context_menu_fallback_click_result(&items[2]), None);
+        assert!(plans[3].has_children);
+        assert_eq!(plans[3].chevron_text, Some("›"));
+        assert_eq!(
+            plans[3].chevron_class_name,
+            Some("shrink-0 text-muted-foreground/70")
+        );
+        assert_eq!(context_menu_fallback_click_result(&items[3]), None);
+        assert_eq!(
+            context_menu_fallback_click_result(&items[3].children[1]).as_deref(),
+            Some("rename:project-b")
+        );
+
+        assert_eq!(
+            clamp_context_menu_fallback_position(1280.0, 800.0, 180.0, 120.0, -20.0, 900.0),
+            ContextMenuFallbackPosition {
+                left: 4.0,
+                top: 676.0,
+            }
+        );
+        assert_eq!(
+            context_menu_fallback_submenu_preferred_position(
+                ContextMenuFallbackRect {
+                    left: 1160.0,
+                    top: 20.0,
+                    width: 140.0,
+                    height: 28.0,
+                },
+                ContextMenuFallbackRect {
+                    left: 0.0,
+                    top: 0.0,
+                    width: 180.0,
+                    height: 120.0,
+                },
+                1280.0,
+            ),
+            ContextMenuFallbackPosition {
+                left: 976.0,
+                top: 20.0,
+            }
+        );
+    }
+
+    #[test]
     fn model_picker_trigger_filtering_and_locking_match_upstream_logic() {
         let snapshot = AppSnapshot::mock_reference_state();
         let state = resolve_model_picker_state(&snapshot, "", None, None, None);
@@ -35314,6 +35506,20 @@ mod tests {
             ]),
             ..ModelSelectionSettings::default()
         }
+    }
+
+    fn context_menu_item(
+        id: &str,
+        label: &str,
+        configure: impl FnOnce(ContextMenuFallbackItem) -> ContextMenuFallbackItem,
+    ) -> ContextMenuFallbackItem {
+        configure(ContextMenuFallbackItem {
+            id: id.to_string(),
+            label: label.to_string(),
+            destructive: false,
+            disabled: false,
+            children: Vec::new(),
+        })
     }
 
     #[test]

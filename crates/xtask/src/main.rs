@@ -1671,7 +1671,17 @@ fn is_inventory_source_file(path: &Path) -> bool {
 }
 
 fn classify_inventory_path(path: &str) -> InventoryRow {
-    let (rust_target, status, proof, remaining_gap) = if path == "apps/web/src/markdown-links.ts"
+    let (rust_target, status, proof, remaining_gap) = if path
+        == "apps/web/src/contextMenuFallback.ts"
+        || path == "apps/web/src/contextMenuFallback.test.ts"
+    {
+        (
+            "context-menu fallback button planning, destructive/delete leaf styling, disabled handling, submenu chevron metadata, click resolution, clamp positioning, and submenu flip positioning in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core context_menu_fallback_helpers_match_upstream_contract`",
+            "Wire helpers into a live GPUI/native context menu fallback path and exact pointer/keyboard cleanup behavior.",
+        )
+    } else if path == "apps/web/src/markdown-links.ts"
         || path == "apps/web/src/markdown-links.test.ts"
     {
         (
