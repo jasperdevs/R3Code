@@ -19465,6 +19465,20 @@ pub enum LocalApiOpenExternalPlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnvironmentConnectionRuntimeContract {
+    pub missing_environment_id_error: String,
+    pub identity_change_error: String,
+    pub observes_lifecycle: bool,
+    pub observes_config: bool,
+    pub shell_snapshot_resolves_bootstrap_gate: bool,
+    pub shell_resubscribe_resets_bootstrap_gate: bool,
+    pub terminal_events_are_environment_scoped: bool,
+    pub reconnect_resets_bootstrap_then_reconnects_refreshes_metadata_and_waits: bool,
+    pub reconnect_rejects_bootstrap_gate_on_error: bool,
+    pub dispose_unsubscribes_before_client_dispose: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LocalApiResetPlan {
     pub clear_cached_api: bool,
     pub reset_client_settings_persistence: bool,
@@ -19509,6 +19523,35 @@ pub fn source_control_discovery_atom_contract() -> SourceControlDiscoveryAtomCon
         atom_keep_alive: true,
         empty_atom_keep_alive: true,
         known_keys_recorded_on_family_creation: true,
+    }
+}
+
+pub fn environment_connection_runtime_contract(
+    kind: &str,
+    environment_id: Option<&str>,
+    label: &str,
+    observed_environment_id: &str,
+    observed_source: &str,
+    has_on_welcome: bool,
+    has_on_config_snapshot: bool,
+    disposed_on_resubscribe: bool,
+) -> EnvironmentConnectionRuntimeContract {
+    let environment_id = environment_id.unwrap_or("");
+    EnvironmentConnectionRuntimeContract {
+        missing_environment_id_error: format!(
+            "Known environment {label} is missing its environmentId."
+        ),
+        identity_change_error: format!(
+            "Environment connection {environment_id} changed identity to {observed_environment_id} via {observed_source}."
+        ),
+        observes_lifecycle: kind == "saved" || has_on_welcome,
+        observes_config: kind == "saved" || has_on_config_snapshot,
+        shell_snapshot_resolves_bootstrap_gate: true,
+        shell_resubscribe_resets_bootstrap_gate: !disposed_on_resubscribe,
+        terminal_events_are_environment_scoped: true,
+        reconnect_resets_bootstrap_then_reconnects_refreshes_metadata_and_waits: true,
+        reconnect_rejects_bootstrap_gate_on_error: true,
+        dispose_unsubscribes_before_client_dispose: true,
     }
 }
 
@@ -26574,6 +26617,61 @@ mod tests {
             ),
             SourceControlDiscoveryClientPlan::Missing
         );
+    }
+
+    #[test]
+    fn ports_web_environment_connection_runtime_contract() {
+        assert_eq!(
+            environment_connection_runtime_contract(
+                "primary",
+                None,
+                "Primary",
+                "environment-remote",
+                "server lifecycle welcome",
+                false,
+                false,
+                false,
+            )
+            .missing_environment_id_error,
+            "Known environment Primary is missing its environmentId."
+        );
+
+        let saved = environment_connection_runtime_contract(
+            "saved",
+            Some("environment-local"),
+            "Local",
+            "environment-remote",
+            "server config snapshot",
+            false,
+            false,
+            false,
+        );
+        assert!(saved.observes_lifecycle);
+        assert!(saved.observes_config);
+        assert_eq!(
+            saved.identity_change_error,
+            "Environment connection environment-local changed identity to environment-remote via server config snapshot."
+        );
+        assert!(saved.shell_snapshot_resolves_bootstrap_gate);
+        assert!(saved.shell_resubscribe_resets_bootstrap_gate);
+        assert!(saved.terminal_events_are_environment_scoped);
+        assert!(saved.reconnect_resets_bootstrap_then_reconnects_refreshes_metadata_and_waits);
+        assert!(saved.reconnect_rejects_bootstrap_gate_on_error);
+        assert!(saved.dispose_unsubscribes_before_client_dispose);
+
+        let primary_with_callbacks = environment_connection_runtime_contract(
+            "primary",
+            Some("environment-primary"),
+            "Primary",
+            "environment-primary",
+            "server lifecycle welcome",
+            true,
+            true,
+            true,
+        );
+        assert!(primary_with_callbacks.observes_lifecycle);
+        assert!(primary_with_callbacks.observes_config);
+        assert!(!primary_with_callbacks.shell_resubscribe_resets_bootstrap_gate);
     }
 
     #[test]

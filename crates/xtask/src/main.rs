@@ -2426,6 +2426,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace`; current screenshot gates where captured",
             "Replace seeded/static state with live GPUI state and port remaining component behavior.",
         )
+    } else if path == "apps/web/src/environments/runtime/connection.ts" {
+        (
+            "web environment connection bootstrap gate, lifecycle/config subscription rules, identity guard, reconnect/reset, terminal-event scoping, and dispose cleanup contracts in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace web_environment_connection_runtime_contract`",
+            "Wire the runtime connection service to live GPUI/WebSocket clients, actual subscriptions, metadata refresh, and saved-environment lifecycle side effects.",
+        )
     } else if path.starts_with("apps/web/src/environments/")
         || path.starts_with("apps/web/src/environment")
         || path.starts_with("apps/web/src/auth")
