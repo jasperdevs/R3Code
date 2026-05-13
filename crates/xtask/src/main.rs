@@ -2204,7 +2204,7 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
         )
     } else if path.starts_with("apps/desktop/src/ssh/") || path.starts_with("packages/ssh/src/") {
         (
-            "selected SSH parsing helpers in crates/r3_core/src/lib.rs",
+            "selected SSH parsing, command arg, output-line, connection-key, and remote package-spec helpers in crates/r3_core/src/lib.rs",
             "partial",
             "`cargo test --workspace` SSH parse tests",
             "Port SSH discovery, tunnels, password prompts, and remote API/session bootstrap.",
@@ -2375,7 +2375,7 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
         )
     } else if path.starts_with("packages/tailscale/") || path.starts_with("packages/ssh/") {
         (
-            "selected helpers in crates/r3_core/src/lib.rs",
+            "selected helpers, including SSH command contracts and pairing endpoint helpers, in crates/r3_core/src/lib.rs",
             "partial",
             "`cargo test --workspace` selected helper tests",
             "Port full package behavior.",

@@ -22,6 +22,8 @@ use std::{
     collections::{BTreeMap, BTreeSet},
 };
 
+use sha2::{Digest, Sha256};
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ScopedThreadRef {
     pub environment_id: String,
@@ -5986,6 +5988,8 @@ pub struct DesktopSshEnvironmentTarget {
     pub port: Option<u16>,
 }
 
+pub const DEFAULT_SSH_COMMAND_TIMEOUT_MS: u64 = 60_000;
+
 pub fn format_desktop_ssh_target(target: &DesktopSshEnvironmentTarget) -> String {
     let authority = if let Some(username) = target.username.as_deref() {
         format!("{username}@{}", target.hostname)
@@ -5997,6 +6001,146 @@ pub fn format_desktop_ssh_target(target: &DesktopSshEnvironmentTarget) -> String
     } else {
         authority
     }
+}
+
+pub fn parse_ssh_resolve_output(alias: &str, stdout: &str) -> DesktopSshEnvironmentTarget {
+    let mut values = BTreeMap::new();
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let mut parts = trimmed.split_whitespace();
+        let Some(key) = parts.next() else {
+            continue;
+        };
+        let rest = parts.collect::<Vec<_>>();
+        if rest.is_empty() || values.contains_key(key) {
+            continue;
+        }
+        values.insert(key.to_string(), rest.join(" ").trim().to_string());
+    }
+
+    let hostname = values
+        .get("hostname")
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .unwrap_or(alias)
+        .to_string();
+    let username = values
+        .get("user")
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let port = values
+        .get("port")
+        .and_then(|value| parse_js_base10_int(value.trim()))
+        .and_then(|value| u16::try_from(value).ok());
+
+    DesktopSshEnvironmentTarget {
+        alias: alias.to_string(),
+        hostname,
+        username,
+        port,
+    }
+}
+
+pub fn target_connection_key(target: &DesktopSshEnvironmentTarget) -> String {
+    format!(
+        "{}\0{}\0{}\0{}",
+        target.alias,
+        target.hostname,
+        target.username.as_deref().unwrap_or(""),
+        target.port.map(|port| port.to_string()).unwrap_or_default()
+    )
+}
+
+pub fn remote_state_key(target: &DesktopSshEnvironmentTarget) -> String {
+    let digest = Sha256::digest(target_connection_key(target).as_bytes());
+    digest
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>()[..16]
+        .to_string()
+}
+
+pub fn build_ssh_host_spec(target: &DesktopSshEnvironmentTarget) -> Result<String, String> {
+    let destination = trimmed_non_empty(&target.alias)
+        .or_else(|| trimmed_non_empty(&target.hostname))
+        .ok_or_else(|| "SSH target is missing its alias/hostname.".to_string())?;
+    Ok(target
+        .username
+        .as_ref()
+        .filter(|username| !username.is_empty())
+        .map(|username| format!("{username}@{destination}"))
+        .unwrap_or_else(|| destination.to_string()))
+}
+
+pub fn base_ssh_args(
+    target: &DesktopSshEnvironmentTarget,
+    batch_mode: Option<&str>,
+) -> Vec<String> {
+    let mut args = vec![
+        "-o".to_string(),
+        format!("BatchMode={}", batch_mode.unwrap_or("no")),
+        "-o".to_string(),
+        "ConnectTimeout=10".to_string(),
+    ];
+    if let Some(port) = target.port {
+        args.extend(["-p".to_string(), port.to_string()]);
+    }
+    args
+}
+
+pub fn get_last_non_empty_output_line(stdout: &str) -> Option<String> {
+    stdout
+        .trim()
+        .lines()
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .last()
+        .map(str::to_string)
+}
+
+pub fn resolve_remote_t3_cli_package_spec(
+    app_version: &str,
+    update_channel: &str,
+    is_development: bool,
+) -> String {
+    let app_version = app_version.trim();
+    if !is_development && is_publishable_t3_version(app_version) {
+        return format!("t3@{app_version}");
+    }
+    if is_development || update_channel == "nightly" {
+        "t3@nightly".to_string()
+    } else {
+        "t3@latest".to_string()
+    }
+}
+
+fn is_publishable_t3_version(value: &str) -> bool {
+    let Some((major, rest)) = value.split_once('.') else {
+        return false;
+    };
+    let Some((minor, patch_and_suffix)) = rest.split_once('.') else {
+        return false;
+    };
+    let (patch, suffix) = patch_and_suffix
+        .split_once('-')
+        .map(|(patch, suffix)| (patch, Some(suffix)))
+        .unwrap_or((patch_and_suffix, None));
+    !major.is_empty()
+        && !minor.is_empty()
+        && !patch.is_empty()
+        && major.chars().all(|ch| ch.is_ascii_digit())
+        && minor.chars().all(|ch| ch.is_ascii_digit())
+        && patch.chars().all(|ch| ch.is_ascii_digit())
+        && suffix.map_or(true, |suffix| {
+            !suffix.is_empty()
+                && suffix
+                    .chars()
+                    .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '-'))
+        })
 }
 
 pub fn parse_manual_desktop_ssh_target(
@@ -11292,6 +11436,75 @@ mod tests {
 
     #[test]
     fn parses_manual_desktop_ssh_targets_like_upstream() {
+        let resolved = parse_ssh_resolve_output(
+            "devbox",
+            [
+                "hostname devbox.example.com",
+                "user julius",
+                "port 2222",
+                "",
+            ]
+            .join("\n")
+            .as_str(),
+        );
+        assert_eq!(
+            resolved,
+            DesktopSshEnvironmentTarget {
+                alias: "devbox".to_string(),
+                hostname: "devbox.example.com".to_string(),
+                username: Some("julius".to_string()),
+                port: Some(2222),
+            }
+        );
+        assert_eq!(build_ssh_host_spec(&resolved).unwrap(), "julius@devbox");
+        assert_eq!(
+            base_ssh_args(&resolved, Some("no")),
+            vec![
+                "-o",
+                "BatchMode=no",
+                "-o",
+                "ConnectTimeout=10",
+                "-p",
+                "2222"
+            ]
+        );
+        assert_eq!(
+            get_last_non_empty_output_line(
+                [
+                    "Welcome to the host",
+                    "",
+                    "{\"credential\":\"pairing-token\"}",
+                    ""
+                ]
+                .join("\n")
+                .as_str()
+            )
+            .as_deref(),
+            Some("{\"credential\":\"pairing-token\"}")
+        );
+        assert_eq!(
+            target_connection_key(&resolved),
+            format!("devbox{}devbox.example.com{}julius{}2222", '\0', '\0', '\0')
+        );
+        assert_eq!(remote_state_key(&resolved).len(), 16);
+        assert_eq!(
+            resolve_remote_t3_cli_package_spec("0.0.17", "latest", false),
+            "t3@0.0.17"
+        );
+        assert_eq!(
+            resolve_remote_t3_cli_package_spec("0.0.17-nightly.20260415.44", "nightly", false),
+            "t3@0.0.17-nightly.20260415.44"
+        );
+        assert_eq!(
+            resolve_remote_t3_cli_package_spec("0.0.0-dev", "latest", true),
+            "t3@nightly"
+        );
+        assert_eq!(
+            resolve_remote_t3_cli_package_spec("not-publishable", "latest", false),
+            "t3@latest"
+        );
+        assert_eq!(DEFAULT_SSH_COMMAND_TIMEOUT_MS, 60_000);
+
         let target = parse_manual_desktop_ssh_target("alice@example.com:2222", "", "").unwrap();
         assert_eq!(
             target,
