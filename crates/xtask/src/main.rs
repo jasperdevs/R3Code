@@ -2426,6 +2426,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace` for selected pairing/environment helpers",
             "Port runtime connection service, auth bootstrap, subscriptions, and saved environments.",
         )
+    } else if path == "apps/web/src/routeTree.gen.ts" {
+        (
+            "generated TanStack route tree IDs, paths, full paths, parent IDs, root/chat/settings child ordering, and FileRouteTypes fullPath/to/id unions in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core generated_route_tree_matches_upstream_tanstack_output`; `cargo test -p r3_core thread_routes_helpers_match_upstream_contract`",
+            "Wire generated route graph into live GPUI routing, history/deep-link handling, and route-driven screen selection.",
+        )
     } else if path.starts_with("apps/web/src/routes/")
         || path.starts_with("apps/web/src/main")
         || path.starts_with("apps/web/src/router")

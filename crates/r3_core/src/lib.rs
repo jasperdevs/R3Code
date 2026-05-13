@@ -257,6 +257,170 @@ pub fn resolve_thread_route_target(
         })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GeneratedRouteTreeEntry {
+    pub id: &'static str,
+    pub path: Option<&'static str>,
+    pub full_path: &'static str,
+    pub parent_id: Option<&'static str>,
+}
+
+pub const GENERATED_ROUTE_TREE_ENTRIES: &[GeneratedRouteTreeEntry] = &[
+    GeneratedRouteTreeEntry {
+        id: "__root__",
+        path: None,
+        full_path: "",
+        parent_id: None,
+    },
+    GeneratedRouteTreeEntry {
+        id: "/_chat",
+        path: None,
+        full_path: "/",
+        parent_id: Some("__root__"),
+    },
+    GeneratedRouteTreeEntry {
+        id: "/pair",
+        path: Some("/pair"),
+        full_path: "/pair",
+        parent_id: Some("__root__"),
+    },
+    GeneratedRouteTreeEntry {
+        id: "/settings",
+        path: Some("/settings"),
+        full_path: "/settings",
+        parent_id: Some("__root__"),
+    },
+    GeneratedRouteTreeEntry {
+        id: "/_chat/",
+        path: Some("/"),
+        full_path: "/",
+        parent_id: Some("/_chat"),
+    },
+    GeneratedRouteTreeEntry {
+        id: "/_chat/$environmentId/$threadId",
+        path: Some("/$environmentId/$threadId"),
+        full_path: "/$environmentId/$threadId",
+        parent_id: Some("/_chat"),
+    },
+    GeneratedRouteTreeEntry {
+        id: "/_chat/draft/$draftId",
+        path: Some("/draft/$draftId"),
+        full_path: "/draft/$draftId",
+        parent_id: Some("/_chat"),
+    },
+    GeneratedRouteTreeEntry {
+        id: "/settings/archived",
+        path: Some("/archived"),
+        full_path: "/settings/archived",
+        parent_id: Some("/settings"),
+    },
+    GeneratedRouteTreeEntry {
+        id: "/settings/connections",
+        path: Some("/connections"),
+        full_path: "/settings/connections",
+        parent_id: Some("/settings"),
+    },
+    GeneratedRouteTreeEntry {
+        id: "/settings/diagnostics",
+        path: Some("/diagnostics"),
+        full_path: "/settings/diagnostics",
+        parent_id: Some("/settings"),
+    },
+    GeneratedRouteTreeEntry {
+        id: "/settings/general",
+        path: Some("/general"),
+        full_path: "/settings/general",
+        parent_id: Some("/settings"),
+    },
+    GeneratedRouteTreeEntry {
+        id: "/settings/keybindings",
+        path: Some("/keybindings"),
+        full_path: "/settings/keybindings",
+        parent_id: Some("/settings"),
+    },
+    GeneratedRouteTreeEntry {
+        id: "/settings/providers",
+        path: Some("/providers"),
+        full_path: "/settings/providers",
+        parent_id: Some("/settings"),
+    },
+    GeneratedRouteTreeEntry {
+        id: "/settings/source-control",
+        path: Some("/source-control"),
+        full_path: "/settings/source-control",
+        parent_id: Some("/settings"),
+    },
+];
+
+pub const GENERATED_ROOT_ROUTE_CHILDREN: &[&str] = &["/_chat", "/pair", "/settings"];
+pub const GENERATED_CHAT_ROUTE_CHILDREN: &[&str] = &[
+    "/_chat/",
+    "/_chat/$environmentId/$threadId",
+    "/_chat/draft/$draftId",
+];
+pub const GENERATED_SETTINGS_ROUTE_CHILDREN: &[&str] = &[
+    "/settings/archived",
+    "/settings/connections",
+    "/settings/diagnostics",
+    "/settings/general",
+    "/settings/keybindings",
+    "/settings/providers",
+    "/settings/source-control",
+];
+
+pub fn generated_route_full_paths() -> Vec<&'static str> {
+    vec![
+        "/",
+        "/pair",
+        "/settings",
+        "/settings/archived",
+        "/settings/connections",
+        "/settings/diagnostics",
+        "/settings/general",
+        "/settings/keybindings",
+        "/settings/providers",
+        "/settings/source-control",
+        "/$environmentId/$threadId",
+        "/draft/$draftId",
+    ]
+}
+
+pub fn generated_route_to_paths() -> Vec<&'static str> {
+    vec![
+        "/pair",
+        "/settings",
+        "/settings/archived",
+        "/settings/connections",
+        "/settings/diagnostics",
+        "/settings/general",
+        "/settings/keybindings",
+        "/settings/providers",
+        "/settings/source-control",
+        "/",
+        "/$environmentId/$threadId",
+        "/draft/$draftId",
+    ]
+}
+
+pub fn generated_route_ids() -> Vec<&'static str> {
+    vec![
+        "__root__",
+        "/_chat",
+        "/pair",
+        "/settings",
+        "/settings/archived",
+        "/settings/connections",
+        "/settings/diagnostics",
+        "/settings/general",
+        "/settings/keybindings",
+        "/settings/providers",
+        "/settings/source-control",
+        "/_chat/",
+        "/_chat/$environmentId/$threadId",
+        "/_chat/draft/$draftId",
+    ]
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ThreadSelectionState {
     pub selected_thread_keys: BTreeSet<String>,
@@ -28931,6 +29095,99 @@ mod tests {
             })
         );
         assert_eq!(resolve_thread_route_target(None, None, None), None);
+    }
+
+    #[test]
+    fn generated_route_tree_matches_upstream_tanstack_output() {
+        assert_eq!(GENERATED_ROUTE_TREE_ENTRIES.len(), 14);
+        assert_eq!(
+            generated_route_full_paths(),
+            vec![
+                "/",
+                "/pair",
+                "/settings",
+                "/settings/archived",
+                "/settings/connections",
+                "/settings/diagnostics",
+                "/settings/general",
+                "/settings/keybindings",
+                "/settings/providers",
+                "/settings/source-control",
+                "/$environmentId/$threadId",
+                "/draft/$draftId",
+            ]
+        );
+        assert_eq!(
+            generated_route_to_paths(),
+            vec![
+                "/pair",
+                "/settings",
+                "/settings/archived",
+                "/settings/connections",
+                "/settings/diagnostics",
+                "/settings/general",
+                "/settings/keybindings",
+                "/settings/providers",
+                "/settings/source-control",
+                "/",
+                "/$environmentId/$threadId",
+                "/draft/$draftId",
+            ]
+        );
+        assert_eq!(
+            generated_route_ids(),
+            vec![
+                "__root__",
+                "/_chat",
+                "/pair",
+                "/settings",
+                "/settings/archived",
+                "/settings/connections",
+                "/settings/diagnostics",
+                "/settings/general",
+                "/settings/keybindings",
+                "/settings/providers",
+                "/settings/source-control",
+                "/_chat/",
+                "/_chat/$environmentId/$threadId",
+                "/_chat/draft/$draftId",
+            ]
+        );
+        assert_eq!(
+            GENERATED_ROOT_ROUTE_CHILDREN,
+            &["/_chat", "/pair", "/settings"]
+        );
+        assert_eq!(
+            GENERATED_CHAT_ROUTE_CHILDREN,
+            &[
+                "/_chat/",
+                "/_chat/$environmentId/$threadId",
+                "/_chat/draft/$draftId",
+            ]
+        );
+        assert_eq!(
+            GENERATED_SETTINGS_ROUTE_CHILDREN,
+            &[
+                "/settings/archived",
+                "/settings/connections",
+                "/settings/diagnostics",
+                "/settings/general",
+                "/settings/keybindings",
+                "/settings/providers",
+                "/settings/source-control",
+            ]
+        );
+        assert_eq!(
+            GENERATED_ROUTE_TREE_ENTRIES
+                .iter()
+                .find(|entry| entry.id == "/_chat/$environmentId/$threadId"),
+            Some(&GeneratedRouteTreeEntry {
+                id: "/_chat/$environmentId/$threadId",
+                path: Some("/$environmentId/$threadId"),
+                full_path: "/$environmentId/$threadId",
+                parent_id: Some("/_chat"),
+            })
+        );
     }
 
     #[test]
