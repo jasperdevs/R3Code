@@ -2235,6 +2235,29 @@ pub struct ProjectSummary {
     pub scripts: Vec<ProjectScript>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectGroupingSettings {
+    pub sidebar_project_grouping_mode: SidebarProjectGroupingMode,
+    pub sidebar_project_grouping_overrides: BTreeMap<String, SidebarProjectGroupingMode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogicalProjectRepositoryIdentity {
+    pub canonical_key: Option<String>,
+    pub root_path: Option<String>,
+    pub display_name: Option<String>,
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LogicalProject {
+    pub id: String,
+    pub environment_id: String,
+    pub cwd: String,
+    pub name: String,
+    pub repository_identity: Option<LogicalProjectRepositoryIdentity>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProjectScriptIcon {
     Play,
@@ -7774,6 +7797,214 @@ pub fn scoped_project_key(ref_: &ScopedProjectRef) -> String {
 
 pub fn scoped_thread_key(ref_: &ScopedThreadRef) -> String {
     format!("{}:{}", ref_.environment_id, ref_.thread_id)
+}
+
+pub fn normalize_project_path_for_comparison(value: &str) -> String {
+    let normalized = trim_trailing_project_path_separators(value.trim());
+    if is_windows_drive_path(&normalized) || normalized.starts_with("\\\\") {
+        normalized.replace('/', "\\").to_ascii_lowercase()
+    } else {
+        normalized
+    }
+}
+
+pub fn derive_physical_project_key_from_path(environment_id: &str, cwd: &str) -> String {
+    format!(
+        "{}:{}",
+        environment_id,
+        normalize_project_path_for_comparison(cwd)
+    )
+}
+
+pub fn derive_physical_project_key(project: &LogicalProject) -> String {
+    derive_physical_project_key_from_path(&project.environment_id, &project.cwd)
+}
+
+pub fn derive_project_grouping_override_key(project: &LogicalProject) -> String {
+    derive_physical_project_key(project)
+}
+
+pub fn get_project_order_key(project: &LogicalProject) -> String {
+    derive_physical_project_key(project)
+}
+
+pub fn resolve_project_grouping_mode(
+    project: &LogicalProject,
+    settings: &ProjectGroupingSettings,
+) -> SidebarProjectGroupingMode {
+    settings
+        .sidebar_project_grouping_overrides
+        .get(&derive_project_grouping_override_key(project))
+        .copied()
+        .unwrap_or(settings.sidebar_project_grouping_mode)
+}
+
+pub fn derive_logical_project_key(
+    project: &LogicalProject,
+    grouping_mode: Option<SidebarProjectGroupingMode>,
+) -> String {
+    let grouping_mode = grouping_mode.unwrap_or(SidebarProjectGroupingMode::Repository);
+    if grouping_mode == SidebarProjectGroupingMode::Separate {
+        return derive_physical_project_key(project);
+    }
+    derive_repository_scoped_key(project, grouping_mode).unwrap_or_else(|| {
+        let physical_key = derive_physical_project_key(project);
+        if physical_key.trim().is_empty() {
+            scoped_project_key(&scope_project_ref(&project.environment_id, &project.id))
+        } else {
+            physical_key
+        }
+    })
+}
+
+pub fn derive_logical_project_key_from_settings(
+    project: &LogicalProject,
+    settings: &ProjectGroupingSettings,
+) -> String {
+    derive_logical_project_key(
+        project,
+        Some(resolve_project_grouping_mode(project, settings)),
+    )
+}
+
+pub fn derive_logical_project_key_from_ref(
+    project_ref: &ScopedProjectRef,
+    project: Option<&LogicalProject>,
+    grouping_mode: Option<SidebarProjectGroupingMode>,
+) -> String {
+    project
+        .map(|project| derive_logical_project_key(project, grouping_mode))
+        .unwrap_or_else(|| scoped_project_key(project_ref))
+}
+
+pub fn derive_project_group_label(
+    representative: &LogicalProject,
+    members: &[LogicalProject],
+) -> String {
+    let display_names = unique_non_empty_values(
+        members
+            .iter()
+            .filter_map(|member| member.repository_identity.as_ref())
+            .map(|identity| identity.display_name.as_deref()),
+    );
+    if display_names.len() == 1 {
+        return display_names[0].clone();
+    }
+    let repository_names = unique_non_empty_values(
+        members
+            .iter()
+            .filter_map(|member| member.repository_identity.as_ref())
+            .map(|identity| identity.name.as_deref()),
+    );
+    if repository_names.len() == 1 {
+        return repository_names[0].clone();
+    }
+    representative.name.clone()
+}
+
+fn derive_repository_scoped_key(
+    project: &LogicalProject,
+    grouping_mode: SidebarProjectGroupingMode,
+) -> Option<String> {
+    let identity = project.repository_identity.as_ref()?;
+    let canonical_key = identity
+        .canonical_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    if grouping_mode == SidebarProjectGroupingMode::Repository {
+        return Some(canonical_key.to_string());
+    }
+    let Some(relative_path) = derive_repository_relative_project_path(project) else {
+        return Some(canonical_key.to_string());
+    };
+    if relative_path.is_empty() {
+        Some(canonical_key.to_string())
+    } else {
+        Some(format!("{canonical_key}::{relative_path}"))
+    }
+}
+
+pub fn derive_repository_relative_project_path(project: &LogicalProject) -> Option<String> {
+    let root_path = project
+        .repository_identity
+        .as_ref()?
+        .root_path
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let normalized_project_path = normalize_project_path_for_comparison(&project.cwd);
+    let normalized_root_path = normalize_project_path_for_comparison(root_path);
+    if normalized_project_path.is_empty() || normalized_root_path.is_empty() {
+        return None;
+    }
+    if normalized_project_path == normalized_root_path {
+        return Some(String::new());
+    }
+    let separator = if normalized_root_path.contains('\\') {
+        "\\"
+    } else {
+        "/"
+    };
+    let root_prefix = format!("{normalized_root_path}{separator}");
+    normalized_project_path
+        .strip_prefix(&root_prefix)
+        .map(|value| value.replace('\\', "/"))
+}
+
+fn trim_trailing_project_path_separators(value: &str) -> String {
+    if value.is_empty() || is_root_project_path(value) {
+        return value.to_string();
+    }
+    let trimmed = if value.starts_with('/') {
+        value.trim_end_matches('/').to_string()
+    } else {
+        value.trim_end_matches(['/', '\\']).to_string()
+    };
+    if trimmed.is_empty() {
+        value.to_string()
+    } else if trimmed.len() == 2 && trimmed.ends_with(':') {
+        format!("{trimmed}\\")
+    } else {
+        trimmed
+    }
+}
+
+fn is_root_project_path(value: &str) -> bool {
+    value == "/"
+        || value == "\\"
+        || (value.len() <= 3
+            && value.as_bytes().get(1) == Some(&b':')
+            && value
+                .chars()
+                .next()
+                .is_some_and(|character| character.is_ascii_alphabetic())
+            && value
+                .chars()
+                .nth(2)
+                .map_or(true, |character| matches!(character, '/' | '\\')))
+}
+
+fn is_windows_drive_path(value: &str) -> bool {
+    value.len() >= 2
+        && value.as_bytes().get(1) == Some(&b':')
+        && value
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_alphabetic())
+}
+
+fn unique_non_empty_values<'a>(values: impl Iterator<Item = Option<&'a str>>) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut unique = Vec::new();
+    for value in values.flatten() {
+        let trimmed = value.trim();
+        if trimmed.is_empty() || !seen.insert(trimmed.to_string()) {
+            continue;
+        }
+        unique.push(trimmed.to_string());
+    }
+    unique
 }
 
 fn parse_scoped_key(key: &str) -> Option<(&str, &str)> {
@@ -13338,6 +13569,109 @@ mod tests {
                 .error
                 .as_deref(),
             Some("Failed to discover source control tools.")
+        );
+    }
+
+    #[test]
+    fn logical_project_helpers_match_upstream_grouping_rules() {
+        let project = LogicalProject {
+            id: "project-web".to_string(),
+            environment_id: "local".to_string(),
+            cwd: "/repo/apps/web/".to_string(),
+            name: "web".to_string(),
+            repository_identity: Some(LogicalProjectRepositoryIdentity {
+                canonical_key: Some("git:/repo".to_string()),
+                root_path: Some("/repo".to_string()),
+                display_name: Some("T3Code".to_string()),
+                name: Some("t3code".to_string()),
+            }),
+        };
+
+        assert_eq!(
+            normalize_project_path_for_comparison("/repo/apps/web/"),
+            "/repo/apps/web"
+        );
+        assert_eq!(
+            normalize_project_path_for_comparison("C:/Users/Bunny/Repo/"),
+            r"c:\users\bunny\repo"
+        );
+        assert_eq!(
+            derive_physical_project_key_from_path("local", "/repo/apps/web/"),
+            "local:/repo/apps/web"
+        );
+        assert_eq!(
+            derive_physical_project_key(&project),
+            "local:/repo/apps/web"
+        );
+        assert_eq!(
+            derive_project_grouping_override_key(&project),
+            "local:/repo/apps/web"
+        );
+        assert_eq!(get_project_order_key(&project), "local:/repo/apps/web");
+        assert_eq!(
+            derive_repository_relative_project_path(&project).as_deref(),
+            Some("apps/web")
+        );
+        assert_eq!(
+            derive_logical_project_key(&project, Some(SidebarProjectGroupingMode::Repository)),
+            "git:/repo"
+        );
+        assert_eq!(
+            derive_logical_project_key(&project, Some(SidebarProjectGroupingMode::RepositoryPath)),
+            "git:/repo::apps/web"
+        );
+        assert_eq!(
+            derive_logical_project_key(&project, Some(SidebarProjectGroupingMode::Separate)),
+            "local:/repo/apps/web"
+        );
+
+        let mut overrides = BTreeMap::new();
+        overrides.insert(
+            derive_project_grouping_override_key(&project),
+            SidebarProjectGroupingMode::Separate,
+        );
+        let settings = ProjectGroupingSettings {
+            sidebar_project_grouping_mode: SidebarProjectGroupingMode::Repository,
+            sidebar_project_grouping_overrides: overrides,
+        };
+        assert_eq!(
+            resolve_project_grouping_mode(&project, &settings),
+            SidebarProjectGroupingMode::Separate
+        );
+        assert_eq!(
+            derive_logical_project_key_from_settings(&project, &settings),
+            "local:/repo/apps/web"
+        );
+
+        let fallback_ref = scope_project_ref("remote", "missing-project");
+        assert_eq!(
+            derive_logical_project_key_from_ref(&fallback_ref, None, None),
+            "remote:missing-project"
+        );
+
+        let sibling = LogicalProject {
+            id: "project-server".to_string(),
+            cwd: "/repo/apps/server".to_string(),
+            name: "server".to_string(),
+            ..project.clone()
+        };
+        assert_eq!(
+            derive_project_group_label(&project, &[project.clone(), sibling.clone()]),
+            "T3Code"
+        );
+
+        let conflicting = LogicalProject {
+            repository_identity: Some(LogicalProjectRepositoryIdentity {
+                canonical_key: Some("git:/other".to_string()),
+                root_path: Some("/other".to_string()),
+                display_name: Some("Other".to_string()),
+                name: Some("other".to_string()),
+            }),
+            ..sibling
+        };
+        assert_eq!(
+            derive_project_group_label(&project, &[project.clone(), conflicting]),
+            "web"
         );
     }
 
