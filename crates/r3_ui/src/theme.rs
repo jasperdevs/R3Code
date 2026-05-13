@@ -1,6 +1,6 @@
 use gpui::{Hsla, Window, WindowAppearance, hsla};
 
-pub const SIDEBAR_MIN_WIDTH: f32 = 255.0;
+pub const SIDEBAR_MIN_WIDTH: f32 = 208.0;
 pub const MAIN_MIN_WIDTH: f32 = 640.0;
 pub const RADIUS: f32 = 10.0;
 pub const SCROLLBAR_WIDTH: f32 = 6.0;
@@ -86,7 +86,7 @@ impl Theme {
 
 #[cfg(test)]
 mod tests {
-    use super::Theme;
+    use super::{MAIN_MIN_WIDTH, SIDEBAR_MIN_WIDTH, Theme};
 
     #[test]
     fn light_foreground_matches_upstream_neutral_800_token() {
@@ -96,5 +96,11 @@ mod tests {
         assert_eq!(foreground.s, 0.0);
         assert_eq!(foreground.l, 38.0 / 255.0);
         assert_eq!(foreground.a, 1.0);
+    }
+
+    #[test]
+    fn sidebar_widths_match_upstream_app_sidebar_layout() {
+        assert_eq!(SIDEBAR_MIN_WIDTH, 13.0 * 16.0);
+        assert_eq!(MAIN_MIN_WIDTH, 40.0 * 16.0);
     }
 }

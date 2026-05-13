@@ -1879,10 +1879,10 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
         )
     } else if path == "apps/web/src/components/AppSidebarLayout.tsx" {
         (
-            "AppSidebarLayout provider/sidebar classes, resizable width constraints, width storage key, shortcut-modifier window listener wiring, and desktop open-settings menu routing in crates/r3_core/src/lib.rs",
+            "AppSidebarLayout provider/sidebar classes, resizable width constraints, native GPUI sidebar/main minimum widths, width storage key, shortcut-modifier window listener wiring, and desktop open-settings menu routing in crates/r3_core/src/lib.rs plus crates/r3_ui/src/theme.rs",
             "partial",
-            "`cargo test --workspace app_sidebar_layout_contract_matches_upstream_component`; `cargo test --workspace shortcut_modifier_state_matches_upstream_keyboard_logic`",
-            "Wire the remaining live GPUI sidebar shell, resize persistence, desktop menu bridge subscription, and navigation effects.",
+            "`cargo test --workspace app_sidebar_layout_contract_matches_upstream_component`; `cargo test --workspace shortcut_modifier_state_matches_upstream_keyboard_logic`; `cargo test -p r3_ui sidebar_widths_match_upstream_app_sidebar_layout`",
+            "Wire remaining GPUI resize persistence, desktop menu bridge subscription, and navigation effects.",
         )
     } else if path == "apps/web/src/components/chat/MessagesTimeline.logic.ts"
         || path == "apps/web/src/components/chat/MessagesTimeline.logic.test.ts"
