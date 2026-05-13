@@ -118,9 +118,18 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         "icons/git-pull-request.svg",
         include_bytes!("../assets/icons/git-pull-request.svg"),
     ),
+    ("icons/git.svg", include_bytes!("../assets/icons/git.svg")),
     (
         "icons/github-copilot.svg",
         include_bytes!("../assets/icons/github-copilot.svg"),
+    ),
+    (
+        "icons/github.svg",
+        include_bytes!("../assets/icons/github.svg"),
+    ),
+    (
+        "icons/gitlab.svg",
+        include_bytes!("../assets/icons/gitlab.svg"),
     ),
     (
         "icons/hammer.svg",
@@ -131,6 +140,7 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         "icons/keyboard.svg",
         include_bytes!("../assets/icons/keyboard.svg"),
     ),
+    ("icons/kiro.svg", include_bytes!("../assets/icons/kiro.svg")),
     (
         "icons/link-2.svg",
         include_bytes!("../assets/icons/link-2.svg"),
@@ -167,6 +177,10 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
     (
         "icons/pen-line.svg",
         include_bytes!("../assets/icons/pen-line.svg"),
+    ),
+    (
+        "icons/pi-agent.svg",
+        include_bytes!("../assets/icons/pi-agent.svg"),
     ),
     (
         "icons/pilcrow.svg",
@@ -227,6 +241,7 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         "icons/text-wrap.svg",
         include_bytes!("../assets/icons/text-wrap.svg"),
     ),
+    ("icons/trae.svg", include_bytes!("../assets/icons/trae.svg")),
     (
         "icons/trash-2.svg",
         include_bytes!("../assets/icons/trash-2.svg"),
@@ -325,7 +340,10 @@ mod tests {
             "gemini.svg",
             "git-commit.svg",
             "git-pull-request.svg",
+            "git.svg",
             "github-copilot.svg",
+            "github.svg",
+            "gitlab.svg",
             "hammer.svg",
             "info.svg",
             "list-checks.svg",
@@ -336,6 +354,7 @@ mod tests {
             "openai.svg",
             "opencode.svg",
             "pen-line.svg",
+            "pi-agent.svg",
             "pilcrow.svg",
             "play.svg",
             "rotate-ccw.svg",
@@ -347,6 +366,7 @@ mod tests {
             "sparkles.svg",
             "star.svg",
             "text-wrap.svg",
+            "trae.svg",
             "triangle-alert.svg",
             "trash-2.svg",
             "visual-studio-code.svg",

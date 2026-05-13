@@ -182,7 +182,7 @@ pub const JETBRAINS_ICON_GLYPH_FILL: &str = "#fff";
 pub const UPSTREAM_WEB_ICON_CONTRACTS: &[UpstreamWebIconContract] = &[
     UpstreamWebIconContract {
         export_name: "GitHubIcon",
-        native_asset_path: None,
+        native_asset_path: Some("icons/github.svg"),
         view_box: "0 0 1024 1024",
         generated_id_suffixes: &[],
         themed_class_name: None,
@@ -190,7 +190,7 @@ pub const UPSTREAM_WEB_ICON_CONTRACTS: &[UpstreamWebIconContract] = &[
     },
     UpstreamWebIconContract {
         export_name: "GitIcon",
-        native_asset_path: None,
+        native_asset_path: Some("icons/git.svg"),
         view_box: "0 0 256 256",
         generated_id_suffixes: &[],
         themed_class_name: None,
@@ -206,7 +206,7 @@ pub const UPSTREAM_WEB_ICON_CONTRACTS: &[UpstreamWebIconContract] = &[
     },
     UpstreamWebIconContract {
         export_name: "GitLabIcon",
-        native_asset_path: None,
+        native_asset_path: Some("icons/gitlab.svg"),
         view_box: "0 0 32 32",
         generated_id_suffixes: &[],
         themed_class_name: None,
@@ -238,7 +238,7 @@ pub const UPSTREAM_WEB_ICON_CONTRACTS: &[UpstreamWebIconContract] = &[
     },
     UpstreamWebIconContract {
         export_name: "TraeIcon",
-        native_asset_path: None,
+        native_asset_path: Some("icons/trae.svg"),
         view_box: "0 0 24 24",
         generated_id_suffixes: &[],
         themed_class_name: None,
@@ -246,7 +246,7 @@ pub const UPSTREAM_WEB_ICON_CONTRACTS: &[UpstreamWebIconContract] = &[
     },
     UpstreamWebIconContract {
         export_name: "KiroIcon",
-        native_asset_path: None,
+        native_asset_path: Some("icons/kiro.svg"),
         view_box: "0 0 1200 1200",
         generated_id_suffixes: &[],
         themed_class_name: None,
@@ -356,7 +356,7 @@ pub const UPSTREAM_WEB_ICON_CONTRACTS: &[UpstreamWebIconContract] = &[
     },
     UpstreamWebIconContract {
         export_name: "PiAgentIcon",
-        native_asset_path: None,
+        native_asset_path: Some("icons/pi-agent.svg"),
         view_box: "0 0 800 800",
         generated_id_suffixes: &[],
         themed_class_name: Some("fill-none"),
@@ -47185,19 +47185,13 @@ mod tests {
         assert_eq!(
             upstream_web_icon_exports_missing_native_assets(),
             vec![
-                "GitHubIcon",
-                "GitIcon",
                 "JujutsuIcon",
-                "GitLabIcon",
                 "AzureDevOpsIcon",
                 "BitbucketIcon",
-                "TraeIcon",
-                "KiroIcon",
                 "VisualStudioCodeInsiders",
                 "VSCodium",
                 "AntigravityIcon",
                 "ACPRegistryIcon",
-                "PiAgentIcon",
             ]
         );
     }
