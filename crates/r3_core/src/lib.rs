@@ -16004,6 +16004,40 @@ pub enum GitActionIconName {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitStackedAction {
+    Commit,
+    Push,
+    CreatePr,
+    CommitPush,
+    CommitPushPr,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GitQuickActionKind {
+    RunAction,
+    RunPull,
+    OpenPr,
+    OpenPublish,
+    ShowHint,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitQuickAction {
+    pub label: String,
+    pub disabled: bool,
+    pub kind: GitQuickActionKind,
+    pub action: Option<GitStackedAction>,
+    pub hint: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DefaultBranchActionDialogCopy {
+    pub title: String,
+    pub description: String,
+    pub continue_label: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GitActionMenuItemId {
     Commit,
     Push,
@@ -16486,6 +16520,311 @@ pub fn build_git_action_menu_items(
             icon: GitActionIconName::Pr,
         },
     ]
+}
+
+pub fn resolve_git_quick_action(
+    git_status: Option<&GitStatusSnapshot>,
+    is_busy: bool,
+    is_default_ref: bool,
+    has_primary_remote: bool,
+    terminology: Option<&shared::ChangeRequestTerminology>,
+) -> GitQuickAction {
+    let terminology = terminology
+        .cloned()
+        .unwrap_or(shared::DEFAULT_CHANGE_REQUEST_TERMINOLOGY);
+    if is_busy {
+        return GitQuickAction {
+            label: "Commit".to_string(),
+            disabled: true,
+            kind: GitQuickActionKind::ShowHint,
+            action: None,
+            hint: Some("Git action in progress.".to_string()),
+        };
+    }
+
+    let Some(git_status) = git_status else {
+        return GitQuickAction {
+            label: "Commit".to_string(),
+            disabled: true,
+            kind: GitQuickActionKind::ShowHint,
+            action: None,
+            hint: Some("Git status is unavailable.".to_string()),
+        };
+    };
+
+    let has_branch = git_status.ref_name.is_some();
+    let has_changes = git_status.has_working_tree_changes;
+    let has_open_pr = git_status.has_open_pr;
+    let is_ahead = git_status.ahead_count > 0;
+    let has_default_branch_delta = git_status
+        .ahead_of_default_count
+        .unwrap_or(git_status.ahead_count)
+        > 0;
+    let is_behind = git_status.behind_count > 0;
+    let is_diverged = is_ahead && is_behind;
+
+    if !has_branch {
+        return GitQuickAction {
+            label: "Commit".to_string(),
+            disabled: true,
+            kind: GitQuickActionKind::ShowHint,
+            action: None,
+            hint: Some(format!(
+                "Create and checkout a ref before pushing or opening a {}.",
+                terminology.singular
+            )),
+        };
+    }
+
+    if has_changes {
+        if !git_status.has_upstream && !has_primary_remote {
+            return git_run_action("Commit", GitStackedAction::Commit);
+        }
+        if has_open_pr || is_default_ref {
+            return git_run_action("Commit & push", GitStackedAction::CommitPush);
+        }
+        return git_run_action(
+            &format!("Commit, push & {}", terminology.short_label),
+            GitStackedAction::CommitPushPr,
+        );
+    }
+
+    if !git_status.has_upstream {
+        if !has_primary_remote {
+            if has_open_pr && !is_ahead {
+                return git_open_pr_action(&format!("View {}", terminology.short_label));
+            }
+            return GitQuickAction {
+                label: "Publish repository".to_string(),
+                disabled: false,
+                kind: GitQuickActionKind::OpenPublish,
+                action: None,
+                hint: None,
+            };
+        }
+        if !is_ahead {
+            if has_open_pr {
+                return git_open_pr_action(&format!("View {}", terminology.short_label));
+            }
+            return git_show_hint_action("Push", "No local commits to push.");
+        }
+        if has_open_pr || is_default_ref {
+            return git_run_action(
+                "Push",
+                if is_default_ref {
+                    GitStackedAction::CommitPush
+                } else {
+                    GitStackedAction::Push
+                },
+            );
+        }
+        return git_run_action(
+            &format!("Push & create {}", terminology.short_label),
+            GitStackedAction::CreatePr,
+        );
+    }
+
+    if is_diverged {
+        return git_show_hint_action(
+            "Sync ref",
+            "Branch has diverged from upstream. Rebase/merge first.",
+        );
+    }
+
+    if is_behind {
+        return GitQuickAction {
+            label: "Pull".to_string(),
+            disabled: false,
+            kind: GitQuickActionKind::RunPull,
+            action: None,
+            hint: None,
+        };
+    }
+
+    if is_ahead {
+        if has_open_pr || is_default_ref {
+            return git_run_action(
+                "Push",
+                if is_default_ref {
+                    GitStackedAction::CommitPush
+                } else {
+                    GitStackedAction::Push
+                },
+            );
+        }
+        return git_run_action(
+            &format!("Push & create {}", terminology.short_label),
+            GitStackedAction::CreatePr,
+        );
+    }
+
+    if has_open_pr && git_status.has_upstream {
+        return git_open_pr_action(&format!("View {}", terminology.short_label));
+    }
+
+    if has_default_branch_delta && !is_default_ref {
+        return git_run_action(
+            &format!("Create {}", terminology.short_label),
+            GitStackedAction::CreatePr,
+        );
+    }
+
+    git_show_hint_action("Commit", "Branch is up to date. No action needed.")
+}
+
+fn git_run_action(label: &str, action: GitStackedAction) -> GitQuickAction {
+    GitQuickAction {
+        label: label.to_string(),
+        disabled: false,
+        kind: GitQuickActionKind::RunAction,
+        action: Some(action),
+        hint: None,
+    }
+}
+
+fn git_open_pr_action(label: &str) -> GitQuickAction {
+    GitQuickAction {
+        label: label.to_string(),
+        disabled: false,
+        kind: GitQuickActionKind::OpenPr,
+        action: None,
+        hint: None,
+    }
+}
+
+fn git_show_hint_action(label: &str, hint: &str) -> GitQuickAction {
+    GitQuickAction {
+        label: label.to_string(),
+        disabled: true,
+        kind: GitQuickActionKind::ShowHint,
+        action: None,
+        hint: Some(hint.to_string()),
+    }
+}
+
+pub fn build_git_action_progress_stages(
+    action: GitStackedAction,
+    has_custom_commit_message: bool,
+    has_working_tree_changes: bool,
+    push_target: Option<&str>,
+    feature_branch: bool,
+    should_push_before_pr: bool,
+    terminology: Option<&shared::ChangeRequestTerminology>,
+) -> Vec<String> {
+    let terminology = terminology
+        .cloned()
+        .unwrap_or(shared::DEFAULT_CHANGE_REQUEST_TERMINOLOGY);
+    let push_stage = push_target
+        .filter(|target| !target.is_empty())
+        .map(|target| format!("Pushing to {target}..."))
+        .unwrap_or_else(|| "Pushing...".to_string());
+    let pr_stages = vec![
+        format!("Preparing {}...", terminology.short_label),
+        format!("Generating {} content...", terminology.short_label),
+        format!("Creating {}...", terminology.singular),
+    ];
+
+    if action == GitStackedAction::Push {
+        return vec![push_stage];
+    }
+    if action == GitStackedAction::CreatePr {
+        if should_push_before_pr {
+            let mut stages = vec![push_stage];
+            stages.extend(pr_stages);
+            return stages;
+        }
+        return pr_stages;
+    }
+
+    let mut stages = Vec::new();
+    if feature_branch {
+        stages.push("Preparing feature ref...".to_string());
+    }
+    let should_include_commit_stages =
+        action == GitStackedAction::Commit || has_working_tree_changes;
+    if should_include_commit_stages {
+        if !has_custom_commit_message {
+            stages.push("Generating commit message...".to_string());
+        }
+        stages.push("Committing...".to_string());
+    }
+    if action == GitStackedAction::Commit {
+        return stages;
+    }
+    stages.push(push_stage);
+    if action == GitStackedAction::CommitPush {
+        return stages;
+    }
+    stages.extend(pr_stages);
+    stages
+}
+
+pub fn requires_default_branch_confirmation(
+    action: GitStackedAction,
+    is_default_ref: bool,
+) -> bool {
+    is_default_ref
+        && matches!(
+            action,
+            GitStackedAction::Push
+                | GitStackedAction::CreatePr
+                | GitStackedAction::CommitPush
+                | GitStackedAction::CommitPushPr
+        )
+}
+
+pub fn resolve_default_branch_action_dialog_copy(
+    action: GitStackedAction,
+    branch_name: &str,
+    includes_commit: bool,
+    terminology: Option<&shared::ChangeRequestTerminology>,
+) -> DefaultBranchActionDialogCopy {
+    let terminology = terminology
+        .cloned()
+        .unwrap_or(shared::DEFAULT_CHANGE_REQUEST_TERMINOLOGY);
+    let suffix = format!(
+        " on \"{branch_name}\". You can continue on this ref or create a feature ref and run the same action there."
+    );
+
+    if action == GitStackedAction::Push || action == GitStackedAction::CommitPush {
+        if includes_commit {
+            return DefaultBranchActionDialogCopy {
+                title: "Commit & push to default ref?".to_string(),
+                description: format!("This action will commit and push changes{suffix}"),
+                continue_label: format!("Commit & push to {branch_name}"),
+            };
+        }
+        return DefaultBranchActionDialogCopy {
+            title: "Push to default ref?".to_string(),
+            description: format!("This action will push local commits{suffix}"),
+            continue_label: format!("Push to {branch_name}"),
+        };
+    }
+
+    if includes_commit {
+        return DefaultBranchActionDialogCopy {
+            title: format!(
+                "Commit, push & create {} from default ref?",
+                terminology.short_label
+            ),
+            description: format!(
+                "This action will commit, push, and create a {}{suffix}",
+                terminology.singular
+            ),
+            continue_label: format!("Commit, push & create {}", terminology.short_label),
+        };
+    }
+    DefaultBranchActionDialogCopy {
+        title: format!(
+            "Push & create {} from default ref?",
+            terminology.short_label
+        ),
+        description: format!(
+            "This action will push local commits and create a {}{suffix}",
+            terminology.singular
+        ),
+        continue_label: format!("Push & create {}", terminology.short_label),
+    }
 }
 
 pub fn project_script_cwd(project_cwd: &str, worktree_path: Option<&str>) -> String {
@@ -41768,6 +42107,217 @@ mod tests {
             vec![("Commit", false), ("Push", true), ("Create PR", true)]
         );
         assert!(build_git_action_menu_items(None, false, true).is_empty());
+    }
+
+    #[test]
+    fn git_action_logic_matches_upstream_quick_actions_and_dialogs() {
+        let clean = GitStatusSnapshot {
+            ref_name: Some("feature/test".to_string()),
+            has_working_tree_changes: false,
+            has_upstream: true,
+            ahead_count: 0,
+            behind_count: 0,
+            ahead_of_default_count: Some(0),
+            has_open_pr: false,
+        };
+        assert_eq!(
+            resolve_git_quick_action(Some(&clean), true, false, true, None),
+            GitQuickAction {
+                label: "Commit".to_string(),
+                disabled: true,
+                kind: GitQuickActionKind::ShowHint,
+                action: None,
+                hint: Some("Git action in progress.".to_string()),
+            }
+        );
+        assert_eq!(
+            resolve_git_quick_action(None, false, false, true, None)
+                .hint
+                .as_deref(),
+            Some("Git status is unavailable.")
+        );
+
+        let dirty = GitStatusSnapshot {
+            has_working_tree_changes: true,
+            ..clean.clone()
+        };
+        assert_eq!(
+            resolve_git_quick_action(Some(&dirty), false, false, true, None),
+            GitQuickAction {
+                label: "Commit, push & PR".to_string(),
+                disabled: false,
+                kind: GitQuickActionKind::RunAction,
+                action: Some(GitStackedAction::CommitPushPr),
+                hint: None,
+            }
+        );
+        let gitlab_terms = shared::ChangeRequestTerminology {
+            short_label: "MR",
+            singular: "merge request",
+        };
+        assert_eq!(
+            resolve_git_quick_action(Some(&dirty), false, false, true, Some(&gitlab_terms)).label,
+            "Commit, push & MR"
+        );
+
+        let no_remote_dirty = GitStatusSnapshot {
+            has_upstream: false,
+            ..dirty.clone()
+        };
+        assert_eq!(
+            resolve_git_quick_action(Some(&no_remote_dirty), false, false, false, None).action,
+            Some(GitStackedAction::Commit)
+        );
+        let publish = GitStatusSnapshot {
+            has_working_tree_changes: false,
+            has_upstream: false,
+            ahead_count: 2,
+            ..clean.clone()
+        };
+        assert_eq!(
+            resolve_git_quick_action(Some(&publish), false, false, false, None).kind,
+            GitQuickActionKind::OpenPublish
+        );
+        assert_eq!(
+            resolve_git_quick_action(
+                Some(&GitStatusSnapshot {
+                    behind_count: 2,
+                    ..clean.clone()
+                }),
+                false,
+                false,
+                true,
+                None,
+            )
+            .kind,
+            GitQuickActionKind::RunPull
+        );
+        assert_eq!(
+            resolve_git_quick_action(
+                Some(&GitStatusSnapshot {
+                    ahead_count: 2,
+                    behind_count: 1,
+                    ..clean.clone()
+                }),
+                false,
+                false,
+                true,
+                None,
+            )
+            .hint
+            .as_deref(),
+            Some("Branch has diverged from upstream. Rebase/merge first.")
+        );
+        assert_eq!(
+            resolve_git_quick_action(
+                Some(&GitStatusSnapshot {
+                    ahead_of_default_count: Some(1),
+                    ..clean.clone()
+                }),
+                false,
+                false,
+                true,
+                None,
+            ),
+            GitQuickAction {
+                label: "Create PR".to_string(),
+                disabled: false,
+                kind: GitQuickActionKind::RunAction,
+                action: Some(GitStackedAction::CreatePr),
+                hint: None,
+            }
+        );
+
+        assert!(!requires_default_branch_confirmation(
+            GitStackedAction::Commit,
+            true
+        ));
+        assert!(requires_default_branch_confirmation(
+            GitStackedAction::CommitPushPr,
+            true
+        ));
+        assert!(!requires_default_branch_confirmation(
+            GitStackedAction::Push,
+            false
+        ));
+
+        assert_eq!(
+            build_git_action_progress_stages(
+                GitStackedAction::CreatePr,
+                false,
+                false,
+                Some("origin/feature/test"),
+                false,
+                true,
+                None,
+            ),
+            vec![
+                "Pushing to origin/feature/test...".to_string(),
+                "Preparing PR...".to_string(),
+                "Generating PR content...".to_string(),
+                "Creating pull request...".to_string(),
+            ]
+        );
+        assert_eq!(
+            build_git_action_progress_stages(
+                GitStackedAction::CommitPushPr,
+                true,
+                true,
+                Some("origin/feature/test"),
+                false,
+                false,
+                None,
+            ),
+            vec![
+                "Committing...".to_string(),
+                "Pushing to origin/feature/test...".to_string(),
+                "Preparing PR...".to_string(),
+                "Generating PR content...".to_string(),
+                "Creating pull request...".to_string(),
+            ]
+        );
+        assert_eq!(
+            build_git_action_progress_stages(
+                GitStackedAction::Commit,
+                false,
+                true,
+                None,
+                true,
+                false,
+                None,
+            ),
+            vec![
+                "Preparing feature ref...".to_string(),
+                "Generating commit message...".to_string(),
+                "Committing...".to_string(),
+            ]
+        );
+
+        assert_eq!(
+            resolve_default_branch_action_dialog_copy(
+                GitStackedAction::CommitPushPr,
+                "main",
+                false,
+                None,
+            ),
+            DefaultBranchActionDialogCopy {
+                title: "Push & create PR from default ref?".to_string(),
+                description:
+                    "This action will push local commits and create a pull request on \"main\". You can continue on this ref or create a feature ref and run the same action there."
+                        .to_string(),
+                continue_label: "Push & create PR".to_string(),
+            }
+        );
+        assert_eq!(
+            resolve_default_branch_action_dialog_copy(
+                GitStackedAction::CommitPush,
+                "main",
+                false,
+                None,
+            )
+            .continue_label,
+            "Push to main"
+        );
     }
 
     #[test]

@@ -2568,10 +2568,10 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
         || path == "apps/web/src/components/GitActionsControl.logic.ts"
     {
         (
-            "GitActionsControl clean/default branch menu and quick-action derivation plus progress-stage helpers in crates/r3_core/src/lib.rs",
+            "GitActionsControl menu enablement, quick-action derivation, progress-stage sequencing, default-ref confirmation dialog copy, live branch update rules, and temporary worktree branch guards in crates/r3_core/src/lib.rs",
             "partial",
-            "`cargo test --workspace git_action_menu_items_match_upstream_clean_main_status`",
-            "Port the remaining upstream git action scenarios, dialog copy, branch update rules, progress states, and live GPUI action execution.",
+            "`cargo test --workspace git_action_menu_items_match_upstream_clean_main_status`; `cargo test --workspace git_action_logic_matches_upstream_quick_actions_and_dialogs`; `cargo test --workspace git_actions_browser_contracts_match_upstream_component`",
+            "Port remaining provider-specific menu labels, disabled-reason tooltips, publish readiness helpers, full runStackedAction result handling, progress event subscription, and live GPUI action execution.",
         )
     } else if path == "apps/web/src/components/Sidebar.logic.test.ts"
         || path == "apps/web/src/components/Sidebar.logic.ts"
