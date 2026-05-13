@@ -1795,6 +1795,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core local_api_selection_and_fallback_contracts_match_upstream`",
             "Wire exact async RPC forwarding, environment API composition, browser storage side effects, desktop bridge calls, and reset hooks into live GPUI runtime.",
         )
+    } else if path == "apps/web/src/orchestrationRecovery.ts"
+        || path == "apps/web/src/orchestrationRecovery.test.ts"
+    {
+        (
+            "orchestration recovery coordinator state machine for bootstrap snapshots, sequence-gap replay, deferred live events, applied batch sorting, replay failure fallback, no-progress replay retry/backoff, retry cap, and frontier reset in crates/r3_core/src/orchestration.rs",
+            "partial",
+            "`cargo test -p r3_core orchestration_recovery`",
+            "Wire the coordinator into live GPUI websocket shell subscriptions, snapshot/replay RPC calls, and retry timers.",
+        )
     } else if path == "apps/web/src/markdown-links.ts"
         || path == "apps/web/src/markdown-links.test.ts"
     {

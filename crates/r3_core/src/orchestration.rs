@@ -20,6 +20,241 @@ pub struct OrchestrationProposedPlanRef {
     pub plan: ProposedPlan,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrchestrationRecoveryReason {
+    Bootstrap,
+    SequenceGap,
+    Resubscribe,
+    ReplayFailed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OrchestrationRecoveryPhaseKind {
+    Snapshot,
+    Replay,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OrchestrationRecoveryPhase {
+    pub kind: OrchestrationRecoveryPhaseKind,
+    pub reason: OrchestrationRecoveryReason,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct OrchestrationRecoveryState {
+    pub latest_sequence: u64,
+    pub highest_observed_sequence: u64,
+    pub bootstrapped: bool,
+    pub pending_replay: bool,
+    pub in_flight: Option<OrchestrationRecoveryPhase>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReplayRecoveryCompletion {
+    pub replay_made_progress: bool,
+    pub should_replay: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReplayRetryTracker {
+    pub attempts: u32,
+    pub latest_sequence: u64,
+    pub highest_observed_sequence: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReplayRetryDecision {
+    pub should_retry: bool,
+    pub delay_ms: u64,
+    pub tracker: Option<ReplayRetryTracker>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DomainEventClassification {
+    Ignore,
+    Defer,
+    Recover,
+    Apply,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct OrchestrationRecoveryCoordinator {
+    state: OrchestrationRecoveryState,
+    replay_start_sequence: Option<u64>,
+}
+
+impl OrchestrationRecoveryCoordinator {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn state(&self) -> OrchestrationRecoveryState {
+        self.state
+    }
+
+    fn observe_sequence(&mut self, sequence: u64) {
+        self.state.highest_observed_sequence = self.state.highest_observed_sequence.max(sequence);
+    }
+
+    fn resolve_replay_need_after_recovery(&mut self) -> bool {
+        let pending_replay_before_reset = self.state.pending_replay;
+        let observed_ahead = self.state.highest_observed_sequence > self.state.latest_sequence;
+        let should_replay = pending_replay_before_reset || observed_ahead;
+        self.state.pending_replay = false;
+        should_replay
+    }
+
+    pub fn classify_domain_event(&mut self, sequence: u64) -> DomainEventClassification {
+        self.observe_sequence(sequence);
+        if sequence <= self.state.latest_sequence {
+            return DomainEventClassification::Ignore;
+        }
+        if !self.state.bootstrapped || self.state.in_flight.is_some() {
+            self.state.pending_replay = true;
+            return DomainEventClassification::Defer;
+        }
+        if sequence != self.state.latest_sequence + 1 {
+            self.state.pending_replay = true;
+            return DomainEventClassification::Recover;
+        }
+        DomainEventClassification::Apply
+    }
+
+    pub fn mark_event_batch_applied(&mut self, events: &[u64]) -> Vec<u64> {
+        let mut next_events = events
+            .iter()
+            .copied()
+            .filter(|sequence| *sequence > self.state.latest_sequence)
+            .collect::<Vec<_>>();
+        next_events.sort_unstable();
+        if let Some(last) = next_events.last().copied() {
+            self.state.latest_sequence = last;
+            self.state.highest_observed_sequence = self
+                .state
+                .highest_observed_sequence
+                .max(self.state.latest_sequence);
+        }
+        next_events
+    }
+
+    pub fn begin_snapshot_recovery(&mut self, reason: OrchestrationRecoveryReason) -> bool {
+        if self.state.in_flight.is_some() {
+            self.state.pending_replay = true;
+            return false;
+        }
+        self.state.in_flight = Some(OrchestrationRecoveryPhase {
+            kind: OrchestrationRecoveryPhaseKind::Snapshot,
+            reason,
+        });
+        true
+    }
+
+    pub fn complete_snapshot_recovery(&mut self, snapshot_sequence: u64) -> bool {
+        self.state.latest_sequence = self.state.latest_sequence.max(snapshot_sequence);
+        self.state.highest_observed_sequence = self
+            .state
+            .highest_observed_sequence
+            .max(self.state.latest_sequence);
+        self.state.bootstrapped = true;
+        self.state.in_flight = None;
+        self.resolve_replay_need_after_recovery()
+    }
+
+    pub fn fail_snapshot_recovery(&mut self) {
+        self.state.in_flight = None;
+    }
+
+    pub fn begin_replay_recovery(&mut self, reason: OrchestrationRecoveryReason) -> bool {
+        if !self.state.bootstrapped
+            || self.state.in_flight.is_some_and(|phase| {
+                phase.kind == OrchestrationRecoveryPhaseKind::Snapshot
+                    || phase.kind == OrchestrationRecoveryPhaseKind::Replay
+            })
+        {
+            self.state.pending_replay = true;
+            return false;
+        }
+        self.state.pending_replay = false;
+        self.replay_start_sequence = Some(self.state.latest_sequence);
+        self.state.in_flight = Some(OrchestrationRecoveryPhase {
+            kind: OrchestrationRecoveryPhaseKind::Replay,
+            reason,
+        });
+        true
+    }
+
+    pub fn complete_replay_recovery(&mut self) -> ReplayRecoveryCompletion {
+        let replay_made_progress = self
+            .replay_start_sequence
+            .is_some_and(|start| self.state.latest_sequence > start);
+        self.replay_start_sequence = None;
+        self.state.in_flight = None;
+        ReplayRecoveryCompletion {
+            replay_made_progress,
+            should_replay: self.resolve_replay_need_after_recovery(),
+        }
+    }
+
+    pub fn fail_replay_recovery(&mut self) {
+        self.replay_start_sequence = None;
+        self.state.bootstrapped = false;
+        self.state.in_flight = None;
+    }
+}
+
+pub fn derive_replay_retry_decision(
+    previous_tracker: Option<ReplayRetryTracker>,
+    completion: ReplayRecoveryCompletion,
+    recovery_state: OrchestrationRecoveryState,
+    base_delay_ms: u64,
+    max_no_progress_retries: u32,
+) -> ReplayRetryDecision {
+    if !completion.should_replay {
+        return ReplayRetryDecision {
+            should_retry: false,
+            delay_ms: 0,
+            tracker: None,
+        };
+    }
+    if completion.replay_made_progress {
+        return ReplayRetryDecision {
+            should_retry: true,
+            delay_ms: 0,
+            tracker: None,
+        };
+    }
+
+    let same_frontier = previous_tracker.is_some_and(|tracker| {
+        tracker.latest_sequence == recovery_state.latest_sequence
+            && tracker.highest_observed_sequence == recovery_state.highest_observed_sequence
+    });
+    let attempts = if same_frontier {
+        previous_tracker
+            .map(|tracker| tracker.attempts + 1)
+            .unwrap_or(1)
+    } else {
+        1
+    };
+
+    if attempts > max_no_progress_retries {
+        return ReplayRetryDecision {
+            should_retry: false,
+            delay_ms: 0,
+            tracker: None,
+        };
+    }
+
+    ReplayRetryDecision {
+        should_retry: true,
+        delay_ms: base_delay_ms * 2_u64.pow(attempts.saturating_sub(1)),
+        tracker: Some(ReplayRetryTracker {
+            attempts,
+            latest_sequence: recovery_state.latest_sequence,
+            highest_observed_sequence: recovery_state.highest_observed_sequence,
+        }),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlannedOrchestrationEvent {
     pub event_id: String,
@@ -4513,6 +4748,165 @@ mod tests {
             assistant_message_id: None,
             completed_at: "2026-01-01T00:00:00.000Z".to_string(),
         }
+    }
+
+    #[test]
+    fn orchestration_recovery_coordinator_matches_upstream_state_machine() {
+        let mut coordinator = OrchestrationRecoveryCoordinator::new();
+        assert!(coordinator.begin_snapshot_recovery(OrchestrationRecoveryReason::Bootstrap));
+        assert_eq!(
+            coordinator.classify_domain_event(4),
+            DomainEventClassification::Defer
+        );
+        assert!(coordinator.complete_snapshot_recovery(2));
+        assert_eq!(
+            coordinator.state(),
+            OrchestrationRecoveryState {
+                latest_sequence: 2,
+                highest_observed_sequence: 4,
+                bootstrapped: true,
+                pending_replay: false,
+                in_flight: None,
+            }
+        );
+
+        let mut gap = OrchestrationRecoveryCoordinator::new();
+        gap.begin_snapshot_recovery(OrchestrationRecoveryReason::Bootstrap);
+        gap.complete_snapshot_recovery(3);
+        assert_eq!(
+            gap.classify_domain_event(5),
+            DomainEventClassification::Recover
+        );
+        assert!(gap.begin_replay_recovery(OrchestrationRecoveryReason::SequenceGap));
+        assert_eq!(
+            gap.state().in_flight,
+            Some(OrchestrationRecoveryPhase {
+                kind: OrchestrationRecoveryPhaseKind::Replay,
+                reason: OrchestrationRecoveryReason::SequenceGap,
+            })
+        );
+
+        let mut live = OrchestrationRecoveryCoordinator::new();
+        live.begin_snapshot_recovery(OrchestrationRecoveryReason::Bootstrap);
+        live.complete_snapshot_recovery(3);
+        assert_eq!(
+            live.classify_domain_event(4),
+            DomainEventClassification::Apply
+        );
+        assert_eq!(live.mark_event_batch_applied(&[4]), vec![4]);
+        assert_eq!(live.state().latest_sequence, 4);
+
+        gap.classify_domain_event(7);
+        assert_eq!(gap.mark_event_batch_applied(&[4, 5, 6]), vec![4, 5, 6]);
+        assert_eq!(
+            gap.complete_replay_recovery(),
+            ReplayRecoveryCompletion {
+                replay_made_progress: true,
+                should_replay: true,
+            }
+        );
+
+        let mut no_progress = OrchestrationRecoveryCoordinator::new();
+        no_progress.begin_snapshot_recovery(OrchestrationRecoveryReason::Bootstrap);
+        no_progress.complete_snapshot_recovery(3);
+        no_progress.classify_domain_event(5);
+        no_progress.begin_replay_recovery(OrchestrationRecoveryReason::SequenceGap);
+        assert_eq!(
+            no_progress.complete_replay_recovery(),
+            ReplayRecoveryCompletion {
+                replay_made_progress: false,
+                should_replay: true,
+            }
+        );
+
+        let mut failed = OrchestrationRecoveryCoordinator::new();
+        failed.begin_snapshot_recovery(OrchestrationRecoveryReason::Bootstrap);
+        failed.complete_snapshot_recovery(3);
+        failed.begin_replay_recovery(OrchestrationRecoveryReason::SequenceGap);
+        failed.fail_replay_recovery();
+        assert!(!failed.state().bootstrapped);
+        assert!(failed.begin_snapshot_recovery(OrchestrationRecoveryReason::ReplayFailed));
+    }
+
+    #[test]
+    fn orchestration_replay_retry_decision_matches_upstream_backoff() {
+        assert_eq!(
+            derive_replay_retry_decision(
+                Some(ReplayRetryTracker {
+                    attempts: 2,
+                    latest_sequence: 3,
+                    highest_observed_sequence: 5,
+                }),
+                ReplayRecoveryCompletion {
+                    replay_made_progress: true,
+                    should_replay: true,
+                },
+                OrchestrationRecoveryState {
+                    latest_sequence: 5,
+                    highest_observed_sequence: 5,
+                    ..OrchestrationRecoveryState::default()
+                },
+                100,
+                3,
+            ),
+            ReplayRetryDecision {
+                should_retry: true,
+                delay_ms: 0,
+                tracker: None,
+            }
+        );
+
+        let no_progress = ReplayRecoveryCompletion {
+            replay_made_progress: false,
+            should_replay: true,
+        };
+        let frontier = OrchestrationRecoveryState {
+            latest_sequence: 3,
+            highest_observed_sequence: 5,
+            ..OrchestrationRecoveryState::default()
+        };
+        let first = derive_replay_retry_decision(None, no_progress, frontier, 100, 3);
+        let second = derive_replay_retry_decision(first.tracker, no_progress, frontier, 100, 3);
+        let third = derive_replay_retry_decision(second.tracker, no_progress, frontier, 100, 3);
+        let fourth = derive_replay_retry_decision(third.tracker, no_progress, frontier, 100, 3);
+
+        assert_eq!(first.delay_ms, 100);
+        assert_eq!(first.tracker.unwrap().attempts, 1);
+        assert_eq!(second.delay_ms, 200);
+        assert_eq!(second.tracker.unwrap().attempts, 2);
+        assert_eq!(third.delay_ms, 400);
+        assert_eq!(third.tracker.unwrap().attempts, 3);
+        assert_eq!(
+            fourth,
+            ReplayRetryDecision {
+                should_retry: false,
+                delay_ms: 0,
+                tracker: None,
+            }
+        );
+
+        assert_eq!(
+            derive_replay_retry_decision(
+                third.tracker,
+                no_progress,
+                OrchestrationRecoveryState {
+                    latest_sequence: 3,
+                    highest_observed_sequence: 6,
+                    ..OrchestrationRecoveryState::default()
+                },
+                100,
+                3,
+            ),
+            ReplayRetryDecision {
+                should_retry: true,
+                delay_ms: 100,
+                tracker: Some(ReplayRetryTracker {
+                    attempts: 1,
+                    latest_sequence: 3,
+                    highest_observed_sequence: 6,
+                }),
+            }
+        );
     }
 
     #[test]
