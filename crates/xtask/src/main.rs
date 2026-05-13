@@ -1767,6 +1767,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core proposed_plan_helpers_match_upstream_contract`",
             "Wire helpers into live GPUI proposed-plan cards, export/download action, and implementation-thread creation.",
         )
+    } else if path == "apps/web/src/pullRequestReference.ts"
+        || path == "apps/web/src/pullRequestReference.test.ts"
+    {
+        (
+            "pull request reference parser for GitHub/GitLab/Azure DevOps URLs, raw `42`/`#42` references, and `gh`/`glab`/`az` checkout commands in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core pull_request_reference_parser_matches_upstream_contract`",
+            "Wire parser into the live GPUI pull-request checkout/reference entry points.",
+        )
     } else if path == "apps/web/src/pendingUserInput.ts"
         || path == "apps/web/src/pendingUserInput.test.ts"
     {

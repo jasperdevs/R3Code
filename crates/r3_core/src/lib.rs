@@ -19795,6 +19795,174 @@ pub fn normalize_plan_markdown_for_export(plan_markdown: &str) -> String {
     format!("{}\n", plan_markdown.trim_end())
 }
 
+fn strip_prefix_case_insensitive<'a>(input: &'a str, prefix: &str) -> Option<&'a str> {
+    let prefix_len = prefix.len();
+    if input.len() < prefix_len {
+        return None;
+    }
+    let (head, rest) = input.split_at(prefix_len);
+    head.eq_ignore_ascii_case(prefix).then_some(rest)
+}
+
+fn consume_word_case_insensitive<'a>(input: &'a str, word: &str) -> Option<&'a str> {
+    let rest = strip_prefix_case_insensitive(input, word)?;
+    if rest.chars().next().is_some_and(|ch| !ch.is_whitespace()) {
+        return None;
+    }
+    Some(rest)
+}
+
+fn consume_required_whitespace(input: &str) -> Option<&str> {
+    let trimmed = input.trim_start();
+    (trimmed.len() < input.len()).then_some(trimmed)
+}
+
+fn parse_cli_checkout_args<'a>(input: &'a str, words: &[&str]) -> Option<&'a str> {
+    let mut rest = input;
+    for word in words {
+        rest = consume_word_case_insensitive(rest, word)?;
+        rest = consume_required_whitespace(rest)?;
+    }
+    (!rest.is_empty()).then_some(rest.trim())
+}
+
+fn parse_azure_devops_checkout_reference(args: &str) -> Option<String> {
+    let parts = args
+        .trim()
+        .split_whitespace()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>();
+    for (index, part) in parts.iter().enumerate() {
+        if *part == "--id" || *part == "-i" {
+            return parts.get(index + 1).map(|next| (*next).to_string());
+        }
+        if let Some(id) = part.strip_prefix("--id=") {
+            return (!id.is_empty()).then(|| id.to_string());
+        }
+    }
+    parts
+        .iter()
+        .find(|part| !part.starts_with('-'))
+        .map(|part| (*part).to_string())
+}
+
+fn parse_numeric_url_tail(tail: &str) -> bool {
+    let digit_count = tail.chars().take_while(|ch| ch.is_ascii_digit()).count();
+    if digit_count == 0 {
+        return false;
+    }
+    let rest = &tail[digit_count..];
+    rest.is_empty() || rest.starts_with('/') || rest.starts_with('?') || rest.starts_with('#')
+}
+
+fn is_github_pull_request_url(input: &str) -> bool {
+    let Some(path) = strip_prefix_case_insensitive(input, "https://github.com/") else {
+        return false;
+    };
+    if path.chars().any(char::is_whitespace) {
+        return false;
+    }
+    let parts = path.splitn(4, '/').collect::<Vec<_>>();
+    parts.len() == 4
+        && !parts[0].is_empty()
+        && !parts[1].is_empty()
+        && parts[2].eq_ignore_ascii_case("pull")
+        && parse_numeric_url_tail(parts[3])
+}
+
+fn is_gitlab_merge_request_url(input: &str) -> bool {
+    let Some(rest) = strip_prefix_case_insensitive(input, "https://") else {
+        return false;
+    };
+    if rest.chars().any(char::is_whitespace) {
+        return false;
+    }
+    let Some((host, path)) = rest.split_once('/') else {
+        return false;
+    };
+    if host.is_empty() || !host.to_ascii_lowercase().contains("gitlab") {
+        return false;
+    }
+    let Some((project_path, tail)) = path
+        .to_ascii_lowercase()
+        .find("/-/merge_requests/")
+        .map(|index| path.split_at(index))
+    else {
+        return false;
+    };
+    let tail = &tail["/-/merge_requests/".len()..];
+    !project_path.is_empty() && parse_numeric_url_tail(tail)
+}
+
+fn is_azure_devops_pull_request_url(input: &str) -> bool {
+    let Some(rest) = strip_prefix_case_insensitive(input, "https://") else {
+        return false;
+    };
+    if rest.chars().any(char::is_whitespace) {
+        return false;
+    }
+    let Some((host, path)) = rest.split_once('/') else {
+        return false;
+    };
+    if host.is_empty() {
+        return false;
+    }
+
+    let segments = path.split('/').collect::<Vec<_>>();
+    if host.eq_ignore_ascii_case("dev.azure.com") {
+        return segments.len() >= 6
+            && !segments[0].is_empty()
+            && !segments[1].is_empty()
+            && segments[2].eq_ignore_ascii_case("_git")
+            && !segments[3].is_empty()
+            && segments[4].eq_ignore_ascii_case("pullrequest")
+            && parse_numeric_url_tail(segments[5]);
+    }
+
+    host.to_ascii_lowercase().ends_with(".visualstudio.com")
+        && segments.len() >= 5
+        && !segments[0].is_empty()
+        && segments[1].eq_ignore_ascii_case("_git")
+        && !segments[2].is_empty()
+        && segments[3].eq_ignore_ascii_case("pullrequest")
+        && parse_numeric_url_tail(segments[4])
+}
+
+fn parse_pull_request_number(input: &str) -> Option<String> {
+    let number = input.strip_prefix('#').unwrap_or(input);
+    (!number.is_empty() && number.chars().all(|ch| ch.is_ascii_digit())).then(|| number.to_string())
+}
+
+pub fn parse_pull_request_reference(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let normalized_input = parse_cli_checkout_args(trimmed, &["gh", "pr", "checkout"])
+        .map(str::to_string)
+        .or_else(|| {
+            parse_cli_checkout_args(trimmed, &["glab", "mr", "checkout"]).map(str::to_string)
+        })
+        .or_else(|| {
+            parse_cli_checkout_args(trimmed, &["az", "repos", "pr", "checkout"])
+                .and_then(parse_azure_devops_checkout_reference)
+        })
+        .unwrap_or_else(|| trimmed.to_string());
+    if normalized_input.is_empty() {
+        return None;
+    }
+
+    if is_github_pull_request_url(&normalized_input)
+        || is_gitlab_merge_request_url(&normalized_input)
+        || is_azure_devops_pull_request_url(&normalized_input)
+    {
+        return Some(normalized_input);
+    }
+
+    parse_pull_request_number(&normalized_input)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurnDiffFileChange {
     pub path: String,
@@ -24661,6 +24829,69 @@ mod tests {
             normalize_plan_markdown_for_export("# Ship it\n\n- step 1\n\n"),
             "# Ship it\n\n- step 1\n"
         );
+    }
+
+    #[test]
+    fn pull_request_reference_parser_matches_upstream_contract() {
+        assert_eq!(
+            parse_pull_request_reference("https://github.com/pingdotgg/t3code/pull/42").as_deref(),
+            Some("https://github.com/pingdotgg/t3code/pull/42")
+        );
+        assert_eq!(
+            parse_pull_request_reference(
+                "https://dev.azure.com/acme/project/_git/t3code/pullrequest/42",
+            )
+            .as_deref(),
+            Some("https://dev.azure.com/acme/project/_git/t3code/pullrequest/42")
+        );
+        assert_eq!(
+            parse_pull_request_reference("https://gitlab.com/group/project/-/merge_requests/42")
+                .as_deref(),
+            Some("https://gitlab.com/group/project/-/merge_requests/42")
+        );
+        assert_eq!(
+            parse_pull_request_reference(
+                "https://acme.visualstudio.com/project/_git/t3code/pullrequest/42",
+            )
+            .as_deref(),
+            Some("https://acme.visualstudio.com/project/_git/t3code/pullrequest/42")
+        );
+
+        assert_eq!(parse_pull_request_reference("42").as_deref(), Some("42"));
+        assert_eq!(parse_pull_request_reference("#42").as_deref(), Some("42"));
+        assert_eq!(
+            parse_pull_request_reference("gh pr checkout 42").as_deref(),
+            Some("42")
+        );
+        assert_eq!(
+            parse_pull_request_reference("gh pr checkout #42").as_deref(),
+            Some("42")
+        );
+        assert_eq!(
+            parse_pull_request_reference(
+                "gh pr checkout https://github.com/pingdotgg/t3code/pull/42"
+            )
+            .as_deref(),
+            Some("https://github.com/pingdotgg/t3code/pull/42")
+        );
+        assert_eq!(
+            parse_pull_request_reference("glab mr checkout 42").as_deref(),
+            Some("42")
+        );
+        assert_eq!(
+            parse_pull_request_reference("az repos pr checkout --id 42").as_deref(),
+            Some("42")
+        );
+        assert_eq!(
+            parse_pull_request_reference("az repos pr checkout --id=42").as_deref(),
+            Some("42")
+        );
+        assert_eq!(
+            parse_pull_request_reference("az repos pr checkout --id 42 --remote-name origin")
+                .as_deref(),
+            Some("42")
+        );
+        assert_eq!(parse_pull_request_reference("feature/my-branch"), None);
     }
 
     #[test]
