@@ -1991,6 +1991,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core desktop_updates_runtime_contracts`",
             "Wire live query cache updates and desktopBridge update-state subscription into GPUI settings state.",
         )
+    } else if path == "apps/web/src/lib/gitReactQuery.ts"
+        || path == "apps/web/src/lib/gitReactQuery.test.ts"
+    {
+        (
+            "git React Query key factories, cwd-scoped mutation keys, branch-search option metadata, and invalidation target selection in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core git_react_query_keys_match_upstream_scoping`",
+            "Wire live environment API query/mutation execution, progress callbacks, and query-client invalidation into GPUI git flows.",
+        )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
             "logical project path normalization, physical/grouping/order keys, repository-scoped keys, settings override resolution, ref fallback, and group-label helpers in crates/r3_core/src/lib.rs",

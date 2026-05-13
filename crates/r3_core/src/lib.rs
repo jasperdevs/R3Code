@@ -414,6 +414,26 @@ pub struct ThreadActionStartPlan {
     pub options: ThreadActionNewThreadOptions,
 }
 
+pub type ReactQueryKey = Vec<Option<String>>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitBranchSearchQueryOptionsPlan {
+    pub query_key: ReactQueryKey,
+    pub normalized_query: String,
+    pub initial_page_param: u32,
+    pub page_size: u32,
+    pub enabled: bool,
+    pub stale_time_ms: u64,
+    pub refetch_on_window_focus: bool,
+    pub refetch_on_reconnect: bool,
+    pub refetch_interval_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitInvalidateQueriesPlan {
+    pub query_key: ReactQueryKey,
+}
+
 pub const INLINE_TERMINAL_CONTEXT_PLACEHOLDER: char = '\u{FFFC}';
 pub const RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY: &str = "(max-width: 980px)";
 pub const WINDOW_CONTROLS_OVERLAY_CLASS_NAME: &str = "wco";
@@ -14553,6 +14573,127 @@ pub fn start_new_local_thread_from_context_plan(
     })
 }
 
+pub const GIT_BRANCHES_STALE_TIME_MS: u64 = 15_000;
+pub const GIT_BRANCHES_REFETCH_INTERVAL_MS: u64 = 60_000;
+pub const GIT_BRANCHES_PAGE_SIZE: u32 = 100;
+
+fn query_key_part(value: &str) -> Option<String> {
+    Some(value.to_string())
+}
+
+fn nullable_query_key_part(value: Option<&str>) -> Option<String> {
+    value.map(str::to_string)
+}
+
+pub fn git_query_key_all() -> ReactQueryKey {
+    vec![query_key_part("git")]
+}
+
+pub fn git_query_key_refs(environment_id: Option<&str>, cwd: Option<&str>) -> ReactQueryKey {
+    vec![
+        query_key_part("git"),
+        query_key_part("refs"),
+        nullable_query_key_part(environment_id),
+        nullable_query_key_part(cwd),
+    ]
+}
+
+pub fn git_query_key_branch_search(
+    environment_id: Option<&str>,
+    cwd: Option<&str>,
+    query: &str,
+) -> ReactQueryKey {
+    vec![
+        query_key_part("git"),
+        query_key_part("refs"),
+        nullable_query_key_part(environment_id),
+        nullable_query_key_part(cwd),
+        query_key_part("search"),
+        query_key_part(query),
+    ]
+}
+
+pub fn git_mutation_key_init(environment_id: Option<&str>, cwd: Option<&str>) -> ReactQueryKey {
+    git_scoped_mutation_key("init", environment_id, cwd)
+}
+
+pub fn git_mutation_key_switch_ref(
+    environment_id: Option<&str>,
+    cwd: Option<&str>,
+) -> ReactQueryKey {
+    git_scoped_mutation_key("switchRef", environment_id, cwd)
+}
+
+pub fn git_mutation_key_run_stacked_action(
+    environment_id: Option<&str>,
+    cwd: Option<&str>,
+) -> ReactQueryKey {
+    git_scoped_mutation_key("run-stacked-action", environment_id, cwd)
+}
+
+pub fn git_mutation_key_pull(environment_id: Option<&str>, cwd: Option<&str>) -> ReactQueryKey {
+    git_scoped_mutation_key("pull", environment_id, cwd)
+}
+
+pub fn git_mutation_key_prepare_pull_request_thread(
+    environment_id: Option<&str>,
+    cwd: Option<&str>,
+) -> ReactQueryKey {
+    git_scoped_mutation_key("prepare-pull-request-thread", environment_id, cwd)
+}
+
+pub fn git_mutation_key_publish_repository(
+    environment_id: Option<&str>,
+    cwd: Option<&str>,
+) -> ReactQueryKey {
+    git_scoped_mutation_key("publish-repository", environment_id, cwd)
+}
+
+fn git_scoped_mutation_key(
+    mutation: &str,
+    environment_id: Option<&str>,
+    cwd: Option<&str>,
+) -> ReactQueryKey {
+    vec![
+        query_key_part("git"),
+        query_key_part("mutation"),
+        query_key_part(mutation),
+        nullable_query_key_part(environment_id),
+        nullable_query_key_part(cwd),
+    ]
+}
+
+pub fn git_branch_search_infinite_query_options_plan(
+    environment_id: Option<&str>,
+    cwd: Option<&str>,
+    query: &str,
+    enabled: Option<bool>,
+) -> GitBranchSearchQueryOptionsPlan {
+    let normalized_query = query.trim().to_string();
+    GitBranchSearchQueryOptionsPlan {
+        query_key: git_query_key_branch_search(environment_id, cwd, &normalized_query),
+        normalized_query,
+        initial_page_param: 0,
+        page_size: GIT_BRANCHES_PAGE_SIZE,
+        enabled: cwd.is_some() && enabled.unwrap_or(true),
+        stale_time_ms: GIT_BRANCHES_STALE_TIME_MS,
+        refetch_on_window_focus: true,
+        refetch_on_reconnect: true,
+        refetch_interval_ms: GIT_BRANCHES_REFETCH_INTERVAL_MS,
+    }
+}
+
+pub fn invalidate_git_queries_plan(
+    environment_id: Option<&str>,
+    cwd: Option<&str>,
+) -> GitInvalidateQueriesPlan {
+    GitInvalidateQueriesPlan {
+        query_key: cwd
+            .map(|cwd| git_query_key_refs(environment_id, Some(cwd)))
+            .unwrap_or_else(git_query_key_all),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ProjectAbsolutePathParts {
     root: String,
@@ -21666,6 +21807,93 @@ mod tests {
         assert_eq!(
             start_new_local_thread_from_context_plan(&missing_context),
             None
+        );
+    }
+
+    #[test]
+    fn git_react_query_keys_match_upstream_scoping() {
+        let env_a = Some("environment-a");
+        let env_b = Some("environment-b");
+
+        assert_ne!(
+            git_mutation_key_run_stacked_action(env_a, Some("/repo/a")),
+            git_mutation_key_run_stacked_action(env_a, Some("/repo/b"))
+        );
+        assert_ne!(
+            git_mutation_key_pull(env_a, Some("/repo/a")),
+            git_mutation_key_pull(env_a, Some("/repo/b"))
+        );
+        assert_ne!(
+            git_mutation_key_prepare_pull_request_thread(env_a, Some("/repo/a")),
+            git_mutation_key_prepare_pull_request_thread(env_a, Some("/repo/b"))
+        );
+        assert_eq!(
+            git_mutation_key_run_stacked_action(env_a, Some("/repo/a")),
+            vec![
+                Some("git".to_string()),
+                Some("mutation".to_string()),
+                Some("run-stacked-action".to_string()),
+                Some("environment-a".to_string()),
+                Some("/repo/a".to_string()),
+            ]
+        );
+        assert_eq!(
+            git_mutation_key_pull(env_a, Some("/repo/a")),
+            vec![
+                Some("git".to_string()),
+                Some("mutation".to_string()),
+                Some("pull".to_string()),
+                Some("environment-a".to_string()),
+                Some("/repo/a".to_string()),
+            ]
+        );
+
+        let options = git_branch_search_infinite_query_options_plan(
+            env_a,
+            Some("/repo/a"),
+            "  feature  ",
+            None,
+        );
+        assert_eq!(
+            options.query_key,
+            vec![
+                Some("git".to_string()),
+                Some("refs".to_string()),
+                Some("environment-a".to_string()),
+                Some("/repo/a".to_string()),
+                Some("search".to_string()),
+                Some("feature".to_string()),
+            ]
+        );
+        assert_eq!(options.normalized_query, "feature");
+        assert_eq!(options.initial_page_param, 0);
+        assert_eq!(options.page_size, 100);
+        assert!(options.enabled);
+        assert_eq!(options.stale_time_ms, 15_000);
+        assert!(options.refetch_on_window_focus);
+        assert!(options.refetch_on_reconnect);
+        assert_eq!(options.refetch_interval_ms, 60_000);
+        assert!(
+            !git_branch_search_infinite_query_options_plan(env_a, None, "feature", Some(true))
+                .enabled
+        );
+        assert!(
+            !git_branch_search_infinite_query_options_plan(
+                env_a,
+                Some("/repo/a"),
+                "feature",
+                Some(false)
+            )
+            .enabled
+        );
+
+        assert_eq!(
+            invalidate_git_queries_plan(env_a, Some("/repo/a")).query_key,
+            git_query_key_refs(env_a, Some("/repo/a"))
+        );
+        assert_eq!(
+            invalidate_git_queries_plan(env_b, None).query_key,
+            git_query_key_all()
         );
     }
 
