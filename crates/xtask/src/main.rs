@@ -3154,6 +3154,19 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace` selected contract tests",
             "Port every schema/contract or generate Rust equivalents.",
         )
+    } else if matches!(
+        path,
+        "packages/effect-acp/package.json"
+            | "packages/effect-acp/tsconfig.json"
+            | "packages/effect-codex-app-server/package.json"
+            | "packages/effect-codex-app-server/tsconfig.json"
+    ) {
+        (
+            "Effect ACP and Codex app-server package metadata, scripts, export maps, build entrypoints, dependency/version maps, and tsconfig include/extends contracts in crates/r3_core/src/effect_acp.rs",
+            "partial",
+            "`cargo test -p r3_core effect_acp`",
+            "Port generated schemas/types, Effect RPC clients, stdio transport, agent/client lifecycle, mock peers, probe examples, live package wiring, and native package export generation.",
+        )
     } else if path.starts_with("packages/effect-codex-app-server/")
         || path.starts_with("packages/effect-acp/")
     {

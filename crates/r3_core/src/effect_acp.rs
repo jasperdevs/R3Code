@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Value, json};
 
@@ -118,6 +118,19 @@ pub struct CursorAcpProbePlan {
     pub request_methods: Vec<&'static str>,
     pub handled_client_methods: Vec<&'static str>,
     pub selection_strategy: Vec<&'static str>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EffectAcpPackageSurface {
+    pub name: &'static str,
+    pub private: bool,
+    pub module_type: &'static str,
+    pub exports: BTreeMap<&'static str, BTreeMap<&'static str, &'static str>>,
+    pub scripts: BTreeMap<&'static str, &'static str>,
+    pub dependencies: BTreeMap<&'static str, &'static str>,
+    pub dev_dependencies: BTreeMap<&'static str, &'static str>,
+    pub tsconfig_extends: &'static str,
+    pub tsconfig_include: Vec<&'static str>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -541,6 +554,52 @@ pub fn acp_build_entrypoints() -> Vec<&'static str> {
     ]
 }
 
+fn package_export(source: &'static str) -> BTreeMap<&'static str, &'static str> {
+    BTreeMap::from([("types", source), ("import", source)])
+}
+
+pub fn effect_acp_package_surface() -> EffectAcpPackageSurface {
+    EffectAcpPackageSurface {
+        name: "effect-acp",
+        private: true,
+        module_type: "module",
+        exports: BTreeMap::from([
+            ("./client", package_export("./src/client.ts")),
+            ("./agent", package_export("./src/agent.ts")),
+            ("./schema", package_export("./src/schema.ts")),
+            ("./rpc", package_export("./src/rpc.ts")),
+            ("./protocol", package_export("./src/protocol.ts")),
+            ("./terminal", package_export("./src/terminal.ts")),
+            ("./errors", package_export("./src/errors.ts")),
+        ]),
+        scripts: BTreeMap::from([
+            (
+                "dev",
+                "tsdown src/client.ts src/agent.ts src/_generated/schema.gen.ts src/rpc.ts src/protocol.ts src/terminal.ts --format esm,cjs --dts --watch --clean",
+            ),
+            (
+                "build",
+                "tsdown src/client.ts src/agent.ts src/_generated/schema.gen.ts src/rpc.ts src/protocol.ts src/terminal.ts --format esm,cjs --dts --clean",
+            ),
+            ("typecheck", "tsc --noEmit"),
+            ("test", "vitest run"),
+            ("generate", "bun run scripts/generate.ts"),
+        ]),
+        dependencies: BTreeMap::from([("effect", "catalog:")]),
+        dev_dependencies: BTreeMap::from([
+            ("@effect/language-service", "catalog:"),
+            ("@effect/openapi-generator", "catalog:"),
+            ("@effect/platform-node", "catalog:"),
+            ("@effect/vitest", "catalog:"),
+            ("tsdown", "catalog:"),
+            ("typescript", "catalog:"),
+            ("vitest", "catalog:"),
+        ]),
+        tsconfig_extends: "../../tsconfig.base.json",
+        tsconfig_include: vec!["src", "scripts", "test"],
+    }
+}
+
 pub const CODEX_APP_SERVER_PROTOCOL_REF: &str = "07b695190f30a450e4921f71f77473e564395c59";
 
 pub const CODEX_CLIENT_REQUEST_METHODS: &[&str] = &[
@@ -772,6 +831,56 @@ pub fn codex_app_server_package_exports() -> Vec<&'static str> {
     vec!["./client", "./schema", "./rpc", "./protocol", "./errors"]
 }
 
+pub fn codex_app_server_build_entrypoints() -> Vec<&'static str> {
+    vec![
+        "src/client.ts",
+        "src/rpc.ts",
+        "src/protocol.ts",
+        "src/schema.ts",
+    ]
+}
+
+pub fn codex_app_server_package_surface() -> EffectAcpPackageSurface {
+    EffectAcpPackageSurface {
+        name: "effect-codex-app-server",
+        private: true,
+        module_type: "module",
+        exports: BTreeMap::from([
+            ("./client", package_export("./src/client.ts")),
+            ("./schema", package_export("./src/schema.ts")),
+            ("./rpc", package_export("./src/rpc.ts")),
+            ("./protocol", package_export("./src/protocol.ts")),
+            ("./errors", package_export("./src/errors.ts")),
+        ]),
+        scripts: BTreeMap::from([
+            (
+                "dev",
+                "tsdown src/client.ts src/rpc.ts src/protocol.ts src/schema.ts --format esm,cjs --dts --watch --clean",
+            ),
+            (
+                "build",
+                "tsdown src/client.ts src/rpc.ts src/protocol.ts src/schema.ts --format esm,cjs --dts --clean",
+            ),
+            ("typecheck", "tsc --noEmit"),
+            ("test", "vitest run"),
+            ("generate", "bun run scripts/generate.ts"),
+            ("probe", "bun run test/examples/codex-app-server-probe.ts"),
+        ]),
+        dependencies: BTreeMap::from([("effect", "catalog:")]),
+        dev_dependencies: BTreeMap::from([
+            ("@effect/language-service", "catalog:"),
+            ("@effect/openapi-generator", "catalog:"),
+            ("@effect/platform-node", "catalog:"),
+            ("@effect/vitest", "catalog:"),
+            ("tsdown", "catalog:"),
+            ("typescript", "catalog:"),
+            ("vitest", "catalog:"),
+        ]),
+        tsconfig_extends: "../../tsconfig.base.json",
+        tsconfig_include: vec!["src", "scripts", "test"],
+    }
+}
+
 pub fn validate_unique_methods(methods: &[&str]) -> bool {
     let set = methods.iter().copied().collect::<BTreeSet<_>>();
     set.len() == methods.len()
@@ -800,6 +909,42 @@ mod tests {
                 "./errors"
             ]
         );
+        assert_eq!(
+            acp_build_entrypoints(),
+            vec![
+                "src/client.ts",
+                "src/agent.ts",
+                "src/_generated/schema.gen.ts",
+                "src/rpc.ts",
+                "src/protocol.ts",
+                "src/terminal.ts"
+            ]
+        );
+
+        let package = effect_acp_package_surface();
+        assert_eq!(package.name, "effect-acp");
+        assert!(package.private);
+        assert_eq!(package.module_type, "module");
+        assert_eq!(package.exports["./client"]["types"], "./src/client.ts");
+        assert_eq!(package.exports["./agent"]["import"], "./src/agent.ts");
+        assert_eq!(package.exports["./schema"]["types"], "./src/schema.ts");
+        assert_eq!(package.exports["./rpc"]["import"], "./src/rpc.ts");
+        assert_eq!(package.exports["./protocol"]["types"], "./src/protocol.ts");
+        assert_eq!(package.exports["./terminal"]["import"], "./src/terminal.ts");
+        assert_eq!(package.exports["./errors"]["types"], "./src/errors.ts");
+        assert_eq!(
+            package.scripts["dev"],
+            "tsdown src/client.ts src/agent.ts src/_generated/schema.gen.ts src/rpc.ts src/protocol.ts src/terminal.ts --format esm,cjs --dts --watch --clean"
+        );
+        assert_eq!(package.scripts["generate"], "bun run scripts/generate.ts");
+        assert_eq!(package.dependencies["effect"], "catalog:");
+        assert_eq!(
+            package.dev_dependencies["@effect/openapi-generator"],
+            "catalog:"
+        );
+        assert_eq!(package.dev_dependencies["tsdown"], "catalog:");
+        assert_eq!(package.tsconfig_extends, "../../tsconfig.base.json");
+        assert_eq!(package.tsconfig_include, vec!["src", "scripts", "test"]);
 
         assert_eq!(
             AcpError::Spawn {
@@ -938,6 +1083,41 @@ mod tests {
             codex_app_server_package_exports(),
             vec!["./client", "./schema", "./rpc", "./protocol", "./errors"]
         );
+        assert_eq!(
+            codex_app_server_build_entrypoints(),
+            vec![
+                "src/client.ts",
+                "src/rpc.ts",
+                "src/protocol.ts",
+                "src/schema.ts"
+            ]
+        );
+
+        let package = codex_app_server_package_surface();
+        assert_eq!(package.name, "effect-codex-app-server");
+        assert!(package.private);
+        assert_eq!(package.module_type, "module");
+        assert_eq!(package.exports["./client"]["types"], "./src/client.ts");
+        assert_eq!(package.exports["./schema"]["import"], "./src/schema.ts");
+        assert_eq!(package.exports["./rpc"]["types"], "./src/rpc.ts");
+        assert_eq!(package.exports["./protocol"]["import"], "./src/protocol.ts");
+        assert_eq!(package.exports["./errors"]["types"], "./src/errors.ts");
+        assert_eq!(
+            package.scripts["build"],
+            "tsdown src/client.ts src/rpc.ts src/protocol.ts src/schema.ts --format esm,cjs --dts --clean"
+        );
+        assert_eq!(
+            package.scripts["probe"],
+            "bun run test/examples/codex-app-server-probe.ts"
+        );
+        assert_eq!(package.dependencies["effect"], "catalog:");
+        assert_eq!(
+            package.dev_dependencies["@effect/platform-node"],
+            "catalog:"
+        );
+        assert_eq!(package.dev_dependencies["vitest"], "catalog:");
+        assert_eq!(package.tsconfig_extends, "../../tsconfig.base.json");
+        assert_eq!(package.tsconfig_include, vec!["src", "scripts", "test"]);
 
         let request =
             codex_app_server_request_message(1, "thread/start", Some(json!({"cwd": "."})));
