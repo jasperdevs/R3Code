@@ -19600,6 +19600,202 @@ pub struct ProposedPlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlanFollowUpInteractionMode {
+    Default,
+    Plan,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlanFollowUpSubmission {
+    pub text: String,
+    pub interaction_mode: PlanFollowUpInteractionMode,
+}
+
+fn markdown_heading_text(line: &str) -> Option<String> {
+    let mut leading_whitespace = 0usize;
+    let mut content_start = line.len();
+    for (idx, ch) in line.char_indices() {
+        if ch.is_whitespace() {
+            leading_whitespace += 1;
+            if leading_whitespace > 3 {
+                return None;
+            }
+            content_start = idx + ch.len_utf8();
+        } else {
+            content_start = idx;
+            break;
+        }
+    }
+    let trimmed_start = &line[content_start..];
+    let hashes = trimmed_start.chars().take_while(|ch| *ch == '#').count();
+    if !(1..=6).contains(&hashes) {
+        return None;
+    }
+    let after_hashes = &trimmed_start[hashes..];
+    if !after_hashes.chars().next().is_some_and(char::is_whitespace) {
+        return None;
+    }
+    let title = after_hashes.trim();
+    (!title.is_empty()).then(|| title.to_string())
+}
+
+pub fn proposed_plan_title(plan_markdown: &str) -> Option<String> {
+    plan_markdown.lines().find_map(markdown_heading_text)
+}
+
+pub fn strip_displayed_plan_markdown(plan_markdown: &str) -> String {
+    let trimmed_end = plan_markdown.trim_end_matches(['\r', '\n']);
+    let mut source_lines = trimmed_end
+        .split('\n')
+        .map(|line| line.strip_suffix('\r').unwrap_or(line).to_string())
+        .collect::<Vec<_>>();
+    if source_lines
+        .first()
+        .and_then(|line| markdown_heading_text(line))
+        .is_some()
+    {
+        source_lines.remove(0);
+    }
+    while source_lines
+        .first()
+        .is_some_and(|line| line.trim().is_empty())
+    {
+        source_lines.remove(0);
+    }
+    if source_lines
+        .first()
+        .and_then(|line| markdown_heading_text(line))
+        .is_some_and(|title| title.trim().eq_ignore_ascii_case("summary"))
+    {
+        source_lines.remove(0);
+        while source_lines
+            .first()
+            .is_some_and(|line| line.trim().is_empty())
+        {
+            source_lines.remove(0);
+        }
+    }
+    source_lines.join("\n")
+}
+
+pub fn build_collapsed_proposed_plan_preview_markdown(
+    plan_markdown: &str,
+    max_lines: usize,
+) -> String {
+    let lines = strip_displayed_plan_markdown(plan_markdown)
+        .trim_end_matches(['\r', '\n'])
+        .split('\n')
+        .map(|line| {
+            line.strip_suffix('\r')
+                .unwrap_or(line)
+                .trim_end()
+                .to_string()
+        })
+        .collect::<Vec<_>>();
+    let mut preview_lines = Vec::<String>::new();
+    let mut visible_line_count = 0usize;
+    let mut has_more_content = false;
+
+    for line in lines {
+        let is_visible_line = !line.trim().is_empty();
+        if is_visible_line && visible_line_count >= max_lines {
+            has_more_content = true;
+            break;
+        }
+        preview_lines.push(line);
+        if is_visible_line {
+            visible_line_count += 1;
+        }
+    }
+
+    while preview_lines
+        .last()
+        .is_some_and(|line| line.trim().is_empty())
+    {
+        preview_lines.pop();
+    }
+
+    if preview_lines.is_empty() {
+        return proposed_plan_title(plan_markdown)
+            .unwrap_or_else(|| "Plan preview unavailable.".to_string());
+    }
+    if has_more_content {
+        preview_lines.push(String::new());
+        preview_lines.push("...".to_string());
+    }
+    preview_lines.join("\n")
+}
+
+fn sanitize_plan_file_segment(input: &str) -> String {
+    let mut sanitized = String::new();
+    let mut last_dash = false;
+    for ch in input.to_ascii_lowercase().chars() {
+        if matches!(
+            ch,
+            '`' | '\'' | '"' | '.' | ',' | '!' | '?' | '(' | ')' | '[' | ']' | '{' | '}'
+        ) {
+            continue;
+        }
+        if ch.is_ascii_alphanumeric() {
+            sanitized.push(ch);
+            last_dash = false;
+        } else if !last_dash && !sanitized.is_empty() {
+            sanitized.push('-');
+            last_dash = true;
+        }
+    }
+    while sanitized.ends_with('-') {
+        sanitized.pop();
+    }
+    if sanitized.is_empty() {
+        "plan".to_string()
+    } else {
+        sanitized
+    }
+}
+
+pub fn build_plan_implementation_prompt(plan_markdown: &str) -> String {
+    format!("PLEASE IMPLEMENT THIS PLAN:\n{}", plan_markdown.trim())
+}
+
+pub fn resolve_plan_follow_up_submission(
+    draft_text: &str,
+    plan_markdown: &str,
+) -> PlanFollowUpSubmission {
+    let trimmed_draft_text = draft_text.trim();
+    if !trimmed_draft_text.is_empty() {
+        return PlanFollowUpSubmission {
+            text: trimmed_draft_text.to_string(),
+            interaction_mode: PlanFollowUpInteractionMode::Plan,
+        };
+    }
+
+    PlanFollowUpSubmission {
+        text: build_plan_implementation_prompt(plan_markdown),
+        interaction_mode: PlanFollowUpInteractionMode::Default,
+    }
+}
+
+pub fn build_plan_implementation_thread_title(plan_markdown: &str) -> String {
+    proposed_plan_title(plan_markdown)
+        .map(|title| format!("Implement {title}"))
+        .unwrap_or_else(|| "Implement plan".to_string())
+}
+
+pub fn build_proposed_plan_markdown_filename(plan_markdown: &str) -> String {
+    format!(
+        "{}.md",
+        sanitize_plan_file_segment(
+            &proposed_plan_title(plan_markdown).unwrap_or_else(|| "plan".to_string())
+        )
+    )
+}
+
+pub fn normalize_plan_markdown_for_export(plan_markdown: &str) -> String {
+    format!("{}\n", plan_markdown.trim_end())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TurnDiffFileChange {
     pub path: String,
     pub kind: Option<String>,
@@ -24393,6 +24589,78 @@ mod tests {
         assert_eq!(ignored.hosted_app_channel_label, None);
         assert_eq!(ignored.app_stage_label, "Dev");
         assert_eq!(ignored.app_display_name, "R3Code (Dev)");
+    }
+
+    #[test]
+    fn proposed_plan_helpers_match_upstream_contract() {
+        assert_eq!(
+            proposed_plan_title("# Integrate RPC\n\nBody").as_deref(),
+            Some("Integrate RPC")
+        );
+        assert_eq!(proposed_plan_title("- step 1"), None);
+
+        assert_eq!(
+            build_plan_implementation_prompt("## Ship it\n\n- step 1\n"),
+            "PLEASE IMPLEMENT THIS PLAN:\n## Ship it\n\n- step 1"
+        );
+
+        assert_eq!(
+            build_collapsed_proposed_plan_preview_markdown(
+                "# Integrate RPC\n\n## Summary\n\n- step 1\n- step 2",
+                4,
+            ),
+            "- step 1\n- step 2"
+        );
+        assert_eq!(
+            build_collapsed_proposed_plan_preview_markdown(
+                "# Integrate RPC\n\n- step 1\n- step 2\n- step 3",
+                2,
+            ),
+            "- step 1\n- step 2\n\n..."
+        );
+
+        assert_eq!(
+            strip_displayed_plan_markdown("# Integrate RPC\n\n## Summary\n\n- step 1\n"),
+            "- step 1"
+        );
+        assert_eq!(
+            strip_displayed_plan_markdown("# Integrate RPC\n\n## Scope\n\n- step 1\n"),
+            "## Scope\n\n- step 1"
+        );
+
+        assert_eq!(
+            resolve_plan_follow_up_submission("   ", "## Ship it\n\n- step 1\n"),
+            PlanFollowUpSubmission {
+                text: "PLEASE IMPLEMENT THIS PLAN:\n## Ship it\n\n- step 1".to_string(),
+                interaction_mode: PlanFollowUpInteractionMode::Default,
+            }
+        );
+        assert_eq!(
+            resolve_plan_follow_up_submission("Refine step 2 first", "## Ship it\n\n- step 1\n",),
+            PlanFollowUpSubmission {
+                text: "Refine step 2 first".to_string(),
+                interaction_mode: PlanFollowUpInteractionMode::Plan,
+            }
+        );
+
+        assert_eq!(
+            build_plan_implementation_thread_title("# Integrate RPC\n\nBody"),
+            "Implement Integrate RPC"
+        );
+        assert_eq!(
+            build_plan_implementation_thread_title("- step 1"),
+            "Implement plan"
+        );
+
+        assert_eq!(
+            build_proposed_plan_markdown_filename("# Integrate Effect RPC Into Server App"),
+            "integrate-effect-rpc-into-server-app.md"
+        );
+        assert_eq!(build_proposed_plan_markdown_filename("- step 1"), "plan.md");
+        assert_eq!(
+            normalize_plan_markdown_for_export("# Ship it\n\n- step 1\n\n"),
+            "# Ship it\n\n- step 1\n"
+        );
     }
 
     #[test]

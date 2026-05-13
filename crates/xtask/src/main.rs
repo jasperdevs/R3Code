@@ -1759,6 +1759,14 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core diagnostics_state_constants`",
             "Wire helpers into live GPUI diagnostics SWR loading and refresh controls.",
         )
+    } else if path == "apps/web/src/proposedPlan.ts" || path == "apps/web/src/proposedPlan.test.ts"
+    {
+        (
+            "proposed plan markdown heading extraction, displayed markdown stripping, collapsed preview truncation, implementation prompt/submission, implementation thread title, filename sanitization, and export newline helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core proposed_plan_helpers_match_upstream_contract`",
+            "Wire helpers into live GPUI proposed-plan cards, export/download action, and implementation-thread creation.",
+        )
     } else if path == "apps/web/src/pendingUserInput.ts"
         || path == "apps/web/src/pendingUserInput.test.ts"
     {
