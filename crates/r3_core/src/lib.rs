@@ -7191,6 +7191,66 @@ pub fn project_script_id_from_command(command: &str) -> Option<String> {
     }
 }
 
+pub const PROJECT_SCRIPT_KEYBINDING_INVALID_MESSAGE: &str = "Invalid keybinding.";
+pub const MAX_KEYBINDING_VALUE_LENGTH: usize = 64;
+const MAX_KEYBINDING_SCRIPT_ID_LENGTH: usize = 24;
+
+fn normalize_project_script_keybinding_input(keybinding: Option<&str>) -> Option<String> {
+    let trimmed = keybinding.unwrap_or("").trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+fn is_valid_script_keybinding_command(command: &str) -> bool {
+    let Some(script_id) = project_script_id_from_command(command) else {
+        return false;
+    };
+    script_id.len() <= MAX_KEYBINDING_SCRIPT_ID_LENGTH
+        && script_id
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit())
+        && script_id
+            .chars()
+            .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
+}
+
+pub fn is_valid_keybinding_command(command: &str) -> bool {
+    default_keybinding_rules()
+        .iter()
+        .any(|rule| rule.command == command)
+        || is_valid_script_keybinding_command(command)
+}
+
+pub fn decode_project_script_keybinding_rule(
+    keybinding: Option<&str>,
+    command: &str,
+) -> Result<Option<ServerKeybindingRule>, &'static str> {
+    let Some(key) = normalize_project_script_keybinding_input(keybinding) else {
+        return Ok(None);
+    };
+
+    if key.len() > MAX_KEYBINDING_VALUE_LENGTH || !is_valid_keybinding_command(command) {
+        return Err(PROJECT_SCRIPT_KEYBINDING_INVALID_MESSAGE);
+    }
+
+    Ok(Some(ServerKeybindingRule {
+        command: command.to_string(),
+        key,
+        when: None,
+    }))
+}
+
+pub fn keybinding_value_for_command(
+    keybindings: &[ResolvedKeybindingRule],
+    command: &str,
+) -> Option<String> {
+    keybindings
+        .iter()
+        .rev()
+        .find(|binding| binding.command == command)
+        .map(|binding| shortcut_to_keybinding_input(&binding.shortcut))
+}
+
 fn normalize_script_id(value: &str) -> String {
     let mut cleaned = String::new();
     let mut last_was_dash = false;
@@ -24300,6 +24360,66 @@ mod tests {
 
         assert_eq!(primary_project_script(&scripts).unwrap().id, "test");
         assert_eq!(setup_project_script(&scripts).unwrap().id, "setup");
+    }
+
+    #[test]
+    fn project_script_keybindings_match_upstream_contract() {
+        let command = command_for_project_script("lint");
+        assert_eq!(
+            decode_project_script_keybinding_rule(Some("  mod+k  "), &command),
+            Ok(Some(ServerKeybindingRule {
+                key: "mod+k".to_string(),
+                command: "script.lint.run".to_string(),
+                when: None,
+            }))
+        );
+        assert_eq!(
+            decode_project_script_keybinding_rule(Some("   "), &command),
+            Ok(None)
+        );
+        assert_eq!(
+            decode_project_script_keybinding_rule(
+                Some(&"k".repeat(MAX_KEYBINDING_VALUE_LENGTH + 1)),
+                &command
+            ),
+            Err(PROJECT_SCRIPT_KEYBINDING_INVALID_MESSAGE)
+        );
+        assert_eq!(
+            decode_project_script_keybinding_rule(Some("mod+k"), "script.BAD.run"),
+            Err(PROJECT_SCRIPT_KEYBINDING_INVALID_MESSAGE)
+        );
+
+        let command = command_for_project_script("test");
+        let keybindings = vec![
+            ResolvedKeybindingRule {
+                command: command.clone(),
+                shortcut: KeybindingShortcut {
+                    key: "escape".to_string(),
+                    meta_key: false,
+                    ctrl_key: false,
+                    shift_key: false,
+                    alt_key: false,
+                    mod_key: true,
+                },
+                when_ast: None,
+            },
+            ResolvedKeybindingRule {
+                command: command.clone(),
+                shortcut: KeybindingShortcut {
+                    key: "k".to_string(),
+                    meta_key: false,
+                    ctrl_key: false,
+                    shift_key: true,
+                    alt_key: false,
+                    mod_key: true,
+                },
+                when_ast: None,
+            },
+        ];
+        assert_eq!(
+            keybinding_value_for_command(&keybindings, &command).as_deref(),
+            Some("mod+shift+k")
+        );
     }
 
     #[test]
