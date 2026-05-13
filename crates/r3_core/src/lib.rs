@@ -1146,6 +1146,32 @@ pub struct DebouncedMemoryStorage {
 }
 
 pub const INLINE_TERMINAL_CONTEXT_PLACEHOLDER: char = '\u{FFFC}';
+pub const COMPOSER_PROMPT_EDITOR_NAMESPACE: &str = "t3tools-composer-editor";
+pub const COMPOSER_PROMPT_EDITOR_HMR_KEY_PREFIX: &str = "composer-editor-";
+pub const COMPOSER_PROMPT_EDITOR_WRAPPER_CLASS_NAME: &str = "relative";
+pub const COMPOSER_PROMPT_EDITOR_CONTENT_EDITABLE_CLASS_NAME: &str = "block max-h-[200px] min-h-17.5 w-full overflow-y-auto whitespace-pre-wrap wrap-break-word bg-transparent text-[16px] leading-relaxed text-foreground focus:outline-none sm:text-[14px]";
+pub const COMPOSER_PROMPT_EDITOR_TEST_ID: &str = "composer-editor";
+pub const COMPOSER_PROMPT_EDITOR_PLACEHOLDER_CLASS_NAME: &str = "pointer-events-none absolute inset-0 text-[16px] leading-relaxed text-muted-foreground/35 sm:text-[14px]";
+pub const COMPOSER_INLINE_TOKEN_DOM_CLASS_NAME: &str = "inline-flex align-middle leading-none";
+pub const COMPOSER_MENTION_NODE_TYPE: &str = "composer-mention";
+pub const COMPOSER_SKILL_NODE_TYPE: &str = "composer-skill";
+pub const COMPOSER_TERMINAL_CONTEXT_NODE_TYPE: &str = "composer-terminal-context";
+pub const COMPOSER_INLINE_NODE_VERSION: u8 = 1;
+pub const COMPOSER_MENTION_CHIP_DATA_ATTR: &str = "data-composer-mention-chip";
+pub const COMPOSER_SKILL_CHIP_DATA_ATTR: &str = "data-composer-skill-chip";
+pub const COMPOSER_MENTION_TOOLTIP_CLASS_NAME: &str =
+    "max-w-120 whitespace-normal leading-tight wrap-anywhere";
+pub const COMPOSER_SKILL_TOOLTIP_CLASS_NAME: &str = "max-w-120 whitespace-normal leading-tight";
+pub const COMPOSER_PROMPT_EDITOR_PLUGIN_ORDER: [&str; 7] = [
+    "PlainTextPlugin",
+    "OnChangePlugin",
+    "ComposerCommandKeyPlugin",
+    "ComposerSurroundSelectionPlugin",
+    "ComposerInlineTokenArrowPlugin",
+    "ComposerInlineTokenSelectionNormalizePlugin",
+    "ComposerInlineTokenBackspacePlugin",
+];
+pub const COMPOSER_PROMPT_EDITOR_HISTORY_PLUGIN: &str = "HistoryPlugin";
 pub const RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY: &str = "(max-width: 980px)";
 pub const WINDOW_CONTROLS_OVERLAY_CLASS_NAME: &str = "wco";
 pub const RIGHT_PANEL_SHEET_CLASS_NAME: &str = "w-[min(42vw,28rem)] min-w-80 max-w-[28rem] p-0 max-[760px]:w-[min(88vw,24rem)] max-[760px]:min-w-0 wco:mt-[env(titlebar-area-height)] wco:h-[calc(100%-env(titlebar-area-height))] wco:max-h-[calc(100%-env(titlebar-area-height))]";
@@ -1182,6 +1208,111 @@ pub struct TerminalContextDraft {
     pub line_end: i64,
     pub text: String,
     pub created_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ComposerPromptEditorRenderContract {
+    pub hmr_key_prefix: &'static str,
+    pub namespace: &'static str,
+    pub editable: bool,
+    pub nodes: Vec<&'static str>,
+    pub wrapper_class_name: &'static str,
+    pub content_editable_class_name: String,
+    pub test_id: &'static str,
+    pub aria_placeholder: String,
+    pub placeholder_visible: bool,
+    pub placeholder_class_name: Option<&'static str>,
+    pub plugin_order: Vec<&'static str>,
+    pub history_plugin: &'static str,
+    pub inline_token_dom_class_name: &'static str,
+    pub mention_node_type: &'static str,
+    pub mention_node_version: u8,
+    pub mention_text_content: String,
+    pub mention_tooltip_class_name: &'static str,
+    pub skill_node_type: &'static str,
+    pub skill_node_version: u8,
+    pub skill_text_content: String,
+    pub skill_tooltip_class_name: Option<&'static str>,
+    pub terminal_context_node_type: &'static str,
+    pub terminal_context_node_version: u8,
+    pub terminal_context_text_content: String,
+}
+
+pub fn composer_prompt_editor_surround_symbols() -> Vec<(&'static str, &'static str)> {
+    vec![
+        ("(", ")"),
+        ("[", "]"),
+        ("{", "}"),
+        ("'", "'"),
+        ("\"", "\""),
+        ("“", "”"),
+        ("`", "`"),
+        ("<", ">"),
+        ("«", "»"),
+        ("*", "*"),
+        ("_", "_"),
+    ]
+}
+
+pub fn composer_prompt_editor_surround_close_symbol(symbol: &str) -> Option<&'static str> {
+    composer_prompt_editor_surround_symbols()
+        .into_iter()
+        .find_map(|(open, close)| (open == symbol).then_some(close))
+}
+
+pub fn derive_composer_prompt_editor_render_contract(
+    placeholder: &str,
+    class_name: Option<&str>,
+    terminal_context_count: usize,
+    mention_path: &str,
+    skill_name: &str,
+    skill_description: Option<&str>,
+) -> ComposerPromptEditorRenderContract {
+    let normalized_path = mention_path.strip_prefix('@').unwrap_or(mention_path);
+    let normalized_skill_name = skill_name.strip_prefix('$').unwrap_or(skill_name);
+    let content_editable_class_name = class_name
+        .filter(|class_name| !class_name.is_empty())
+        .map(|class_name| {
+            format!(
+                "{} {}",
+                COMPOSER_PROMPT_EDITOR_CONTENT_EDITABLE_CLASS_NAME, class_name
+            )
+        })
+        .unwrap_or_else(|| COMPOSER_PROMPT_EDITOR_CONTENT_EDITABLE_CLASS_NAME.to_string());
+
+    ComposerPromptEditorRenderContract {
+        hmr_key_prefix: COMPOSER_PROMPT_EDITOR_HMR_KEY_PREFIX,
+        namespace: COMPOSER_PROMPT_EDITOR_NAMESPACE,
+        editable: true,
+        nodes: vec![
+            COMPOSER_MENTION_NODE_TYPE,
+            COMPOSER_SKILL_NODE_TYPE,
+            COMPOSER_TERMINAL_CONTEXT_NODE_TYPE,
+        ],
+        wrapper_class_name: COMPOSER_PROMPT_EDITOR_WRAPPER_CLASS_NAME,
+        content_editable_class_name,
+        test_id: COMPOSER_PROMPT_EDITOR_TEST_ID,
+        aria_placeholder: placeholder.to_string(),
+        placeholder_visible: terminal_context_count == 0,
+        placeholder_class_name: (terminal_context_count == 0)
+            .then_some(COMPOSER_PROMPT_EDITOR_PLACEHOLDER_CLASS_NAME),
+        plugin_order: COMPOSER_PROMPT_EDITOR_PLUGIN_ORDER.to_vec(),
+        history_plugin: COMPOSER_PROMPT_EDITOR_HISTORY_PLUGIN,
+        inline_token_dom_class_name: COMPOSER_INLINE_TOKEN_DOM_CLASS_NAME,
+        mention_node_type: COMPOSER_MENTION_NODE_TYPE,
+        mention_node_version: COMPOSER_INLINE_NODE_VERSION,
+        mention_text_content: format!("@{normalized_path}"),
+        mention_tooltip_class_name: COMPOSER_MENTION_TOOLTIP_CLASS_NAME,
+        skill_node_type: COMPOSER_SKILL_NODE_TYPE,
+        skill_node_version: COMPOSER_INLINE_NODE_VERSION,
+        skill_text_content: format!("${normalized_skill_name}"),
+        skill_tooltip_class_name: skill_description
+            .and_then(|description| (!description.trim().is_empty()).then_some(description))
+            .map(|_| COMPOSER_SKILL_TOOLTIP_CLASS_NAME),
+        terminal_context_node_type: COMPOSER_TERMINAL_CONTEXT_NODE_TYPE,
+        terminal_context_node_version: COMPOSER_INLINE_NODE_VERSION,
+        terminal_context_text_content: INLINE_TERMINAL_CONTEXT_PLACEHOLDER.to_string(),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -44676,6 +44807,130 @@ mod tests {
             token_start as f64,
             Right
         ));
+    }
+
+    #[test]
+    fn composer_prompt_editor_render_contract_matches_upstream_component() {
+        let empty = derive_composer_prompt_editor_render_contract(
+            "Ask R3Code",
+            Some("px-1"),
+            0,
+            "@src/main.rs",
+            "$review",
+            Some("Review the current file"),
+        );
+        assert_eq!(empty.hmr_key_prefix, "composer-editor-");
+        assert_eq!(empty.namespace, COMPOSER_PROMPT_EDITOR_NAMESPACE);
+        assert!(empty.editable);
+        assert_eq!(
+            empty.nodes,
+            vec![
+                COMPOSER_MENTION_NODE_TYPE,
+                COMPOSER_SKILL_NODE_TYPE,
+                COMPOSER_TERMINAL_CONTEXT_NODE_TYPE,
+            ]
+        );
+        assert_eq!(
+            empty.wrapper_class_name,
+            COMPOSER_PROMPT_EDITOR_WRAPPER_CLASS_NAME
+        );
+        assert_eq!(
+            empty.content_editable_class_name,
+            format!(
+                "{} px-1",
+                COMPOSER_PROMPT_EDITOR_CONTENT_EDITABLE_CLASS_NAME
+            )
+        );
+        assert_eq!(empty.test_id, COMPOSER_PROMPT_EDITOR_TEST_ID);
+        assert_eq!(empty.aria_placeholder, "Ask R3Code");
+        assert!(empty.placeholder_visible);
+        assert_eq!(
+            empty.placeholder_class_name,
+            Some(COMPOSER_PROMPT_EDITOR_PLACEHOLDER_CLASS_NAME)
+        );
+        assert_eq!(
+            empty.plugin_order,
+            vec![
+                "PlainTextPlugin",
+                "OnChangePlugin",
+                "ComposerCommandKeyPlugin",
+                "ComposerSurroundSelectionPlugin",
+                "ComposerInlineTokenArrowPlugin",
+                "ComposerInlineTokenSelectionNormalizePlugin",
+                "ComposerInlineTokenBackspacePlugin",
+            ]
+        );
+        assert_eq!(empty.history_plugin, "HistoryPlugin");
+        assert_eq!(
+            empty.inline_token_dom_class_name,
+            COMPOSER_INLINE_TOKEN_DOM_CLASS_NAME
+        );
+        assert_eq!(empty.mention_node_type, COMPOSER_MENTION_NODE_TYPE);
+        assert_eq!(empty.mention_node_version, 1);
+        assert_eq!(empty.mention_text_content, "@src/main.rs");
+        assert_eq!(
+            empty.mention_tooltip_class_name,
+            COMPOSER_MENTION_TOOLTIP_CLASS_NAME
+        );
+        assert_eq!(empty.skill_node_type, COMPOSER_SKILL_NODE_TYPE);
+        assert_eq!(empty.skill_node_version, 1);
+        assert_eq!(empty.skill_text_content, "$review");
+        assert_eq!(
+            empty.skill_tooltip_class_name,
+            Some(COMPOSER_SKILL_TOOLTIP_CLASS_NAME)
+        );
+        assert_eq!(
+            empty.terminal_context_node_type,
+            COMPOSER_TERMINAL_CONTEXT_NODE_TYPE
+        );
+        assert_eq!(empty.terminal_context_node_version, 1);
+        assert_eq!(
+            empty.terminal_context_text_content,
+            INLINE_TERMINAL_CONTEXT_PLACEHOLDER.to_string()
+        );
+
+        let with_terminal_context = derive_composer_prompt_editor_render_contract(
+            "Ask R3Code",
+            None,
+            1,
+            "README.md",
+            "debugger",
+            Some("   "),
+        );
+        assert_eq!(
+            with_terminal_context.content_editable_class_name,
+            COMPOSER_PROMPT_EDITOR_CONTENT_EDITABLE_CLASS_NAME
+        );
+        assert!(!with_terminal_context.placeholder_visible);
+        assert_eq!(with_terminal_context.placeholder_class_name, None);
+        assert_eq!(
+            with_terminal_context.mention_text_content,
+            "@README.md".to_string()
+        );
+        assert_eq!(
+            with_terminal_context.skill_text_content,
+            "$debugger".to_string()
+        );
+        assert_eq!(with_terminal_context.skill_tooltip_class_name, None);
+
+        assert_eq!(
+            composer_prompt_editor_surround_symbols(),
+            vec![
+                ("(", ")"),
+                ("[", "]"),
+                ("{", "}"),
+                ("'", "'"),
+                ("\"", "\""),
+                ("“", "”"),
+                ("`", "`"),
+                ("<", ">"),
+                ("«", "»"),
+                ("*", "*"),
+                ("_", "_"),
+            ]
+        );
+        assert_eq!(composer_prompt_editor_surround_close_symbol("`"), Some("`"));
+        assert_eq!(composer_prompt_editor_surround_close_symbol("x"), None);
     }
 
     #[test]

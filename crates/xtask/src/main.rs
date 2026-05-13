@@ -2532,6 +2532,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace command_palette_render_contracts_match_upstream_components`; `cargo test --workspace command_palette_filters_action_only_queries_and_injects_projects_and_threads`",
             "Wire exact GPUI command primitives, browser keyboard/focus behavior, add-project browse/clone flows, source-control lookup, and live row rendering parity.",
         )
+    } else if path == "apps/web/src/components/ComposerPromptEditor.tsx" {
+        (
+            "ComposerPromptEditor Lexical namespace, node type/version/text-content contracts, inline-token DOM and tooltip classes, content-editable and placeholder classes, plugin order, terminal-context placeholder behavior, and surround-symbol table in crates/r3_core/src/lib.rs and crates/r3_ui/src/shell.rs",
+            "partial",
+            "`cargo test --workspace composer_prompt_editor_render_contract_matches_upstream_component`; `cargo test --workspace composer_inline_token_adjacency_matches_upstream_contract`",
+            "Wire full GPUI editor input behavior, controlled cursor/selection updates, paste handling, inline token editing, keyboard command interception, and browser composition/dead-key behavior.",
+        )
     } else if path == "apps/web/src/components/GitActionsControl.logic.test.ts"
         || path == "apps/web/src/components/GitActionsControl.logic.ts"
     {
