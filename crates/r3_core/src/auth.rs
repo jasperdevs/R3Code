@@ -13,6 +13,7 @@ pub const PAIRING_TOKEN_ALPHABET: &str = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
 pub const PAIRING_TOKEN_LENGTH: usize = 12;
 pub const DEFAULT_SESSION_TTL_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 pub const DEFAULT_WEBSOCKET_TOKEN_TTL_MS: i64 = 5 * 60 * 1000;
+pub const DEFAULT_ONE_TIME_TOKEN_TTL_MS: i64 = 5 * 60 * 1000;
 pub const AUTHORIZATION_PREFIX: &str = "Bearer ";
 pub const WEBSOCKET_TOKEN_QUERY_PARAM: &str = "wsToken";
 pub const DEFAULT_AUTH_CONTROL_PLANE_SESSION_SUBJECT: &str = "cli-issued-session";
@@ -423,6 +424,34 @@ pub struct AuthSessionStateSession {
     pub role: AuthSessionRole,
     pub method: ServerAuthSessionMethod,
     pub expires_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BootstrapGrantPlan {
+    pub method: ServerAuthBootstrapMethod,
+    pub role: AuthSessionRole,
+    pub subject: String,
+    pub label: Option<String>,
+    pub expires_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BootstrapCredentialErrorPlan {
+    pub message: &'static str,
+    pub status: u16,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BootstrapSeededConsumeDecision {
+    Success {
+        grant: BootstrapGrantPlan,
+        next_remaining_uses: Option<u32>,
+        remove_seeded_credential: bool,
+    },
+    Error {
+        error: BootstrapCredentialErrorPlan,
+        remove_seeded_credential: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -857,6 +886,95 @@ pub fn auth_control_plane_list_sessions(sessions: &[AuthClientSession]) -> Vec<A
             .then_with(|| right.issued_at.cmp(&left.issued_at))
     });
     sorted
+}
+
+pub fn bootstrap_one_time_pairing_link_plan(
+    id: &str,
+    credential: &str,
+    created_at: &str,
+    expires_at: &str,
+    role: Option<AuthSessionRole>,
+    subject: Option<&str>,
+    label: Option<&str>,
+) -> AuthPairingLink {
+    AuthPairingLink {
+        id: id.to_string(),
+        credential: credential.to_string(),
+        role: role.unwrap_or(AuthSessionRole::Client),
+        subject: subject.unwrap_or("one-time-token").to_string(),
+        label: normalize_non_empty_string(label),
+        created_at: created_at.to_string(),
+        expires_at: expires_at.to_string(),
+    }
+}
+
+pub fn bootstrap_seeded_desktop_grant(expires_at: &str) -> BootstrapGrantPlan {
+    BootstrapGrantPlan {
+        method: ServerAuthBootstrapMethod::DesktopBootstrap,
+        role: AuthSessionRole::Owner,
+        subject: "desktop-bootstrap".to_string(),
+        label: None,
+        expires_at: expires_at.to_string(),
+    }
+}
+
+pub fn bootstrap_seeded_consume_decision(
+    grant: BootstrapGrantPlan,
+    remaining_uses: u32,
+    now: &str,
+) -> BootstrapSeededConsumeDecision {
+    if now >= grant.expires_at.as_str() {
+        return BootstrapSeededConsumeDecision::Error {
+            error: BootstrapCredentialErrorPlan {
+                message: "Bootstrap credential expired.",
+                status: 401,
+            },
+            remove_seeded_credential: true,
+        };
+    }
+
+    BootstrapSeededConsumeDecision::Success {
+        grant,
+        next_remaining_uses: (remaining_uses > 1).then_some(remaining_uses - 1),
+        remove_seeded_credential: remaining_uses <= 1,
+    }
+}
+
+pub fn bootstrap_pairing_row_consume_error(
+    row_exists: bool,
+    revoked_at: Option<&str>,
+    consumed_at: Option<&str>,
+    expires_at: Option<&str>,
+    now: &str,
+) -> Option<BootstrapCredentialErrorPlan> {
+    if !row_exists {
+        return Some(BootstrapCredentialErrorPlan {
+            message: "Unknown bootstrap credential.",
+            status: 401,
+        });
+    }
+    if revoked_at.is_some() {
+        return Some(BootstrapCredentialErrorPlan {
+            message: "Bootstrap credential is no longer available.",
+            status: 401,
+        });
+    }
+    if consumed_at.is_some() {
+        return Some(BootstrapCredentialErrorPlan {
+            message: "Unknown bootstrap credential.",
+            status: 401,
+        });
+    }
+    if expires_at.map_or(false, |expires_at| now >= expires_at) {
+        return Some(BootstrapCredentialErrorPlan {
+            message: "Bootstrap credential expired.",
+            status: 401,
+        });
+    }
+    Some(BootstrapCredentialErrorPlan {
+        message: "Bootstrap credential is no longer available.",
+        status: 401,
+    })
 }
 
 fn auth_session_role_priority(role: AuthSessionRole) -> u8 {
@@ -2302,6 +2420,133 @@ mod tests {
                 "owner-disconnected-newer",
                 "client-connected"
             ]
+        );
+    }
+
+    #[test]
+    fn ports_bootstrap_credential_service_decision_contracts() {
+        let link = bootstrap_one_time_pairing_link_plan(
+            "pairing-1",
+            "23456789ABCD",
+            "2026-03-04T12:00:00.000Z",
+            "2026-03-04T12:05:00.000Z",
+            None,
+            None,
+            Some("Julius iPhone"),
+        );
+        assert_eq!(link.role, AuthSessionRole::Client);
+        assert_eq!(link.subject, "one-time-token");
+        assert_eq!(link.label.as_deref(), Some("Julius iPhone"));
+
+        let owner_link = bootstrap_one_time_pairing_link_plan(
+            "pairing-owner",
+            "ABCDEFGHJKLM",
+            "2026-03-04T12:00:00.000Z",
+            "2026-03-04T12:05:00.000Z",
+            Some(AuthSessionRole::Owner),
+            Some("owner-bootstrap"),
+            Some(""),
+        );
+        assert_eq!(owner_link.role, AuthSessionRole::Owner);
+        assert_eq!(owner_link.subject, "owner-bootstrap");
+        assert_eq!(owner_link.label, None);
+
+        let seeded = bootstrap_seeded_desktop_grant("2026-03-04T12:05:00.000Z");
+        assert_eq!(seeded.method, ServerAuthBootstrapMethod::DesktopBootstrap);
+        assert_eq!(seeded.role, AuthSessionRole::Owner);
+        assert_eq!(seeded.subject, "desktop-bootstrap");
+
+        assert_eq!(
+            bootstrap_seeded_consume_decision(seeded.clone(), 1, "2026-03-04T12:04:59.999Z"),
+            BootstrapSeededConsumeDecision::Success {
+                grant: seeded.clone(),
+                next_remaining_uses: None,
+                remove_seeded_credential: true,
+            }
+        );
+        assert_eq!(
+            bootstrap_seeded_consume_decision(seeded.clone(), 3, "2026-03-04T12:04:59.999Z"),
+            BootstrapSeededConsumeDecision::Success {
+                grant: seeded.clone(),
+                next_remaining_uses: Some(2),
+                remove_seeded_credential: false,
+            }
+        );
+        assert_eq!(
+            bootstrap_seeded_consume_decision(seeded, 1, "2026-03-04T12:05:00.000Z"),
+            BootstrapSeededConsumeDecision::Error {
+                error: BootstrapCredentialErrorPlan {
+                    message: "Bootstrap credential expired.",
+                    status: 401,
+                },
+                remove_seeded_credential: true,
+            }
+        );
+
+        assert_eq!(
+            bootstrap_pairing_row_consume_error(
+                false,
+                None,
+                None,
+                None,
+                "2026-03-04T12:00:00.000Z"
+            ),
+            Some(BootstrapCredentialErrorPlan {
+                message: "Unknown bootstrap credential.",
+                status: 401,
+            })
+        );
+        assert_eq!(
+            bootstrap_pairing_row_consume_error(
+                true,
+                Some("2026-03-04T12:01:00.000Z"),
+                None,
+                Some("2026-03-04T12:05:00.000Z"),
+                "2026-03-04T12:02:00.000Z"
+            ),
+            Some(BootstrapCredentialErrorPlan {
+                message: "Bootstrap credential is no longer available.",
+                status: 401,
+            })
+        );
+        assert_eq!(
+            bootstrap_pairing_row_consume_error(
+                true,
+                None,
+                Some("2026-03-04T12:01:00.000Z"),
+                Some("2026-03-04T12:05:00.000Z"),
+                "2026-03-04T12:02:00.000Z"
+            ),
+            Some(BootstrapCredentialErrorPlan {
+                message: "Unknown bootstrap credential.",
+                status: 401,
+            })
+        );
+        assert_eq!(
+            bootstrap_pairing_row_consume_error(
+                true,
+                None,
+                None,
+                Some("2026-03-04T12:05:00.000Z"),
+                "2026-03-04T12:05:00.000Z"
+            ),
+            Some(BootstrapCredentialErrorPlan {
+                message: "Bootstrap credential expired.",
+                status: 401,
+            })
+        );
+        assert_eq!(
+            bootstrap_pairing_row_consume_error(
+                true,
+                None,
+                None,
+                Some("2026-03-04T12:05:00.000Z"),
+                "2026-03-04T12:04:59.999Z"
+            ),
+            Some(BootstrapCredentialErrorPlan {
+                message: "Bootstrap credential is no longer available.",
+                status: 401,
+            })
         );
     }
 
