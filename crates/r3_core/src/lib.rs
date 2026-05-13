@@ -177,6 +177,38 @@ pub struct ExpiredTerminalContextToastCopy {
     pub description: &'static str,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToastTransitionStatus {
+    Starting,
+    Ending,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ToastLayoutInput {
+    pub id: String,
+    pub height: Option<f64>,
+    pub transition_status: Option<ToastTransitionStatus>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VisibleToastLayoutItem {
+    pub toast: ToastLayoutInput,
+    pub visible_index: usize,
+    pub offset_y: f64,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VisibleToastLayout {
+    pub frontmost_height: f64,
+    pub items: Vec<VisibleToastLayoutItem>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadScopedToastData {
+    pub thread_ref: Option<ScopedThreadRef>,
+    pub thread_id: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlineTerminalContextInsertion {
     pub prompt: String,
@@ -1891,6 +1923,92 @@ pub fn build_expired_terminal_context_toast_copy(
             description: "Re-add it if you want that terminal output included.",
         },
     }
+}
+
+pub fn should_hide_collapsed_toast_content(
+    visible_toast_index: usize,
+    visible_toast_count: usize,
+) -> bool {
+    if visible_toast_count <= 1 {
+        return false;
+    }
+    visible_toast_index > 0
+}
+
+pub fn build_visible_toast_layout(visible_toasts: &[ToastLayoutInput]) -> VisibleToastLayout {
+    let mut full_index = 0;
+    let mut full_offset_y = 0.0;
+    let mut live_index = 0;
+    let mut live_offset_y = 0.0;
+
+    let items = visible_toasts
+        .iter()
+        .map(|toast| {
+            let height = normalize_toast_height(toast.height);
+            if toast.transition_status == Some(ToastTransitionStatus::Ending) {
+                let item = VisibleToastLayoutItem {
+                    toast: toast.clone(),
+                    visible_index: full_index,
+                    offset_y: full_offset_y,
+                };
+                full_offset_y += height;
+                full_index += 1;
+                return item;
+            }
+
+            let item = VisibleToastLayoutItem {
+                toast: toast.clone(),
+                visible_index: live_index,
+                offset_y: live_offset_y,
+            };
+            full_offset_y += height;
+            full_index += 1;
+            live_offset_y += height;
+            live_index += 1;
+            item
+        })
+        .collect::<Vec<_>>();
+
+    let frontmost_live_toast = visible_toasts
+        .iter()
+        .find(|toast| toast.transition_status != Some(ToastTransitionStatus::Ending));
+    VisibleToastLayout {
+        frontmost_height: normalize_toast_height(
+            frontmost_live_toast.and_then(|toast| toast.height),
+        ),
+        items,
+    }
+}
+
+fn normalize_toast_height(height: Option<f64>) -> f64 {
+    height
+        .filter(|height| height.is_finite() && *height > 0.0)
+        .unwrap_or(0.0)
+}
+
+pub fn should_render_thread_scoped_toast(
+    data: Option<&ThreadScopedToastData>,
+    active_thread_ref: Option<&ScopedThreadRef>,
+) -> bool {
+    let Some(data) = data else {
+        return true;
+    };
+    if let Some(thread_ref) = data.thread_ref.as_ref() {
+        return active_thread_ref.is_some_and(|active_thread_ref| {
+            active_thread_ref.environment_id == thread_ref.environment_id
+                && active_thread_ref.thread_id == thread_ref.thread_id
+        });
+    }
+
+    let Some(toast_thread_id) = data
+        .thread_id
+        .as_ref()
+        .filter(|thread_id| !thread_id.is_empty())
+    else {
+        return true;
+    };
+    active_thread_ref
+        .is_some_and(|active_thread_ref| active_thread_ref.thread_id == *toast_thread_id)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25212,6 +25330,121 @@ mod tests {
                 description: "Re-add it if you want that terminal output included.",
             }
         );
+    }
+
+    #[test]
+    fn toast_layout_and_scope_logic_match_upstream() {
+        assert!(!should_hide_collapsed_toast_content(0, 1));
+        assert!(!should_hide_collapsed_toast_content(0, 3));
+        assert!(should_hide_collapsed_toast_content(1, 3));
+
+        let toast =
+            |id: &str, height: Option<f64>, transition_status: Option<ToastTransitionStatus>| {
+                ToastLayoutInput {
+                    id: id.to_string(),
+                    height,
+                    transition_status,
+                }
+            };
+
+        let layout = build_visible_toast_layout(&[
+            toast("a", Some(48.0), None),
+            toast("b", Some(72.0), None),
+            toast("c", Some(24.0), None),
+        ]);
+        assert_eq!(layout.frontmost_height, 48.0);
+        assert_eq!(
+            layout
+                .items
+                .iter()
+                .map(|item| (
+                    item.toast.id.as_str(),
+                    item.visible_index,
+                    item.offset_y as i32
+                ))
+                .collect::<Vec<_>>(),
+            vec![("a", 0, 0), ("b", 1, 48), ("c", 2, 120)]
+        );
+
+        let front_dismissed = build_visible_toast_layout(&[
+            toast("a", Some(48.0), Some(ToastTransitionStatus::Ending)),
+            toast("b", Some(72.0), None),
+            toast("c", Some(24.0), None),
+        ]);
+        assert_eq!(front_dismissed.frontmost_height, 72.0);
+        assert_eq!(
+            front_dismissed
+                .items
+                .iter()
+                .map(|item| (
+                    item.toast.id.as_str(),
+                    item.visible_index,
+                    item.offset_y as i32
+                ))
+                .collect::<Vec<_>>(),
+            vec![("a", 0, 0), ("b", 0, 0), ("c", 1, 72)]
+        );
+
+        let middle_dismissed = build_visible_toast_layout(&[
+            toast("a", Some(48.0), None),
+            toast("b", Some(72.0), Some(ToastTransitionStatus::Ending)),
+            toast("c", Some(24.0), None),
+        ]);
+        assert_eq!(middle_dismissed.frontmost_height, 48.0);
+        assert_eq!(
+            middle_dismissed
+                .items
+                .iter()
+                .map(|item| (
+                    item.toast.id.as_str(),
+                    item.visible_index,
+                    item.offset_y as i32
+                ))
+                .collect::<Vec<_>>(),
+            vec![("a", 0, 0), ("b", 1, 48), ("c", 1, 48)]
+        );
+
+        let missing_heights = build_visible_toast_layout(&[
+            toast("a", None, None),
+            toast("b", None, None),
+            toast("c", Some(30.0), None),
+        ]);
+        assert_eq!(missing_heights.frontmost_height, 0.0);
+        assert_eq!(
+            missing_heights
+                .items
+                .iter()
+                .map(|item| (item.toast.id.as_str(), item.offset_y as i32))
+                .collect::<Vec<_>>(),
+            vec![("a", 0), ("b", 0), ("c", 0)]
+        );
+
+        let active_thread_ref = ScopedThreadRef::new("environment-a", "thread-1");
+        assert!(should_render_thread_scoped_toast(
+            Some(&ThreadScopedToastData {
+                thread_ref: Some(active_thread_ref.clone()),
+                thread_id: None,
+            }),
+            Some(&active_thread_ref)
+        ));
+        assert!(!should_render_thread_scoped_toast(
+            Some(&ThreadScopedToastData {
+                thread_ref: Some(ScopedThreadRef::new("environment-b", "thread-1")),
+                thread_id: None,
+            }),
+            Some(&active_thread_ref)
+        ));
+        assert!(should_render_thread_scoped_toast(
+            Some(&ThreadScopedToastData {
+                thread_ref: None,
+                thread_id: Some("thread-1".to_string()),
+            }),
+            Some(&active_thread_ref)
+        ));
+        assert!(should_render_thread_scoped_toast(
+            None,
+            Some(&active_thread_ref)
+        ));
     }
 
     #[test]

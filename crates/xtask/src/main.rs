@@ -1698,6 +1698,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core provider_update`",
             "Wire the decision helpers into live GPUI provider update UI and port exact component interactions.",
         )
+    } else if path == "apps/web/src/components/ui/toast.logic.ts"
+        || path == "apps/web/src/components/ui/toast.logic.test.ts"
+    {
+        (
+            "toast collapsed-content, visible-stack layout, and thread-scoped visibility helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core toast_layout`",
+            "Wire helpers into the live GPUI toast renderer and port exact toast animations/styles.",
+        )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
             "logical project path normalization, physical/grouping/order keys, repository-scoped keys, settings override resolution, ref fallback, and group-label helpers in crates/r3_core/src/lib.rs",
