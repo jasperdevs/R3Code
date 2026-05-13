@@ -1816,6 +1816,91 @@ pub fn render_terminal_qr_code(value: &str, margin: usize) -> Result<String, Str
     Ok(render_terminal_qr_code_from_symbol(&qr_code, margin))
 }
 
+pub fn render_svg_qr_code(
+    value: &str,
+    size: usize,
+    ecc: SharedQrCodeEcc,
+    margin: i32,
+    title: Option<&str>,
+    class_name: Option<&str>,
+    foreground_color: Option<&str>,
+    background_color: Option<&str>,
+) -> Result<String, String> {
+    let qr_code = encode_text_qr_code(value, ecc)?;
+    let view_box_size = qr_code.size + margin * 2;
+    let foreground_color = foreground_color.unwrap_or("#000");
+    let background_color = background_color.unwrap_or("#fff");
+    let mut svg = format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {view_box_size} {view_box_size}" width="{size}" height="{size}" shape-rendering="crispEdges""#
+    );
+    if title.is_some() {
+        svg.push_str(r#" role="img""#);
+    }
+    if let Some(title) = title {
+        svg.push_str(&format!(r#" aria-label="{}""#, escape_xml_attr(title)));
+    }
+    if let Some(class_name) = class_name.filter(|class_name| !class_name.is_empty()) {
+        svg.push_str(&format!(r#" class="{}""#, escape_xml_attr(class_name)));
+    }
+    svg.push('>');
+    if let Some(title) = title {
+        svg.push_str(&format!("<title>{}</title>", escape_xml_text(title)));
+    }
+    svg.push_str(&format!(
+        r#"<rect width="{view_box_size}" height="{view_box_size}" fill="{}"/>"#,
+        escape_xml_attr(background_color)
+    ));
+    svg.push_str(&format!(
+        r#"<path d="{}" fill="{}"/></svg>"#,
+        build_svg_qr_path_data(&qr_code, margin),
+        escape_xml_attr(foreground_color)
+    ));
+    Ok(svg)
+}
+
+fn build_svg_qr_path_data(qr_code: &SharedQrCode, margin: i32) -> String {
+    let mut commands = Vec::new();
+    for y in 0..qr_code.size {
+        let mut run_start = -1;
+        for x in 0..=qr_code.size {
+            let is_dark = x < qr_code.size && qr_code.get_module(x, y);
+            if is_dark {
+                if run_start == -1 {
+                    run_start = x;
+                }
+                continue;
+            }
+            if run_start == -1 {
+                continue;
+            }
+            commands.push(format!(
+                "M{} {}h{}v1H{}z",
+                run_start + margin,
+                y + margin,
+                x - run_start,
+                run_start + margin
+            ));
+            run_start = -1;
+        }
+    }
+    commands.join("")
+}
+
+fn escape_xml_attr(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('"', "&quot;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+fn escape_xml_text(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
 pub fn render_terminal_qr_code_from_symbol(qr_code: &SharedQrCode, margin: usize) -> String {
     let margin = margin as i32;
     let mut rows = Vec::new();
@@ -2489,6 +2574,37 @@ mod tests {
         assert_eq!(terminal.lines().next().unwrap_or("").chars().count(), 37);
         assert_eq!(terminal.lines().count(), 19);
         assert!(terminal.contains('█') || terminal.contains('▀') || terminal.contains('▄'));
+
+        let svg = render_svg_qr_code(
+            "https://example.com/pair",
+            128,
+            SharedQrCodeEcc::Low,
+            0,
+            None,
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+        assert!(svg.contains(r##"fill="#fff""##));
+        assert!(svg.contains(r##"fill="#000""##));
+        assert!(!svg.contains("currentColor"));
+
+        let custom_svg = render_svg_qr_code(
+            "https://example.com/pair",
+            128,
+            SharedQrCodeEcc::Low,
+            0,
+            Some("Pair"),
+            Some("qr-code"),
+            Some("#123456"),
+            Some("#abcdef"),
+        )
+        .unwrap();
+        assert!(custom_svg.contains(r##"fill="#abcdef""##));
+        assert!(custom_svg.contains(r##"fill="#123456""##));
+        assert!(custom_svg.contains(r#"role="img""#));
+        assert!(custom_svg.contains("<title>Pair</title>"));
 
         let binary = encode_binary_qr_code(b"PAIRCODE", SharedQrCodeEcc::Medium).unwrap();
         assert_eq!(binary.size, 21);

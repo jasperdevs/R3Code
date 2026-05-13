@@ -1897,6 +1897,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core toast_layout`",
             "Wire helpers into the live GPUI toast renderer and port exact toast animations/styles.",
         )
+    } else if path == "apps/web/src/components/ui/qr-code.tsx"
+        || path == "apps/web/src/components/ui/qr-code.test.tsx"
+    {
+        (
+            "QRCodeSvg Nayuki encoding, SVG path run-length rendering, default high-contrast foreground/background fills, custom color fills, title/role/class attributes, and no-currentColor rendering in crates/r3_core/src/shared.rs",
+            "partial",
+            "`cargo test -p r3_core shared::tests::ports_shared_nayuki_qr_code_contracts`",
+            "Wire the SVG renderer into live GPUI/browser pairing surfaces wherever upstream renders QRCodeSvg.",
+        )
     } else if path == "apps/web/src/providerUpdateDismissal.ts"
         || path == "apps/web/src/providerUpdateDismissal.test.ts"
     {
