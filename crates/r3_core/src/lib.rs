@@ -383,6 +383,14 @@ pub fn resolve_web_app_branding(input: &WebAppBrandingInput) -> WebAppBranding {
     }
 }
 
+pub fn is_electron_web_runtime(
+    has_window: bool,
+    has_desktop_bridge: bool,
+    has_native_api: bool,
+) -> bool {
+    has_window && (has_desktop_bridge || has_native_api)
+}
+
 pub fn resolve_diff_theme_name(theme: DiffColorScheme) -> &'static str {
     match theme {
         DiffColorScheme::Light => DIFF_THEME_LIGHT_NAME,
@@ -27767,6 +27775,15 @@ mod tests {
         assert_eq!(ignored.hosted_app_channel_label, None);
         assert_eq!(ignored.app_stage_label, "Dev");
         assert_eq!(ignored.app_display_name, "R3Code (Dev)");
+    }
+
+    #[test]
+    fn web_env_electron_detection_matches_upstream_bridge_contract() {
+        assert!(!is_electron_web_runtime(false, true, true));
+        assert!(!is_electron_web_runtime(true, false, false));
+        assert!(is_electron_web_runtime(true, true, false));
+        assert!(is_electron_web_runtime(true, false, true));
+        assert!(is_electron_web_runtime(true, true, true));
     }
 
     #[test]

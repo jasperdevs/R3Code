@@ -1753,6 +1753,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core turn_diff_summaries_hook_helpers_match_upstream_contract`",
             "Wire helper into live GPUI active-thread diff summary state and memoized checkpoint turn-count rendering.",
         )
+    } else if path == "apps/web/src/env.ts" {
+        (
+            "Electron web-runtime detection for module-load window presence and desktopBridge/nativeApi preload bridge availability in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core web_env_electron_detection_matches_upstream_bridge_contract`",
+            "Wire helper into live GPUI/web runtime initialization wherever desktop/browser behavior branches.",
+        )
     } else if path == "apps/web/src/markdown-links.ts"
         || path == "apps/web/src/markdown-links.test.ts"
     {
