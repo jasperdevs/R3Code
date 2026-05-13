@@ -392,6 +392,21 @@ pub struct BootstrapCredentialAuthError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthRouteErrorResponsePlan {
+    pub status: u16,
+    pub body_json: String,
+    pub headers: BTreeMap<&'static str, String>,
+    pub should_log_error: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct PairingCredentialRequestHeaders {
+    pub content_length: Option<String>,
+    pub content_type: Option<String>,
+    pub transfer_encoding: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AuthError {
     MalformedToken,
     InvalidBase64,
@@ -604,6 +619,42 @@ pub fn map_bootstrap_credential_auth_error(
     }
 }
 
+pub fn respond_to_auth_error_plan(
+    message: &str,
+    status: Option<u16>,
+) -> AuthRouteErrorResponsePlan {
+    let status = status.unwrap_or(500);
+    AuthRouteErrorResponsePlan {
+        status,
+        body_json: format!("{{\"error\":{}}}", json_string(message)),
+        headers: browser_api_cors_headers(),
+        should_log_error: status >= 500,
+    }
+}
+
+pub fn pairing_credential_request_has_body(headers: &PairingCredentialRequestHeaders) -> bool {
+    if let Some(content_length) = headers.content_length.as_deref() {
+        if let Some(parsed) = parse_javascript_int_prefix(content_length) {
+            return parsed > 0;
+        }
+    }
+    headers.transfer_encoding.is_some()
+}
+
+fn browser_api_cors_headers() -> BTreeMap<&'static str, String> {
+    BTreeMap::from([
+        ("access-control-allow-origin", "*".to_string()),
+        (
+            "access-control-allow-methods",
+            "GET, POST, OPTIONS".to_string(),
+        ),
+        (
+            "access-control-allow-headers",
+            "authorization, b3, traceparent, content-type".to_string(),
+        ),
+    ])
+}
+
 pub fn require_owner_session(
     role: AuthSessionRole,
     action: AuthOwnerAction,
@@ -636,12 +687,11 @@ pub fn auth_pairing_request_has_body(
     content_length: Option<&str>,
     transfer_encoding: Option<&str>,
 ) -> bool {
-    if let Some(header) = content_length {
-        if let Ok(length) = header.parse::<u64>() {
-            return length > 0;
-        }
-    }
-    transfer_encoding.is_some()
+    pairing_credential_request_has_body(&PairingCredentialRequestHeaders {
+        content_length: content_length.map(str::to_string),
+        content_type: None,
+        transfer_encoding: transfer_encoding.map(str::to_string),
+    })
 }
 
 pub fn resolve_secret_path(secrets_dir: &str, name: &str) -> String {
@@ -1420,6 +1470,33 @@ fn json_string(value: &str) -> String {
     serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string())
 }
 
+fn parse_javascript_int_prefix(value: &str) -> Option<i64> {
+    let trimmed = value.trim_start();
+    let mut chars = trimmed.chars().peekable();
+    let sign = match chars.peek().copied() {
+        Some('-') => {
+            chars.next();
+            -1
+        }
+        Some('+') => {
+            chars.next();
+            1
+        }
+        _ => 1,
+    };
+    let mut parsed: i64 = 0;
+    let mut has_digit = false;
+    while let Some(ch) = chars.peek().copied() {
+        let Some(digit) = ch.to_digit(10) else {
+            break;
+        };
+        chars.next();
+        has_digit = true;
+        parsed = parsed.saturating_mul(10).saturating_add(i64::from(digit));
+    }
+    has_digit.then_some(parsed.saturating_mul(sign))
+}
+
 fn read_string_claim<'a>(value: &'a Value, key: &str) -> Result<&'a str, AuthError> {
     value
         .get(key)
@@ -1620,11 +1697,83 @@ mod tests {
 
         assert!(auth_pairing_request_has_body(Some("1"), None));
         assert!(!auth_pairing_request_has_body(Some("0"), None));
+        assert!(auth_pairing_request_has_body(Some("12px"), None));
+        assert!(!auth_pairing_request_has_body(Some("-1"), Some("chunked")));
         assert!(auth_pairing_request_has_body(
             Some("not-a-number"),
             Some("chunked")
         ));
         assert!(!auth_pairing_request_has_body(Some("not-a-number"), None));
+    }
+
+    #[test]
+    fn ports_auth_http_error_and_pairing_body_contracts() {
+        let client_error = respond_to_auth_error_plan("Nope", Some(401));
+        assert_eq!(client_error.status, 401);
+        assert_eq!(client_error.body_json, "{\"error\":\"Nope\"}");
+        assert_eq!(
+            client_error.headers.get("access-control-allow-origin"),
+            Some(&"*".to_string())
+        );
+        assert_eq!(
+            client_error
+                .headers
+                .get("access-control-allow-methods")
+                .map(String::as_str),
+            Some("GET, POST, OPTIONS")
+        );
+        assert_eq!(
+            client_error
+                .headers
+                .get("access-control-allow-headers")
+                .map(String::as_str),
+            Some("authorization, b3, traceparent, content-type")
+        );
+        assert!(!client_error.should_log_error);
+
+        let server_error = respond_to_auth_error_plan("bad \"x\"\n", None);
+        assert_eq!(server_error.status, 500);
+        assert_eq!(server_error.body_json, "{\"error\":\"bad \\\"x\\\"\\n\"}");
+        assert!(server_error.should_log_error);
+
+        assert!(!pairing_credential_request_has_body(
+            &PairingCredentialRequestHeaders {
+                content_length: Some("0".to_string()),
+                ..PairingCredentialRequestHeaders::default()
+            }
+        ));
+        assert!(pairing_credential_request_has_body(
+            &PairingCredentialRequestHeaders {
+                content_length: Some("  +12px".to_string()),
+                ..PairingCredentialRequestHeaders::default()
+            }
+        ));
+        assert!(!pairing_credential_request_has_body(
+            &PairingCredentialRequestHeaders {
+                content_length: Some("-1".to_string()),
+                transfer_encoding: Some("chunked".to_string()),
+                ..PairingCredentialRequestHeaders::default()
+            }
+        ));
+        assert!(pairing_credential_request_has_body(
+            &PairingCredentialRequestHeaders {
+                content_length: Some("abc".to_string()),
+                transfer_encoding: Some("chunked".to_string()),
+                ..PairingCredentialRequestHeaders::default()
+            }
+        ));
+        assert!(!pairing_credential_request_has_body(
+            &PairingCredentialRequestHeaders {
+                content_length: Some("abc".to_string()),
+                ..PairingCredentialRequestHeaders::default()
+            }
+        ));
+        assert!(pairing_credential_request_has_body(
+            &PairingCredentialRequestHeaders {
+                transfer_encoding: Some("chunked".to_string()),
+                ..PairingCredentialRequestHeaders::default()
+            }
+        ));
     }
 
     #[test]
