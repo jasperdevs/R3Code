@@ -1901,6 +1901,17 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core command_palette_store_transitions`",
             "Wire helpers into the live GPUI command palette store.",
         )
+    } else if path == "apps/web/src/components/chat/composerMenuHighlight.ts"
+        || path == "apps/web/src/components/chat/composerMenuHighlight.test.ts"
+        || path == "apps/web/src/components/composerFooterLayout.ts"
+        || path == "apps/web/src/components/composerFooterLayout.test.ts"
+    {
+        (
+            "composer menu active-highlight resolution, highlight nudging, and composer footer compact breakpoint helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core composer_menu_grouping_highlight`",
+            "Wire footer breakpoint helpers into live GPUI composer layout.",
+        )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
             "logical project path normalization, physical/grouping/order keys, repository-scoped keys, settings override resolution, ref fallback, and group-label helpers in crates/r3_core/src/lib.rs",

@@ -306,6 +306,10 @@ pub const FNV_PRIME_32: u32 = 0x01000193;
 pub const SECONDARY_HASH_SEED: u32 = 0x9e3779b9;
 pub const SECONDARY_HASH_MULTIPLIER: u32 = 0x85ebca6b;
 pub const NEW_MODEL_KEYS: [&str; 0] = [];
+pub const COMPOSER_FOOTER_COMPACT_BREAKPOINT_PX: f64 = 620.0;
+pub const COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX: f64 = 780.0;
+pub const COMPOSER_PRIMARY_ACTIONS_COMPACT_BREAKPOINT_PX: f64 =
+    COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TerminalContextSelection {
@@ -2167,6 +2171,26 @@ pub fn nudge_composer_menu_highlight(
         ComposerMenuNudgeDirection::ArrowUp => (normalized_index + items.len() - 1) % items.len(),
     };
     items.get(next_index).map(|item| item.id().to_string())
+}
+
+pub fn should_use_compact_composer_footer(width: Option<f64>, has_wide_actions: bool) -> bool {
+    let Some(width) = width else {
+        return false;
+    };
+    let breakpoint = if has_wide_actions {
+        COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX
+    } else {
+        COMPOSER_FOOTER_COMPACT_BREAKPOINT_PX
+    };
+    width < breakpoint
+}
+
+pub fn should_use_compact_composer_primary_actions(
+    width: Option<f64>,
+    has_wide_actions: bool,
+) -> bool {
+    has_wide_actions
+        && width.is_some_and(|width| width < COMPOSER_PRIMARY_ACTIONS_COMPACT_BREAKPOINT_PX)
 }
 
 pub fn resolve_composer_command_selection(
@@ -28464,6 +28488,27 @@ mod tests {
             nudge_composer_menu_highlight(&items, Some("top"), ComposerMenuNudgeDirection::ArrowUp),
             Some("third".to_string())
         );
+
+        assert_eq!(COMPOSER_FOOTER_COMPACT_BREAKPOINT_PX, 620.0);
+        assert_eq!(COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX, 780.0);
+        assert_eq!(COMPOSER_PRIMARY_ACTIONS_COMPACT_BREAKPOINT_PX, 780.0);
+        assert!(!should_use_compact_composer_footer(None, false));
+        assert!(should_use_compact_composer_footer(Some(619.0), false));
+        assert!(!should_use_compact_composer_footer(Some(620.0), false));
+        assert!(should_use_compact_composer_footer(Some(779.0), true));
+        assert!(!should_use_compact_composer_footer(Some(780.0), true));
+        assert!(!should_use_compact_composer_primary_actions(
+            Some(619.0),
+            false
+        ));
+        assert!(should_use_compact_composer_primary_actions(
+            Some(779.0),
+            true
+        ));
+        assert!(!should_use_compact_composer_primary_actions(
+            Some(780.0),
+            true
+        ));
     }
 
     #[test]
