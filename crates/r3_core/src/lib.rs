@@ -18747,6 +18747,279 @@ pub fn parse_remote_pairing_fields(
     })
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedRemotePairingTarget {
+    pub credential: String,
+    pub http_base_url: String,
+    pub ws_base_url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RemoteUrlParts {
+    scheme: String,
+    authority: String,
+    query: String,
+    hash: String,
+}
+
+fn parse_remote_url_like(input: &str, current_origin: &str) -> Option<RemoteUrlParts> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let normalized = if trimmed.starts_with("//") {
+        let current = ParsedPairingUrl::parse(current_origin)?;
+        format!("{}:{trimmed}", current.scheme)
+    } else if has_url_scheme_prefix(trimmed) {
+        trimmed.to_string()
+    } else {
+        format!("https://{trimmed}")
+    };
+    let parsed = ParsedPairingUrl::parse(&normalized)?;
+    Some(RemoteUrlParts {
+        scheme: parsed.scheme,
+        authority: parsed.origin.split_once("://")?.1.to_string(),
+        query: parsed.query,
+        hash: parsed.hash,
+    })
+}
+
+fn remote_url_origin_with_scheme(parts: &RemoteUrlParts, scheme: &str) -> String {
+    format!("{scheme}://{}/", parts.authority)
+}
+
+pub fn normalize_remote_http_base_url(
+    raw_value: &str,
+    current_origin: &str,
+) -> Result<String, String> {
+    let parts = parse_remote_url_like(raw_value, current_origin)
+        .ok_or_else(|| "Enter a backend URL.".to_string())?;
+    let scheme = match parts.scheme.as_str() {
+        "ws" => "http",
+        "wss" => "https",
+        other => other,
+    };
+    Ok(remote_url_origin_with_scheme(&parts, scheme))
+}
+
+pub fn normalize_remote_ws_base_url(
+    raw_value: &str,
+    current_origin: &str,
+) -> Result<String, String> {
+    let parts = parse_remote_url_like(raw_value, current_origin)
+        .ok_or_else(|| "Enter a backend URL.".to_string())?;
+    let scheme = match parts.scheme.as_str() {
+        "http" => "ws",
+        "https" => "wss",
+        other => other,
+    };
+    Ok(remote_url_origin_with_scheme(&parts, scheme))
+}
+
+pub fn resolve_remote_pairing_target(
+    pairing_url: Option<&str>,
+    host: Option<&str>,
+    pairing_code: Option<&str>,
+    current_origin: &str,
+) -> Result<ResolvedRemotePairingTarget, String> {
+    let pairing_url = pairing_url.map(str::trim).unwrap_or_default();
+    if !pairing_url.is_empty() {
+        if let Some(hosted) = read_hosted_pairing_request(pairing_url) {
+            return Ok(ResolvedRemotePairingTarget {
+                credential: hosted.token,
+                http_base_url: normalize_remote_http_base_url(&hosted.host, current_origin)?,
+                ws_base_url: normalize_remote_ws_base_url(&hosted.host, current_origin)?,
+            });
+        }
+
+        let credential = get_pairing_token_from_url(pairing_url).unwrap_or_default();
+        if credential.is_empty() {
+            return Err("Pairing URL is missing its token.".to_string());
+        }
+        return Ok(ResolvedRemotePairingTarget {
+            credential,
+            http_base_url: normalize_remote_http_base_url(pairing_url, current_origin)?,
+            ws_base_url: normalize_remote_ws_base_url(pairing_url, current_origin)?,
+        });
+    }
+
+    let host = host.map(str::trim).unwrap_or_default();
+    let pairing_code = pairing_code.map(str::trim).unwrap_or_default();
+    if host.is_empty() {
+        return Err("Enter a backend URL.".to_string());
+    }
+    if pairing_code.is_empty() {
+        return Err("Enter a pairing code.".to_string());
+    }
+    Ok(ResolvedRemotePairingTarget {
+        credential: pairing_code.to_string(),
+        http_base_url: normalize_remote_http_base_url(host, current_origin)?,
+        ws_base_url: normalize_remote_ws_base_url(host, current_origin)?,
+    })
+}
+
+pub const REMOTE_BEARER_BOOTSTRAP_PATH: &str = "/api/auth/bootstrap/bearer";
+pub const REMOTE_SESSION_STATE_PATH: &str = "/api/auth/session";
+pub const REMOTE_ENVIRONMENT_DESCRIPTOR_PATH: &str = "/.well-known/t3/environment";
+pub const REMOTE_WS_TOKEN_PATH: &str = "/api/auth/ws-token";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteJsonRequestPlan {
+    pub url: String,
+    pub method: String,
+    pub content_type_json: bool,
+    pub authorization: Option<String>,
+    pub body_json: Option<String>,
+}
+
+pub fn remote_endpoint_url(http_base_url: &str, pathname: &str) -> Option<String> {
+    let mut parts = parse_remote_url_like(http_base_url, "https://app.t3.codes")?;
+    parts.query.clear();
+    parts.hash.clear();
+    Some(format!(
+        "{}://{}{}",
+        parts.scheme,
+        parts.authority,
+        if pathname.starts_with('/') {
+            pathname.to_string()
+        } else {
+            format!("/{pathname}")
+        }
+    ))
+}
+
+pub fn remote_json_request_plan(
+    http_base_url: &str,
+    pathname: &str,
+    method: Option<&str>,
+    bearer_token: Option<&str>,
+    body_json: Option<String>,
+) -> Option<RemoteJsonRequestPlan> {
+    Some(RemoteJsonRequestPlan {
+        url: remote_endpoint_url(http_base_url, pathname)?,
+        method: method.unwrap_or("GET").to_string(),
+        content_type_json: body_json.is_some(),
+        authorization: bearer_token
+            .filter(|token| !token.is_empty())
+            .map(|token| format!("Bearer {token}")),
+        body_json,
+    })
+}
+
+pub fn bootstrap_remote_bearer_session_request(
+    http_base_url: &str,
+    credential: &str,
+) -> Option<RemoteJsonRequestPlan> {
+    remote_json_request_plan(
+        http_base_url,
+        REMOTE_BEARER_BOOTSTRAP_PATH,
+        Some("POST"),
+        None,
+        Some(format!(
+            "{{\"credential\":\"{}\"}}",
+            json_escape_string(credential)
+        )),
+    )
+}
+
+pub fn fetch_remote_session_state_request(
+    http_base_url: &str,
+    bearer_token: &str,
+) -> Option<RemoteJsonRequestPlan> {
+    remote_json_request_plan(
+        http_base_url,
+        REMOTE_SESSION_STATE_PATH,
+        None,
+        Some(bearer_token),
+        None,
+    )
+}
+
+pub fn fetch_remote_environment_descriptor_request(
+    http_base_url: &str,
+) -> Option<RemoteJsonRequestPlan> {
+    remote_json_request_plan(
+        http_base_url,
+        REMOTE_ENVIRONMENT_DESCRIPTOR_PATH,
+        None,
+        None,
+        None,
+    )
+}
+
+pub fn issue_remote_websocket_token_request(
+    http_base_url: &str,
+    bearer_token: &str,
+) -> Option<RemoteJsonRequestPlan> {
+    remote_json_request_plan(
+        http_base_url,
+        REMOTE_WS_TOKEN_PATH,
+        Some("POST"),
+        Some(bearer_token),
+        None,
+    )
+}
+
+pub fn read_remote_auth_error_message(response_text: &str, fallback_message: &str) -> String {
+    if response_text.is_empty() {
+        return fallback_message.to_string();
+    }
+    if let Some(error) = extract_top_level_json_string_field(response_text, "error")
+        .filter(|error| !error.is_empty())
+    {
+        return error;
+    }
+    response_text.to_string()
+}
+
+pub fn format_remote_auth_fetch_failure(request_url: &str, message: &str) -> String {
+    format!("Failed to fetch remote auth endpoint {request_url} ({message}).")
+}
+
+pub fn format_remote_auth_status_fallback(status: u16) -> String {
+    format!("Remote auth request failed ({status}).")
+}
+
+pub fn resolve_remote_websocket_connection_url_with_token(
+    ws_base_url: &str,
+    ws_token: &str,
+    current_origin: &str,
+) -> Option<String> {
+    let parts = parse_remote_url_like(ws_base_url, current_origin)?;
+    let base = remote_url_origin_with_scheme(&parts, &parts.scheme);
+    set_url_query_param(&base, "wsToken", ws_token)
+}
+
+fn json_escape_string(value: &str) -> String {
+    let encoded = serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string());
+    encoded
+        .strip_prefix('"')
+        .and_then(|value| value.strip_suffix('"'))
+        .unwrap_or("")
+        .to_string()
+}
+
+fn extract_top_level_json_string_field(input: &str, field: &str) -> Option<String> {
+    let value = serde_json::from_str::<serde_json::Value>(input).ok()?;
+    value.get(field)?.as_str().map(str::to_string)
+}
+
+fn set_url_query_param(input: &str, name: &str, value: &str) -> Option<String> {
+    let mut parts = PairingUrlRewriteParts::parse(input.trim())?;
+    let encoded_name = form_url_encode_component(name);
+    let encoded_value = form_url_encode_component(value);
+    let mut rewritten =
+        rewrite_url_params_without_name(parts.query.as_deref(), name).unwrap_or_default();
+    if !rewritten.is_empty() {
+        rewritten.push('&');
+    }
+    rewritten.push_str(&encoded_name);
+    rewritten.push('=');
+    rewritten.push_str(&encoded_value);
+    parts.query = Some(rewritten);
+    Some(parts.render())
+}
+
 pub fn format_desktop_ssh_connection_error(error_message: Option<&str>) -> String {
     const FALLBACK: &str = "Failed to connect SSH host.";
     let raw_message = error_message.unwrap_or(FALLBACK);
@@ -28046,6 +28319,182 @@ mod tests {
         assert_eq!(
             parse_remote_pairing_fields("backend.example.com", "").unwrap_err(),
             "Enter a pairing code."
+        );
+    }
+
+    #[test]
+    fn remote_environment_target_and_api_helpers_match_upstream_contract() {
+        assert_eq!(
+            normalize_remote_http_base_url("backend.example.com/path?x=1#hash", "http://localhost")
+                .unwrap(),
+            "https://backend.example.com/"
+        );
+        assert_eq!(
+            normalize_remote_ws_base_url("https://backend.example.com/path", "http://localhost")
+                .unwrap(),
+            "wss://backend.example.com/"
+        );
+        assert_eq!(
+            normalize_remote_http_base_url("wss://backend.example.com/path", "http://localhost")
+                .unwrap(),
+            "https://backend.example.com/"
+        );
+        assert_eq!(
+            normalize_remote_ws_base_url("//backend.example.com/path", "http://localhost:5173")
+                .unwrap(),
+            "ws://backend.example.com/"
+        );
+        assert_eq!(
+            normalize_remote_http_base_url("   ", "http://localhost").unwrap_err(),
+            "Enter a backend URL."
+        );
+
+        let hosted_url = build_hosted_pairing_url(
+            Some("https://app.t3.codes"),
+            "https://hosted-backend.example.com:44342/path?x=1",
+            "HOSTEDTOKEN",
+            Some("Hosted"),
+        )
+        .unwrap();
+        assert_eq!(
+            resolve_remote_pairing_target(Some(&hosted_url), None, None, "http://localhost")
+                .unwrap(),
+            ResolvedRemotePairingTarget {
+                credential: "HOSTEDTOKEN".to_string(),
+                http_base_url: "https://hosted-backend.example.com:44342/".to_string(),
+                ws_base_url: "wss://hosted-backend.example.com:44342/".to_string(),
+            }
+        );
+        assert_eq!(
+            resolve_remote_pairing_target(
+                Some("https://remote.example.com/pair#token=PAIR"),
+                None,
+                None,
+                "http://localhost",
+            )
+            .unwrap(),
+            ResolvedRemotePairingTarget {
+                credential: "PAIR".to_string(),
+                http_base_url: "https://remote.example.com/".to_string(),
+                ws_base_url: "wss://remote.example.com/".to_string(),
+            }
+        );
+        assert_eq!(
+            resolve_remote_pairing_target(
+                None,
+                Some("backend.example.com"),
+                Some(" CODE "),
+                "http://localhost"
+            )
+            .unwrap(),
+            ResolvedRemotePairingTarget {
+                credential: "CODE".to_string(),
+                http_base_url: "https://backend.example.com/".to_string(),
+                ws_base_url: "wss://backend.example.com/".to_string(),
+            }
+        );
+        assert_eq!(
+            resolve_remote_pairing_target(
+                Some("https://remote.example.com/pair"),
+                None,
+                None,
+                "http://localhost"
+            )
+            .unwrap_err(),
+            "Pairing URL is missing its token."
+        );
+        assert_eq!(
+            resolve_remote_pairing_target(None, None, Some("PAIR"), "http://localhost")
+                .unwrap_err(),
+            "Enter a backend URL."
+        );
+        assert_eq!(
+            resolve_remote_pairing_target(
+                None,
+                Some("backend.example.com"),
+                None,
+                "http://localhost"
+            )
+            .unwrap_err(),
+            "Enter a pairing code."
+        );
+
+        assert_eq!(
+            remote_endpoint_url(
+                "https://remote.example.com/root?x=1#hash",
+                "/api/auth/session"
+            )
+            .as_deref(),
+            Some("https://remote.example.com/api/auth/session")
+        );
+        assert_eq!(
+            bootstrap_remote_bearer_session_request("https://remote.example.com/", "PAIR\"CODE")
+                .unwrap(),
+            RemoteJsonRequestPlan {
+                url: "https://remote.example.com/api/auth/bootstrap/bearer".to_string(),
+                method: "POST".to_string(),
+                content_type_json: true,
+                authorization: None,
+                body_json: Some("{\"credential\":\"PAIR\\\"CODE\"}".to_string()),
+            }
+        );
+        assert_eq!(
+            fetch_remote_session_state_request("https://remote.example.com/", "bearer").unwrap(),
+            RemoteJsonRequestPlan {
+                url: "https://remote.example.com/api/auth/session".to_string(),
+                method: "GET".to_string(),
+                content_type_json: false,
+                authorization: Some("Bearer bearer".to_string()),
+                body_json: None,
+            }
+        );
+        assert_eq!(
+            fetch_remote_environment_descriptor_request("https://remote.example.com/")
+                .unwrap()
+                .url,
+            "https://remote.example.com/.well-known/t3/environment"
+        );
+        assert_eq!(
+            issue_remote_websocket_token_request("https://remote.example.com/", "bearer").unwrap(),
+            RemoteJsonRequestPlan {
+                url: "https://remote.example.com/api/auth/ws-token".to_string(),
+                method: "POST".to_string(),
+                content_type_json: false,
+                authorization: Some("Bearer bearer".to_string()),
+                body_json: None,
+            }
+        );
+        assert_eq!(
+            read_remote_auth_error_message(
+                "{\"error\":\"Credential expired\"}",
+                "Remote auth request failed (401)."
+            ),
+            "Credential expired"
+        );
+        assert_eq!(
+            read_remote_auth_error_message("", "Remote auth request failed (500)."),
+            "Remote auth request failed (500)."
+        );
+        assert_eq!(
+            read_remote_auth_error_message("plain text", "Remote auth request failed (500)."),
+            "plain text"
+        );
+        assert_eq!(
+            format_remote_auth_fetch_failure("https://remote.example.com/api", "network down"),
+            "Failed to fetch remote auth endpoint https://remote.example.com/api (network down)."
+        );
+        assert_eq!(
+            format_remote_auth_status_fallback(401),
+            "Remote auth request failed (401)."
+        );
+        assert_eq!(
+            resolve_remote_websocket_connection_url_with_token(
+                "wss://remote.example.com/socket?old=1",
+                "ws token",
+                "http://localhost"
+            )
+            .as_deref(),
+            Some("wss://remote.example.com/?wsToken=ws+token")
         );
     }
 

@@ -2447,6 +2447,18 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace environment_runtime_service`",
             "Wire the runtime service to live GPUI/WebSocket clients, query invalidation throttling, saved-environment connection sync, browser resume reconnects, and actual thread-detail subscription handles.",
         )
+    } else if matches!(
+        path,
+        "apps/web/src/environments/remote/api.ts"
+            | "apps/web/src/environments/remote/api.test.ts"
+            | "apps/web/src/environments/remote/target.ts"
+    ) {
+        (
+            "remote environment pairing target normalization, hosted/manual pairing target resolution, auth endpoint URL/method/header/body request plans, auth error message fallback parsing, fetch failure/status messages, and websocket token URL shaping in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace remote_environment_target_and_api_helpers_match_upstream_contract`",
+            "Wire remote API helpers into live HTTP fetch, browser URL resolution, credential bootstrap, and websocket token issuance in GPUI runtime flows.",
+        )
     } else if path.starts_with("apps/web/src/environments/")
         || path.starts_with("apps/web/src/environment")
         || path.starts_with("apps/web/src/auth")
