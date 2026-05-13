@@ -1810,6 +1810,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core model_ordering`",
             "Wire ordering helpers into all live GPUI model picker lists, favorites views, and provider instance sections.",
         )
+    } else if path == "apps/web/src/modelSelection.ts"
+        || path == "apps/web/src/modelSelection.test.ts"
+    {
+        (
+            "instance-scoped model selection helpers for custom-model isolation, hidden built-in filtering, per-instance model ordering, selectable fallback, custom instance preservation, and default text-generation fallback in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core model_selection_instance_scoping_matches_upstream_contract`",
+            "Wire helpers into the live GPUI composer/provider picker settings path, provider option descriptor dispatch, and persisted text-generation model selection updates.",
+        )
     } else if path == "apps/web/src/providerSkillPresentation.ts"
         || path == "apps/web/src/providerSkillPresentation.test.ts"
         || path == "apps/web/src/providerSkillSearch.ts"

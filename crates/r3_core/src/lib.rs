@@ -3872,6 +3872,9 @@ pub struct PreferredEditorResolution {
 pub const DEFAULT_PROVIDER_DRIVER_KIND: &str = "codex";
 pub const DEFAULT_MODEL: &str = "gpt-5.4";
 pub const DEFAULT_GIT_TEXT_GENERATION_MODEL: &str = "gpt-5.4-mini";
+pub const DEFAULT_TEXT_GENERATION_INSTANCE_ID: &str = "codex";
+pub const MAX_CUSTOM_MODEL_COUNT: usize = 32;
+pub const MAX_CUSTOM_MODEL_LENGTH: usize = 256;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProviderClientDefinition {
@@ -4148,6 +4151,46 @@ pub struct ModelPickerItem {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelSlugOrderItem {
     pub slug: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppModelOption {
+    pub slug: String,
+    pub name: String,
+    pub short_name: Option<String>,
+    pub sub_provider: Option<String>,
+    pub is_custom: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ProviderDriverModelSettings {
+    pub custom_models: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ProviderInstanceModelSettings {
+    pub config: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ProviderModelPreference {
+    pub hidden_models: Vec<String>,
+    pub model_order: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelSelection {
+    pub instance_id: String,
+    pub model: String,
+    pub options: Vec<shared::ProviderOptionSelection>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ModelSelectionSettings {
+    pub providers: BTreeMap<String, ProviderDriverModelSettings>,
+    pub provider_instances: BTreeMap<String, ProviderInstanceModelSettings>,
+    pub provider_model_preferences: BTreeMap<String, ProviderModelPreference>,
+    pub text_generation_model_selection: Option<ModelSelection>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -5363,6 +5406,54 @@ pub fn get_provider_instance_models(
     get_provider_instance_entry(providers, instance_id)
         .map(|entry| entry.models)
         .unwrap_or_default()
+}
+
+pub fn get_provider_snapshot<'a>(
+    providers: &'a [ServerProvider],
+    provider: &str,
+) -> Option<&'a ServerProvider> {
+    let default_instance_id = default_instance_id_for_driver(provider);
+    providers
+        .iter()
+        .find(|candidate| candidate.instance_id == default_instance_id)
+}
+
+pub fn get_provider_models(
+    providers: &[ServerProvider],
+    provider: &str,
+) -> Vec<ServerProviderModel> {
+    get_provider_snapshot(providers, provider)
+        .map(|snapshot| snapshot.models.clone())
+        .unwrap_or_default()
+}
+
+pub fn resolve_selectable_provider(providers: &[ServerProvider], provider: Option<&str>) -> String {
+    if let Some(requested) = provider.and_then(|provider| {
+        providers
+            .iter()
+            .find(|candidate| candidate.instance_id == provider)
+    }) {
+        if requested.enabled {
+            return requested.driver.clone();
+        }
+    }
+
+    providers
+        .iter()
+        .find(|candidate| candidate.enabled)
+        .map(|candidate| candidate.driver.clone())
+        .unwrap_or_else(|| DEFAULT_PROVIDER_DRIVER_KIND.to_string())
+}
+
+pub fn get_default_server_model(providers: &[ServerProvider], provider: &str) -> String {
+    let models = get_provider_models(providers, provider);
+    models
+        .iter()
+        .find(|model| !model.is_custom)
+        .or_else(|| models.first())
+        .map(|model| model.slug.clone())
+        .or_else(|| default_model_by_provider(provider).map(str::to_string))
+        .unwrap_or_else(|| DEFAULT_MODEL.to_string())
 }
 
 pub fn resolve_selectable_provider_instance(
@@ -7248,6 +7339,368 @@ pub fn resolve_selectable_model(
         .iter()
         .find(|option| option.slug == normalized)
         .map(|option| option.slug.clone())
+}
+
+pub fn resolve_selectable_app_model(
+    provider: &str,
+    value: Option<&str>,
+    options: &[AppModelOption],
+) -> Option<String> {
+    let trimmed = value?.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(direct) = options.iter().find(|option| option.slug == trimmed) {
+        return Some(direct.slug.clone());
+    }
+    if let Some(by_name) = options
+        .iter()
+        .find(|option| option.name.eq_ignore_ascii_case(trimmed))
+    {
+        return Some(by_name.slug.clone());
+    }
+    let normalized = normalize_model_slug(Some(trimmed), provider)?;
+    options
+        .iter()
+        .find(|option| option.slug == normalized)
+        .map(|option| option.slug.clone())
+}
+
+fn server_model_to_app_model_option(model: &ServerProviderModel) -> AppModelOption {
+    AppModelOption {
+        slug: model.slug.clone(),
+        name: model.name.clone(),
+        short_name: model.short_name.clone(),
+        sub_provider: model.sub_provider.clone(),
+        is_custom: model.is_custom,
+    }
+}
+
+pub fn read_instance_custom_models(
+    settings: &ModelSelectionSettings,
+    instance_id: &str,
+    driver_kind: &str,
+) -> Vec<String> {
+    if let Some(config) = settings
+        .provider_instances
+        .get(instance_id)
+        .and_then(|instance| instance.config.as_ref())
+    {
+        if let Some(array) = config
+            .as_object()
+            .and_then(|object| object.get("customModels"))
+            .and_then(serde_json::Value::as_array)
+        {
+            return array
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .map(str::to_string)
+                .collect();
+        }
+    }
+
+    let default_instance_id = default_instance_id_for_driver(driver_kind);
+    if instance_id != default_instance_id {
+        return Vec::new();
+    }
+
+    settings
+        .providers
+        .get(driver_kind)
+        .map(|provider| provider.custom_models.clone())
+        .unwrap_or_default()
+}
+
+pub fn read_instance_model_preferences(
+    settings: &ModelSelectionSettings,
+    instance_id: &str,
+) -> ProviderModelPreference {
+    settings
+        .provider_model_preferences
+        .get(instance_id)
+        .cloned()
+        .unwrap_or_default()
+}
+
+pub fn sort_app_model_options_for_provider_instance(
+    options: &[AppModelOption],
+    model_order: &[String],
+) -> Vec<AppModelOption> {
+    let order_by_slug = rank_by_value(model_order);
+    let original_order = rank_by_value(
+        &options
+            .iter()
+            .map(|option| option.slug.clone())
+            .collect::<Vec<_>>(),
+    );
+    let mut sorted = options.to_vec();
+    sorted.sort_by(|left, right| {
+        order_by_slug
+            .get(&left.slug)
+            .copied()
+            .unwrap_or(usize::MAX)
+            .cmp(
+                &order_by_slug
+                    .get(&right.slug)
+                    .copied()
+                    .unwrap_or(usize::MAX),
+            )
+            .then_with(|| {
+                original_order
+                    .get(&left.slug)
+                    .copied()
+                    .unwrap_or(usize::MAX)
+                    .cmp(
+                        &original_order
+                            .get(&right.slug)
+                            .copied()
+                            .unwrap_or(usize::MAX),
+                    )
+            })
+    });
+    sorted
+}
+
+pub fn apply_instance_model_preferences(
+    options: &[AppModelOption],
+    preferences: &ProviderModelPreference,
+) -> Vec<AppModelOption> {
+    let hidden_models = preferences
+        .hidden_models
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    let visible = options
+        .iter()
+        .filter(|option| option.is_custom || !hidden_models.contains(option.slug.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    sort_app_model_options_for_provider_instance(&visible, &preferences.model_order)
+}
+
+pub fn normalize_custom_model_slugs<I, S>(
+    models: I,
+    built_in_model_slugs: &BTreeSet<String>,
+    provider: &str,
+) -> Vec<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let mut normalized_models = Vec::new();
+    let mut seen = BTreeSet::<String>::new();
+
+    for candidate in models {
+        let Some(normalized) = normalize_model_slug(Some(candidate.as_ref()), provider) else {
+            continue;
+        };
+        if normalized.len() > MAX_CUSTOM_MODEL_LENGTH
+            || built_in_model_slugs.contains(&normalized)
+            || seen.contains(&normalized)
+        {
+            continue;
+        }
+
+        seen.insert(normalized.clone());
+        normalized_models.push(normalized);
+        if normalized_models.len() >= MAX_CUSTOM_MODEL_COUNT {
+            break;
+        }
+    }
+
+    normalized_models
+}
+
+pub fn get_app_model_options(
+    settings: &ModelSelectionSettings,
+    providers: &[ServerProvider],
+    provider: &str,
+) -> Vec<AppModelOption> {
+    let mut options = get_provider_models(providers, provider)
+        .iter()
+        .map(server_model_to_app_model_option)
+        .collect::<Vec<_>>();
+    let mut seen = options
+        .iter()
+        .map(|option| option.slug.clone())
+        .collect::<BTreeSet<_>>();
+    let built_in_model_slugs = options
+        .iter()
+        .filter(|option| !option.is_custom)
+        .map(|option| option.slug.clone())
+        .collect::<BTreeSet<_>>();
+
+    let default_instance_id = default_instance_id_for_driver(provider);
+    for slug in normalize_custom_model_slugs(
+        read_instance_custom_models(settings, &default_instance_id, provider),
+        &built_in_model_slugs,
+        provider,
+    ) {
+        if seen.insert(slug.clone()) {
+            options.push(AppModelOption {
+                slug: slug.clone(),
+                name: slug,
+                short_name: None,
+                sub_provider: None,
+                is_custom: true,
+            });
+        }
+    }
+
+    apply_instance_model_preferences(
+        &options,
+        &read_instance_model_preferences(settings, &default_instance_id),
+    )
+}
+
+pub fn get_app_model_options_for_instance(
+    settings: &ModelSelectionSettings,
+    entry: &ProviderInstanceEntry,
+) -> Vec<AppModelOption> {
+    let mut options = entry
+        .models
+        .iter()
+        .map(server_model_to_app_model_option)
+        .collect::<Vec<_>>();
+    let mut seen = options
+        .iter()
+        .map(|option| option.slug.clone())
+        .collect::<BTreeSet<_>>();
+    let built_in_model_slugs = options
+        .iter()
+        .filter(|option| !option.is_custom)
+        .map(|option| option.slug.clone())
+        .collect::<BTreeSet<_>>();
+
+    for slug in normalize_custom_model_slugs(
+        read_instance_custom_models(settings, &entry.instance_id, &entry.driver_kind),
+        &built_in_model_slugs,
+        &entry.driver_kind,
+    ) {
+        if seen.insert(slug.clone()) {
+            options.push(AppModelOption {
+                slug: slug.clone(),
+                name: slug,
+                short_name: None,
+                sub_provider: None,
+                is_custom: true,
+            });
+        }
+    }
+
+    apply_instance_model_preferences(
+        &options,
+        &read_instance_model_preferences(settings, &entry.instance_id),
+    )
+}
+
+pub fn resolve_app_model_selection(
+    provider: &str,
+    settings: &ModelSelectionSettings,
+    providers: &[ServerProvider],
+    selected_model: Option<&str>,
+) -> String {
+    let resolved_provider = resolve_selectable_provider(providers, Some(provider));
+    let options = get_app_model_options(settings, providers, &resolved_provider);
+    resolve_selectable_app_model(&resolved_provider, selected_model, &options)
+        .unwrap_or_else(|| get_default_server_model(providers, &resolved_provider))
+}
+
+pub fn resolve_app_model_selection_for_instance(
+    instance_id: &str,
+    settings: &ModelSelectionSettings,
+    providers: &[ServerProvider],
+    selected_model: Option<&str>,
+) -> Option<String> {
+    let entry = derive_provider_instance_entries(providers)
+        .into_iter()
+        .find(|candidate| candidate.instance_id == instance_id)?;
+    let options = get_app_model_options_for_instance(settings, &entry);
+    resolve_selectable_app_model(&entry.driver_kind, selected_model, &options)
+        .or_else(|| options.first().map(|option| option.slug.clone()))
+        .or_else(|| entry.models.first().map(|model| model.slug.clone()))
+}
+
+pub fn get_custom_model_options_by_instance(
+    settings: &ModelSelectionSettings,
+    providers: &[ServerProvider],
+) -> BTreeMap<String, Vec<AppModelOption>> {
+    derive_provider_instance_entries(providers)
+        .into_iter()
+        .map(|entry| {
+            (
+                entry.instance_id.clone(),
+                get_app_model_options_for_instance(settings, &entry),
+            )
+        })
+        .collect()
+}
+
+pub fn create_model_selection(
+    instance_id: &str,
+    model: &str,
+    options: Vec<shared::ProviderOptionSelection>,
+) -> ModelSelection {
+    ModelSelection {
+        instance_id: instance_id.to_string(),
+        model: model.to_string(),
+        options,
+    }
+}
+
+pub fn resolve_app_model_selection_state(
+    settings: &ModelSelectionSettings,
+    providers: &[ServerProvider],
+) -> ModelSelection {
+    let fallback_selection = create_model_selection(
+        DEFAULT_TEXT_GENERATION_INSTANCE_ID,
+        DEFAULT_GIT_TEXT_GENERATION_MODEL,
+        Vec::new(),
+    );
+    let selection = settings
+        .text_generation_model_selection
+        .as_ref()
+        .unwrap_or(&fallback_selection);
+    let entries = derive_provider_instance_entries(providers);
+    let selected_entry = entries.iter().find(|entry| {
+        entry.instance_id == selection.instance_id && entry.enabled && entry.is_available
+    });
+    let entry = selected_entry.or_else(|| {
+        entries
+            .iter()
+            .find(|candidate| candidate.enabled && candidate.is_available)
+    });
+
+    if let Some(entry) = entry {
+        let selected_model = selected_entry.map(|_| selection.model.as_str());
+        let model = resolve_app_model_selection_for_instance(
+            &entry.instance_id,
+            settings,
+            providers,
+            selected_model,
+        )
+        .or_else(|| entry.models.first().map(|model| model.slug.clone()))
+        .or_else(|| {
+            default_git_text_generation_model_by_provider(&entry.driver_kind).map(str::to_string)
+        });
+        let Some(model) = model else {
+            return create_model_selection(&entry.instance_id, "", Vec::new());
+        };
+        let options = if selected_entry.is_some() {
+            selection.options.clone()
+        } else {
+            Vec::new()
+        };
+        return create_model_selection(&entry.instance_id, &model, options);
+    }
+
+    let provider = resolve_selectable_provider(providers, None);
+    let model = resolve_app_model_selection(&provider, settings, providers, None);
+    create_model_selection(
+        &default_instance_id_for_driver(&provider),
+        &model,
+        Vec::new(),
+    )
 }
 
 fn matches_locked_provider(
@@ -31028,6 +31481,135 @@ mod tests {
     }
 
     #[test]
+    fn model_selection_instance_scoping_matches_upstream_contract() {
+        let settings = model_selection_settings_with_provider_instances();
+        let providers = vec![
+            model_selection_provider("claudeAgent", None, &["claude-sonnet-4-6"]),
+            model_selection_provider("claude_openrouter", None, &["claude-sonnet-4-6"]),
+        ];
+        let entries = derive_provider_instance_entries(&providers);
+        let stock = entries
+            .iter()
+            .find(|entry| entry.instance_id == "claudeAgent")
+            .unwrap();
+        let openrouter = entries
+            .iter()
+            .find(|entry| entry.instance_id == "claude_openrouter")
+            .unwrap();
+
+        assert!(
+            !get_app_model_options_for_instance(&settings, stock)
+                .iter()
+                .any(|option| option.slug == "openai/gpt-5.5")
+        );
+        assert!(
+            get_app_model_options_for_instance(&settings, openrouter)
+                .iter()
+                .any(|option| option.slug == "openai/gpt-5.5")
+        );
+        assert_eq!(
+            resolve_app_model_selection_for_instance(
+                "claude_openrouter",
+                &settings,
+                &providers,
+                Some("openai/gpt-5.5")
+            )
+            .as_deref(),
+            Some("openai/gpt-5.5")
+        );
+        assert_eq!(
+            resolve_app_model_selection_for_instance(
+                "claudeAgent",
+                &settings,
+                &providers,
+                Some("openai/gpt-5.5")
+            )
+            .as_deref(),
+            Some("claude-sonnet-4-6")
+        );
+
+        let hidden_settings = ModelSelectionSettings {
+            provider_model_preferences: BTreeMap::from([(
+                "claudeAgent".to_string(),
+                ProviderModelPreference {
+                    hidden_models: vec!["claude-opus-4-6".to_string()],
+                    model_order: Vec::new(),
+                },
+            )]),
+            ..settings.clone()
+        };
+        let hidden_providers = vec![model_selection_provider(
+            "claudeAgent",
+            None,
+            &["claude-opus-4-6", "claude-sonnet-4-6"],
+        )];
+        let hidden_stock = derive_provider_instance_entries(&hidden_providers)
+            .into_iter()
+            .find(|entry| entry.instance_id == "claudeAgent")
+            .unwrap();
+        assert_eq!(
+            get_app_model_options_for_instance(&hidden_settings, &hidden_stock)
+                .into_iter()
+                .map(|option| option.slug)
+                .collect::<Vec<_>>(),
+            vec!["claude-sonnet-4-6"]
+        );
+        assert_eq!(
+            resolve_app_model_selection_for_instance(
+                "claudeAgent",
+                &hidden_settings,
+                &hidden_providers,
+                Some("claude-opus-4-6")
+            )
+            .as_deref(),
+            Some("claude-sonnet-4-6")
+        );
+
+        let ordered_settings = ModelSelectionSettings {
+            provider_model_preferences: BTreeMap::from([(
+                "claudeAgent".to_string(),
+                ProviderModelPreference {
+                    hidden_models: Vec::new(),
+                    model_order: vec![
+                        "claude-haiku-4-5".to_string(),
+                        "claude-opus-4-6".to_string(),
+                    ],
+                },
+            )]),
+            ..settings.clone()
+        };
+        let ordered_providers = vec![model_selection_provider(
+            "claudeAgent",
+            None,
+            &["claude-opus-4-6", "claude-sonnet-4-6", "claude-haiku-4-5"],
+        )];
+        let ordered_stock = derive_provider_instance_entries(&ordered_providers)
+            .into_iter()
+            .find(|entry| entry.instance_id == "claudeAgent")
+            .unwrap();
+        assert_eq!(
+            get_app_model_options_for_instance(&ordered_settings, &ordered_stock)
+                .into_iter()
+                .map(|option| option.slug)
+                .collect::<Vec<_>>(),
+            vec!["claude-haiku-4-5", "claude-opus-4-6", "claude-sonnet-4-6"]
+        );
+
+        let selected_settings = ModelSelectionSettings {
+            text_generation_model_selection: Some(create_model_selection(
+                "claude_openrouter",
+                "openai/gpt-5.5",
+                Vec::new(),
+            )),
+            ..settings.clone()
+        };
+        assert_eq!(
+            resolve_app_model_selection_state(&selected_settings, &providers),
+            create_model_selection("claude_openrouter", "openai/gpt-5.5", Vec::new())
+        );
+    }
+
+    #[test]
     fn provider_model_picker_reference_state_matches_upstream_capture_contract() {
         let snapshot = AppSnapshot::provider_model_picker_reference_state();
         assert_eq!(snapshot.selected_provider_instance_id, "codex");
@@ -34473,6 +35055,75 @@ mod tests {
             instance_accent_color: None,
             continuation_group_key: None,
             is_favorite: false,
+        }
+    }
+
+    fn model_selection_provider(
+        instance_id: &str,
+        provider: Option<&str>,
+        models: &[&str],
+    ) -> ServerProvider {
+        let driver = provider.map(str::to_string).unwrap_or_else(|| {
+            if instance_id.starts_with("claude_") {
+                "claudeAgent".to_string()
+            } else {
+                "codex".to_string()
+            }
+        });
+        ServerProvider {
+            instance_id: instance_id.to_string(),
+            driver,
+            display_name: None,
+            accent_color: None,
+            badge_label: None,
+            continuation_group_key: None,
+            show_interaction_mode_toggle: true,
+            enabled: true,
+            installed: true,
+            version: None,
+            status: ServerProviderState::Ready,
+            auth: ServerProviderAuth {
+                status: ServerProviderAuthStatus::Authenticated,
+                kind: None,
+                label: None,
+                email: None,
+            },
+            checked_at: "2026-01-01T00:00:00.000Z".to_string(),
+            message: None,
+            availability: ServerProviderAvailability::Available,
+            unavailable_reason: None,
+            models: models
+                .iter()
+                .map(|slug| ServerProviderModel {
+                    slug: (*slug).to_string(),
+                    name: (*slug).to_string(),
+                    short_name: None,
+                    sub_provider: None,
+                    is_custom: false,
+                })
+                .collect(),
+            version_advisory: None,
+            update_state: None,
+        }
+    }
+
+    fn model_selection_settings_with_provider_instances() -> ModelSelectionSettings {
+        ModelSelectionSettings {
+            provider_instances: BTreeMap::from([
+                (
+                    "claudeAgent".to_string(),
+                    ProviderInstanceModelSettings {
+                        config: Some(serde_json::json!({ "customModels": [] })),
+                    },
+                ),
+                (
+                    "claude_openrouter".to_string(),
+                    ProviderInstanceModelSettings {
+                        config: Some(serde_json::json!({ "customModels": ["openai/gpt-5.5"] })),
+                    },
+                ),
+            ]),
+            ..ModelSelectionSettings::default()
         }
     }
 
