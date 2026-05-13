@@ -8729,6 +8729,13 @@ pub struct SourceControlProviderInfo {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlPresentation {
+    pub provider_name: String,
+    pub terminology: shared::ChangeRequestTerminology,
+    pub icon_name: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceControlProviderContext {
     pub provider: SourceControlProviderInfo,
     pub remote_name: String,
@@ -11403,6 +11410,57 @@ fn source_control_provider_kind_from_shared(
         }
         shared::SharedSourceControlProviderKind::Bitbucket => SourceControlProviderKind::Bitbucket,
         shared::SharedSourceControlProviderKind::Unknown => SourceControlProviderKind::Unknown,
+    }
+}
+
+fn source_control_provider_kind_to_shared(
+    kind: SourceControlProviderKind,
+) -> shared::SharedSourceControlProviderKind {
+    match kind {
+        SourceControlProviderKind::Github => shared::SharedSourceControlProviderKind::Github,
+        SourceControlProviderKind::Gitlab => shared::SharedSourceControlProviderKind::Gitlab,
+        SourceControlProviderKind::AzureDevops => {
+            shared::SharedSourceControlProviderKind::AzureDevops
+        }
+        SourceControlProviderKind::Bitbucket => shared::SharedSourceControlProviderKind::Bitbucket,
+        SourceControlProviderKind::Unknown => shared::SharedSourceControlProviderKind::Unknown,
+    }
+}
+
+fn source_control_provider_info_to_shared(
+    provider: &SourceControlProviderInfo,
+) -> shared::SharedSourceControlProviderInfo {
+    shared::SharedSourceControlProviderInfo {
+        kind: source_control_provider_kind_to_shared(provider.kind),
+        name: provider.name.clone(),
+        base_url: provider.base_url.clone(),
+    }
+}
+
+pub fn get_source_control_presentation(
+    provider: Option<&SourceControlProviderInfo>,
+) -> SourceControlPresentation {
+    let shared_provider = provider.map(source_control_provider_info_to_shared);
+    let presentation = shared::resolve_change_request_presentation(shared_provider.as_ref());
+    let terminology = shared::get_change_request_terminology(shared_provider.as_ref());
+    let icon_name = match presentation.icon {
+        "github" => "GitHubIcon",
+        "gitlab" => "GitLabIcon",
+        "azure-devops" => "AzureDevOpsIcon",
+        "bitbucket" => "BitbucketIcon",
+        "change-request" => "GitPullRequestIcon",
+        _ => "GitPullRequestIcon",
+    };
+
+    SourceControlPresentation {
+        provider_name: provider
+            .and_then(|provider| {
+                let name = provider.name.trim();
+                (!name.is_empty()).then(|| name.to_string())
+            })
+            .unwrap_or_else(|| presentation.provider_name.to_string()),
+        terminology,
+        icon_name,
     }
 }
 
@@ -29849,6 +29907,96 @@ mod tests {
         assert_eq!(
             source_control_item_summary(&authed_github),
             "Authenticated as jasper"
+        );
+    }
+
+    #[test]
+    fn source_control_presentation_matches_upstream_contract() {
+        let github = SourceControlProviderInfo {
+            kind: SourceControlProviderKind::Github,
+            name: "GitHub Enterprise".to_string(),
+            base_url: "https://github.example.com".to_string(),
+        };
+        assert_eq!(
+            get_source_control_presentation(Some(&github)),
+            SourceControlPresentation {
+                provider_name: "GitHub Enterprise".to_string(),
+                terminology: shared::ChangeRequestTerminology {
+                    short_label: "PR",
+                    singular: "pull request",
+                },
+                icon_name: "GitHubIcon",
+            }
+        );
+
+        let gitlab = SourceControlProviderInfo {
+            kind: SourceControlProviderKind::Gitlab,
+            name: "GitLab".to_string(),
+            base_url: "https://gitlab.com".to_string(),
+        };
+        assert_eq!(
+            get_source_control_presentation(Some(&gitlab)),
+            SourceControlPresentation {
+                provider_name: "GitLab".to_string(),
+                terminology: shared::ChangeRequestTerminology {
+                    short_label: "MR",
+                    singular: "merge request",
+                },
+                icon_name: "GitLabIcon",
+            }
+        );
+
+        let azure = SourceControlProviderInfo {
+            kind: SourceControlProviderKind::AzureDevops,
+            name: String::new(),
+            base_url: "https://dev.azure.com".to_string(),
+        };
+        assert_eq!(
+            get_source_control_presentation(Some(&azure)),
+            SourceControlPresentation {
+                provider_name: "Azure DevOps".to_string(),
+                terminology: shared::ChangeRequestTerminology {
+                    short_label: "PR",
+                    singular: "pull request",
+                },
+                icon_name: "AzureDevOpsIcon",
+            }
+        );
+
+        let bitbucket = SourceControlProviderInfo {
+            kind: SourceControlProviderKind::Bitbucket,
+            name: "Bitbucket".to_string(),
+            base_url: "https://bitbucket.org".to_string(),
+        };
+        assert_eq!(
+            get_source_control_presentation(Some(&bitbucket)).icon_name,
+            "BitbucketIcon"
+        );
+
+        let unknown = SourceControlProviderInfo {
+            kind: SourceControlProviderKind::Unknown,
+            name: "forge".to_string(),
+            base_url: "https://forge.example.com".to_string(),
+        };
+        assert_eq!(
+            get_source_control_presentation(Some(&unknown)),
+            SourceControlPresentation {
+                provider_name: "forge".to_string(),
+                terminology: shared::ChangeRequestTerminology {
+                    short_label: "change request",
+                    singular: "change request",
+                },
+                icon_name: "GitPullRequestIcon",
+            }
+        );
+
+        assert_eq!(
+            get_source_control_presentation(None),
+            SourceControlPresentation {
+                provider_name: "GitHub".to_string(),
+                terminology: shared::DEFAULT_CHANGE_REQUEST_TERMINOLOGY,
+                icon_name: "GitHubIcon",
+            }
         );
     }
 

@@ -1863,6 +1863,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core sidebar_project_grouping_matches_upstream_contract`; `cargo test -p r3_core logical_project_helpers_match_upstream_grouping_rules`",
             "Wire snapshot projection into the live GPUI sidebar project list, grouping settings, drag ordering, and environment badges.",
         )
+    } else if path == "apps/web/src/sourceControlPresentation.ts" {
+        (
+            "source-control provider presentation wrapper with provider-name override, change-request terminology, and GitHub/GitLab/Azure DevOps/Bitbucket/generic icon mapping in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core source_control_presentation_matches_upstream_contract`; `cargo test -p r3_core shared::tests::ports_shared_git_and_source_control_helpers`",
+            "Wire presentation into all live GPUI source-control buttons, settings rows, empty states, and change-request actions.",
+        )
     } else if path == "apps/web/src/versionSkew.ts" || path == "apps/web/src/versionSkew.test.ts" {
         (
             "version mismatch normalization, R3Code-branded mismatch hint, environment/client/server dismissal keys, duplicate-safe dismissal insertion, dismissed checks, and error-message hint append behavior in crates/r3_core/src/lib.rs",
