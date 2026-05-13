@@ -5033,6 +5033,60 @@ pub struct VcsListRemotesResult {
     pub freshness: VcsFreshness,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepositoryIdentityLocator {
+    pub source: &'static str,
+    pub remote_name: String,
+    pub remote_url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepositoryIdentity {
+    pub canonical_key: String,
+    pub locator: RepositoryIdentityLocator,
+    pub root_path: Option<String>,
+    pub display_name: Option<String>,
+    pub provider: Option<String>,
+    pub owner: Option<String>,
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepositoryIdentityRemote {
+    pub remote_name: String,
+    pub remote_url: String,
+}
+
+pub const DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY: usize = 512;
+pub const DEFAULT_REPOSITORY_IDENTITY_POSITIVE_CACHE_TTL_MS: u64 = 60_000;
+pub const DEFAULT_REPOSITORY_IDENTITY_NEGATIVE_CACHE_TTL_MS: u64 = 60_000;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepositoryIdentityResolverCachePolicy {
+    pub cache_capacity: usize,
+    pub positive_cache_ttl_ms: u64,
+    pub negative_cache_ttl_ms: u64,
+}
+
+impl Default for RepositoryIdentityResolverCachePolicy {
+    fn default() -> Self {
+        Self {
+            cache_capacity: DEFAULT_REPOSITORY_IDENTITY_CACHE_CAPACITY,
+            positive_cache_ttl_ms: DEFAULT_REPOSITORY_IDENTITY_POSITIVE_CACHE_TTL_MS,
+            negative_cache_ttl_ms: DEFAULT_REPOSITORY_IDENTITY_NEGATIVE_CACHE_TTL_MS,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepositoryIdentityGitCommandPlan {
+    pub operation: &'static str,
+    pub command: &'static str,
+    pub args: Vec<String>,
+    pub timeout_behavior: process::ProcessTimeoutBehavior,
+    pub shell_on_windows: bool,
+}
+
 pub const GIT_WORKSPACE_FILES_MAX_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
 pub const GIT_CHECK_IGNORE_MAX_STDIN_BYTES: usize = 256 * 1024;
 pub const GIT_CHECKPOINT_DIFF_MAX_OUTPUT_BYTES: usize = 10_000_000;
@@ -5212,6 +5266,166 @@ pub fn parse_git_remote_verbose_output(output: &str) -> Vec<VcsRemote> {
             })
         })
         .collect()
+}
+
+pub fn parse_repository_identity_remote_fetch_urls(output: &str) -> BTreeMap<String, String> {
+    let mut remotes = BTreeMap::new();
+
+    for line in output.lines() {
+        let mut parts = line.split_whitespace();
+        let Some(remote_name) = parts.next() else {
+            continue;
+        };
+        let Some(remote_url) = parts.next() else {
+            continue;
+        };
+        let Some(direction) = parts.next() else {
+            continue;
+        };
+        if parts.next().is_some() || direction != "(fetch)" {
+            continue;
+        }
+        if remote_name.is_empty() || remote_url.is_empty() {
+            continue;
+        }
+        remotes.insert(remote_name.to_string(), remote_url.to_string());
+    }
+
+    remotes
+}
+
+pub fn pick_primary_repository_identity_remote(
+    remotes: &BTreeMap<String, String>,
+) -> Option<RepositoryIdentityRemote> {
+    for preferred_remote_name in ["upstream", "origin"] {
+        if let Some(remote_url) = remotes.get(preferred_remote_name) {
+            return Some(RepositoryIdentityRemote {
+                remote_name: preferred_remote_name.to_string(),
+                remote_url: remote_url.clone(),
+            });
+        }
+    }
+
+    remotes
+        .iter()
+        .next()
+        .map(|(remote_name, remote_url)| RepositoryIdentityRemote {
+            remote_name: remote_name.clone(),
+            remote_url: remote_url.clone(),
+        })
+}
+
+pub fn source_control_provider_kind_schema_value(
+    kind: shared::SharedSourceControlProviderKind,
+) -> &'static str {
+    match kind {
+        shared::SharedSourceControlProviderKind::Github => "github",
+        shared::SharedSourceControlProviderKind::Gitlab => "gitlab",
+        shared::SharedSourceControlProviderKind::AzureDevops => "azure-devops",
+        shared::SharedSourceControlProviderKind::Bitbucket => "bitbucket",
+        shared::SharedSourceControlProviderKind::Unknown => "unknown",
+    }
+}
+
+pub fn build_repository_identity(
+    remote: &RepositoryIdentityRemote,
+    root_path: &str,
+) -> RepositoryIdentity {
+    let canonical_key = shared::normalize_git_remote_url(&remote.remote_url);
+    let source_control_provider =
+        shared::detect_source_control_provider_from_remote_url(&remote.remote_url);
+    let repository_path = canonical_key
+        .split('/')
+        .skip(1)
+        .collect::<Vec<_>>()
+        .join("/");
+    let repository_path_segments = repository_path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect::<Vec<_>>();
+    let owner = repository_path_segments
+        .first()
+        .map(|segment| (*segment).to_string());
+    let name = repository_path_segments
+        .last()
+        .map(|segment| (*segment).to_string());
+
+    RepositoryIdentity {
+        canonical_key,
+        locator: RepositoryIdentityLocator {
+            source: "git-remote",
+            remote_name: remote.remote_name.clone(),
+            remote_url: remote.remote_url.clone(),
+        },
+        root_path: (!root_path.is_empty()).then(|| root_path.to_string()),
+        display_name: (!repository_path.is_empty()).then_some(repository_path),
+        provider: source_control_provider
+            .map(|provider| source_control_provider_kind_schema_value(provider.kind).to_string()),
+        owner,
+        name,
+    }
+}
+
+pub fn repository_identity_cache_key_plan(cwd: &str) -> RepositoryIdentityGitCommandPlan {
+    RepositoryIdentityGitCommandPlan {
+        operation: "RepositoryIdentityResolver.resolveRepositoryIdentityCacheKey",
+        command: "git",
+        args: vec![
+            "-C".to_string(),
+            cwd.to_string(),
+            "rev-parse".to_string(),
+            "--show-toplevel".to_string(),
+        ],
+        timeout_behavior: process::ProcessTimeoutBehavior::TimedOutResult,
+        shell_on_windows: true,
+    }
+}
+
+pub fn repository_identity_remote_plan(cache_key: &str) -> RepositoryIdentityGitCommandPlan {
+    RepositoryIdentityGitCommandPlan {
+        operation: "RepositoryIdentityResolver.resolveRepositoryIdentityFromCacheKey",
+        command: "git",
+        args: vec![
+            "-C".to_string(),
+            cache_key.to_string(),
+            "remote".to_string(),
+            "-v".to_string(),
+        ],
+        timeout_behavior: process::ProcessTimeoutBehavior::TimedOutResult,
+        shell_on_windows: true,
+    }
+}
+
+pub fn resolve_repository_identity_cache_key_from_result(
+    cwd: &str,
+    top_level_result: Option<&process::ProcessRunResult>,
+) -> String {
+    let Some(top_level_result) = top_level_result else {
+        return cwd.to_string();
+    };
+    if top_level_result.code != Some(0) {
+        return cwd.to_string();
+    }
+    let candidate = top_level_result.stdout.trim();
+    if candidate.is_empty() {
+        cwd.to_string()
+    } else {
+        candidate.to_string()
+    }
+}
+
+pub fn resolve_repository_identity_from_remote_result(
+    cache_key: &str,
+    remote_result: Option<&process::ProcessRunResult>,
+) -> Option<RepositoryIdentity> {
+    let remote_result = remote_result?;
+    if remote_result.code != Some(0) {
+        return None;
+    }
+    let remote = pick_primary_repository_identity_remote(
+        &parse_repository_identity_remote_fetch_urls(&remote_result.stdout),
+    )?;
+    Some(build_repository_identity(&remote, cache_key))
 }
 
 pub fn filter_git_ignored_paths(relative_paths: &[String], ignored_stdout: &str) -> Vec<String> {
@@ -16474,6 +16688,165 @@ mod tests {
                     is_primary: false,
                 },
             ]
+        );
+
+        let cache_policy = RepositoryIdentityResolverCachePolicy::default();
+        assert_eq!(cache_policy.cache_capacity, 512);
+        assert_eq!(cache_policy.positive_cache_ttl_ms, 60_000);
+        assert_eq!(cache_policy.negative_cache_ttl_ms, 60_000);
+
+        assert_eq!(
+            repository_identity_cache_key_plan("/repo/packages/web"),
+            RepositoryIdentityGitCommandPlan {
+                operation: "RepositoryIdentityResolver.resolveRepositoryIdentityCacheKey",
+                command: "git",
+                args: vec![
+                    "-C".to_string(),
+                    "/repo/packages/web".to_string(),
+                    "rev-parse".to_string(),
+                    "--show-toplevel".to_string(),
+                ],
+                timeout_behavior: process::ProcessTimeoutBehavior::TimedOutResult,
+                shell_on_windows: true,
+            }
+        );
+        assert_eq!(
+            repository_identity_remote_plan("/repo"),
+            RepositoryIdentityGitCommandPlan {
+                operation: "RepositoryIdentityResolver.resolveRepositoryIdentityFromCacheKey",
+                command: "git",
+                args: vec![
+                    "-C".to_string(),
+                    "/repo".to_string(),
+                    "remote".to_string(),
+                    "-v".to_string(),
+                ],
+                timeout_behavior: process::ProcessTimeoutBehavior::TimedOutResult,
+                shell_on_windows: true,
+            }
+        );
+
+        let top_level_success = process::ProcessRunResult {
+            stdout: "/repo\n".to_string(),
+            stderr: String::new(),
+            code: Some(0),
+            signal: None,
+            timed_out: false,
+            stdout_truncated: false,
+            stderr_truncated: false,
+        };
+        assert_eq!(
+            resolve_repository_identity_cache_key_from_result(
+                "/repo/packages/web",
+                Some(&top_level_success)
+            ),
+            "/repo"
+        );
+        let top_level_timeout = process::ProcessRunResult {
+            code: None,
+            timed_out: true,
+            ..top_level_success.clone()
+        };
+        assert_eq!(
+            resolve_repository_identity_cache_key_from_result(
+                "/repo/packages/web",
+                Some(&top_level_timeout)
+            ),
+            "/repo/packages/web"
+        );
+        assert_eq!(
+            resolve_repository_identity_cache_key_from_result("/repo/packages/web", None),
+            "/repo/packages/web"
+        );
+
+        let remote_output = "\
+            origin git@github.com:julius/t3code.git (fetch)\n\
+            origin git@github.com:julius/t3code.git (push)\n\
+            upstream git@github.com:T3Tools/t3code.git (fetch)\n\
+            upstream git@github.com:T3Tools/t3code.git (push)\n";
+        assert_eq!(
+            parse_repository_identity_remote_fetch_urls(remote_output),
+            BTreeMap::from([
+                (
+                    "origin".to_string(),
+                    "git@github.com:julius/t3code.git".to_string()
+                ),
+                (
+                    "upstream".to_string(),
+                    "git@github.com:T3Tools/t3code.git".to_string()
+                ),
+            ])
+        );
+        assert_eq!(
+            pick_primary_repository_identity_remote(&parse_repository_identity_remote_fetch_urls(
+                remote_output
+            )),
+            Some(RepositoryIdentityRemote {
+                remote_name: "upstream".to_string(),
+                remote_url: "git@github.com:T3Tools/t3code.git".to_string(),
+            })
+        );
+        assert_eq!(
+            pick_primary_repository_identity_remote(&BTreeMap::from([
+                ("zebra".to_string(), "https://example.com/z.git".to_string()),
+                (
+                    "backup".to_string(),
+                    "https://example.com/b.git".to_string()
+                ),
+            ])),
+            Some(RepositoryIdentityRemote {
+                remote_name: "backup".to_string(),
+                remote_url: "https://example.com/b.git".to_string(),
+            })
+        );
+
+        let remote_result = process::ProcessRunResult {
+            stdout: remote_output.to_string(),
+            stderr: String::new(),
+            code: Some(0),
+            signal: None,
+            timed_out: false,
+            stdout_truncated: false,
+            stderr_truncated: false,
+        };
+        let identity =
+            resolve_repository_identity_from_remote_result("/repo", Some(&remote_result)).unwrap();
+        assert_eq!(identity.canonical_key, "github.com/t3tools/t3code");
+        assert_eq!(identity.locator.source, "git-remote");
+        assert_eq!(identity.locator.remote_name, "upstream");
+        assert_eq!(identity.root_path.as_deref(), Some("/repo"));
+        assert_eq!(identity.display_name.as_deref(), Some("t3tools/t3code"));
+        assert_eq!(identity.provider.as_deref(), Some("github"));
+        assert_eq!(identity.owner.as_deref(), Some("t3tools"));
+        assert_eq!(identity.name.as_deref(), Some("t3code"));
+
+        let nested_gitlab = build_repository_identity(
+            &RepositoryIdentityRemote {
+                remote_name: "origin".to_string(),
+                remote_url: "git@gitlab.com:T3Tools/platform/t3code.git".to_string(),
+            },
+            "/repo",
+        );
+        assert_eq!(
+            nested_gitlab.canonical_key,
+            "gitlab.com/t3tools/platform/t3code"
+        );
+        assert_eq!(
+            nested_gitlab.display_name.as_deref(),
+            Some("t3tools/platform/t3code")
+        );
+        assert_eq!(nested_gitlab.provider.as_deref(), Some("gitlab"));
+        assert_eq!(nested_gitlab.owner.as_deref(), Some("t3tools"));
+        assert_eq!(nested_gitlab.name.as_deref(), Some("t3code"));
+
+        let remote_failure = process::ProcessRunResult {
+            code: Some(1),
+            stdout: remote_output.to_string(),
+            ..remote_result
+        };
+        assert_eq!(
+            resolve_repository_identity_from_remote_result("/repo", Some(&remote_failure)),
+            None
         );
 
         let capture_plan = git_capture_checkpoint_plan(

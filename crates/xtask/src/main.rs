@@ -1787,10 +1787,10 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
         )
     } else if path.starts_with("apps/server/src/project/") {
         (
-            "project summary/script helpers in crates/r3_core/src/lib.rs plus workspace file contracts in crates/r3_core/src/workspace.rs",
+            "project summary/script helpers plus repository identity resolver command plans, cache policy, primary remote selection, and identity derivation in crates/r3_core/src/lib.rs plus workspace file contracts in crates/r3_core/src/workspace.rs",
             "partial",
-            "`cargo test --workspace` project script tests and `cargo test -p r3_core workspace`",
-            "Port repository identity, favicon resolver, setup runner, project registry add/list/remove, and live workspace discovery.",
+            "`cargo test --workspace` project script tests, `cargo test -p r3_core vcs`, and `cargo test -p r3_core workspace`",
+            "Port live repository identity cache execution, favicon resolver, setup runner, project registry add/list/remove, and live workspace discovery.",
         )
     } else if path.starts_with("apps/server/src/auth/") {
         (
