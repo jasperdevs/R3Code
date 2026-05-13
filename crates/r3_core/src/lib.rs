@@ -198,7 +198,7 @@ pub const UPSTREAM_WEB_ICON_CONTRACTS: &[UpstreamWebIconContract] = &[
     },
     UpstreamWebIconContract {
         export_name: "JujutsuIcon",
-        native_asset_path: None,
+        native_asset_path: Some("icons/jujutsu.svg"),
         view_box: "0 0 1024 1024",
         generated_id_suffixes: &["jj-a"],
         themed_class_name: None,
@@ -324,7 +324,7 @@ pub const UPSTREAM_WEB_ICON_CONTRACTS: &[UpstreamWebIconContract] = &[
     },
     UpstreamWebIconContract {
         export_name: "AntigravityIcon",
-        native_asset_path: None,
+        native_asset_path: Some("icons/antigravity.svg"),
         view_box: "0 0 128 128",
         generated_id_suffixes: &[],
         themed_class_name: None,
@@ -47182,10 +47182,7 @@ mod tests {
             "0 0 576 220"
         );
 
-        assert_eq!(
-            upstream_web_icon_exports_missing_native_assets(),
-            vec!["JujutsuIcon", "AntigravityIcon"]
-        );
+        assert!(upstream_web_icon_exports_missing_native_assets().is_empty());
     }
 
     #[test]

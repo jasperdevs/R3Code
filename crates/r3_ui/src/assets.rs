@@ -11,6 +11,10 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/acp-registry.svg"),
     ),
     (
+        "icons/antigravity.svg",
+        include_bytes!("../assets/icons/antigravity.svg"),
+    ),
+    (
         "icons/archive.svg",
         include_bytes!("../assets/icons/archive.svg"),
     ),
@@ -148,6 +152,10 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/hammer.svg"),
     ),
     ("icons/info.svg", include_bytes!("../assets/icons/info.svg")),
+    (
+        "icons/jujutsu.svg",
+        include_bytes!("../assets/icons/jujutsu.svg"),
+    ),
     (
         "icons/keyboard.svg",
         include_bytes!("../assets/icons/keyboard.svg"),
@@ -340,6 +348,7 @@ mod tests {
         let icons = assets_list();
         for icon in [
             "acp-registry.svg",
+            "antigravity.svg",
             "check.svg",
             "bug.svg",
             "azure-devops.svg",
@@ -369,6 +378,7 @@ mod tests {
             "gitlab.svg",
             "hammer.svg",
             "info.svg",
+            "jujutsu.svg",
             "list-checks.svg",
             "lock.svg",
             "lock-open.svg",
