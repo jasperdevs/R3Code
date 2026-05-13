@@ -6108,6 +6108,39 @@ pub enum SourceControlCloneProtocol {
     Https,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlRepositoryLookupInput {
+    pub provider: SourceControlProviderKind,
+    pub repository: String,
+    pub cwd: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlCloneRepositoryInput {
+    pub provider: Option<SourceControlProviderKind>,
+    pub repository: Option<String>,
+    pub remote_url: Option<String>,
+    pub destination_path: String,
+    pub protocol: Option<SourceControlCloneProtocol>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlCloneRepositoryResult {
+    pub cwd: String,
+    pub remote_url: String,
+    pub repository: Option<SourceControlRepositoryInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlPublishRepositoryInput {
+    pub cwd: String,
+    pub provider: SourceControlProviderKind,
+    pub repository: String,
+    pub visibility: SourceControlRepositoryVisibility,
+    pub remote_name: Option<String>,
+    pub protocol: Option<SourceControlCloneProtocol>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SourceControlPublishStatus {
     Pushed,
@@ -6512,6 +6545,64 @@ pub fn source_control_clone_protocol_contract_value(
         SourceControlCloneProtocol::Ssh => "ssh",
         SourceControlCloneProtocol::Https => "https",
     }
+}
+
+pub fn source_control_repository_lookup_input(
+    provider: SourceControlProviderKind,
+    repository: &str,
+    cwd: Option<&str>,
+) -> Option<SourceControlRepositoryLookupInput> {
+    Some(SourceControlRepositoryLookupInput {
+        provider,
+        repository: trimmed_optional_string(Some(repository))?,
+        cwd: trimmed_optional_string(cwd),
+    })
+}
+
+pub fn source_control_clone_repository_input(
+    provider: Option<SourceControlProviderKind>,
+    repository: Option<&str>,
+    remote_url: Option<&str>,
+    destination_path: &str,
+    protocol: Option<SourceControlCloneProtocol>,
+) -> Option<SourceControlCloneRepositoryInput> {
+    Some(SourceControlCloneRepositoryInput {
+        provider,
+        repository: trimmed_optional_string(repository),
+        remote_url: trimmed_optional_string(remote_url),
+        destination_path: trimmed_optional_string(Some(destination_path))?,
+        protocol,
+    })
+}
+
+pub fn source_control_clone_repository_result(
+    cwd: &str,
+    remote_url: &str,
+    repository: Option<SourceControlRepositoryInfo>,
+) -> Option<SourceControlCloneRepositoryResult> {
+    Some(SourceControlCloneRepositoryResult {
+        cwd: trimmed_optional_string(Some(cwd))?,
+        remote_url: trimmed_optional_string(Some(remote_url))?,
+        repository,
+    })
+}
+
+pub fn source_control_publish_repository_input(
+    cwd: &str,
+    provider: SourceControlProviderKind,
+    repository: &str,
+    visibility: SourceControlRepositoryVisibility,
+    remote_name: Option<&str>,
+    protocol: Option<SourceControlCloneProtocol>,
+) -> Option<SourceControlPublishRepositoryInput> {
+    Some(SourceControlPublishRepositoryInput {
+        cwd: trimmed_optional_string(Some(cwd))?,
+        provider,
+        repository: trimmed_optional_string(Some(repository))?,
+        visibility,
+        remote_name: trimmed_optional_string(remote_name),
+        protocol,
+    })
 }
 
 pub fn source_control_publish_status_contract_value(
@@ -20377,6 +20468,76 @@ mod tests {
             "Source control repository operation publishRepository failed for unknown: Choose a source control provider before continuing."
         );
 
+        assert_eq!(
+            source_control_repository_lookup_input(
+                SourceControlProviderKind::Github,
+                "  octocat/t3code  ",
+                Some("  /workspace  ")
+            ),
+            Some(SourceControlRepositoryLookupInput {
+                provider: SourceControlProviderKind::Github,
+                repository: "octocat/t3code".to_string(),
+                cwd: Some("/workspace".to_string()),
+            })
+        );
+        assert_eq!(
+            source_control_repository_lookup_input(
+                SourceControlProviderKind::Github,
+                "   ",
+                Some("/workspace")
+            ),
+            None
+        );
+        assert_eq!(
+            source_control_clone_repository_input(
+                Some(SourceControlProviderKind::Github),
+                Some("  octocat/t3code  "),
+                Some("   "),
+                "  ~/work/t3code  ",
+                Some(SourceControlCloneProtocol::Ssh),
+            ),
+            Some(SourceControlCloneRepositoryInput {
+                provider: Some(SourceControlProviderKind::Github),
+                repository: Some("octocat/t3code".to_string()),
+                remote_url: None,
+                destination_path: "~/work/t3code".to_string(),
+                protocol: Some(SourceControlCloneProtocol::Ssh),
+            })
+        );
+        assert_eq!(
+            source_control_clone_repository_input(None, None, None, "   ", None),
+            None
+        );
+        assert_eq!(
+            source_control_publish_repository_input(
+                "  /workspace  ",
+                SourceControlProviderKind::Gitlab,
+                "  jasper/r3code  ",
+                SourceControlRepositoryVisibility::Private,
+                Some("  upstream  "),
+                Some(SourceControlCloneProtocol::Https),
+            ),
+            Some(SourceControlPublishRepositoryInput {
+                cwd: "/workspace".to_string(),
+                provider: SourceControlProviderKind::Gitlab,
+                repository: "jasper/r3code".to_string(),
+                visibility: SourceControlRepositoryVisibility::Private,
+                remote_name: Some("upstream".to_string()),
+                protocol: Some(SourceControlCloneProtocol::Https),
+            })
+        );
+        assert_eq!(
+            source_control_publish_repository_input(
+                "   ",
+                SourceControlProviderKind::Gitlab,
+                "jasper/r3code",
+                SourceControlRepositoryVisibility::Private,
+                None,
+                None,
+            ),
+            None
+        );
+
         let urls = SourceControlRepositoryCloneUrls {
             name_with_owner: "octocat/t3code".to_string(),
             url: "https://github.com/octocat/t3code".to_string(),
@@ -20447,6 +20608,22 @@ mod tests {
                     max_output_bytes: Some(256 * 1024),
                 },
             }
+        );
+        assert_eq!(
+            source_control_clone_repository_result(
+                "  /tmp/t3code  ",
+                "  https://github.com/octocat/t3code  ",
+                clone_plan.repository.clone(),
+            ),
+            Some(SourceControlCloneRepositoryResult {
+                cwd: "/tmp/t3code".to_string(),
+                remote_url: "https://github.com/octocat/t3code".to_string(),
+                repository: clone_plan.repository.clone(),
+            })
+        );
+        assert_eq!(
+            source_control_clone_repository_result("", "https://github.com/octocat/t3code", None),
+            None
         );
         assert_eq!(
             source_control_clone_repository_plan(
