@@ -11,6 +11,9 @@ use std::{
 use crate::EditorId;
 
 pub const DEFAULT_MAX_BUFFER_BYTES: usize = 8 * 1024 * 1024;
+pub const DEFAULT_VCS_TIMEOUT_MS: u64 = 30_000;
+pub const DEFAULT_VCS_MAX_OUTPUT_BYTES: usize = 1_000_000;
+pub const VCS_OUTPUT_TRUNCATED_MARKER: &str = "\n\n[truncated]";
 
 const WINDOWS_COMMAND_NOT_FOUND_PATTERNS: &[&str] = &[
     "is not recognized as an internal or external command",
@@ -119,6 +122,51 @@ pub struct ProcessLaunch {
     pub command: String,
     pub args: Vec<String>,
     pub options: ProcessLaunchOptions,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VcsProcessInput {
+    pub operation: String,
+    pub command: String,
+    pub args: Vec<String>,
+    pub cwd: String,
+    pub spawn_cwd: Option<String>,
+    pub stdin: Option<String>,
+    pub env: Option<BTreeMap<String, String>>,
+    pub allow_non_zero_exit: bool,
+    pub timeout_ms: Option<u64>,
+    pub max_output_bytes: Option<usize>,
+    pub append_truncation_marker: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VcsProcessOutput {
+    pub exit_code: i32,
+    pub stdout: String,
+    pub stderr: String,
+    pub stdout_truncated: bool,
+    pub stderr_truncated: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VcsProcessErrorContext {
+    pub operation: String,
+    pub command: String,
+    pub cwd: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VcsProcessErrorKind {
+    Spawn,
+    Exit { exit_code: i32, detail: String },
+    Timeout { timeout_ms: u64 },
+    OutputDecode { detail: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VcsProcessError {
+    pub context: VcsProcessErrorContext,
+    pub kind: VcsProcessErrorKind,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -452,6 +500,107 @@ pub fn resolve_available_editors(platform: &str, env: &BTreeMap<String, String>)
     available
 }
 
+pub fn vcs_command_label(command: &str, args: &[String]) -> String {
+    std::iter::once(command)
+        .chain(args.iter().map(String::as_str))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub fn vcs_process_error_context(input: &VcsProcessInput) -> VcsProcessErrorContext {
+    VcsProcessErrorContext {
+        operation: input.operation.clone(),
+        command: vcs_command_label(&input.command, &input.args),
+        cwd: input.cwd.clone(),
+    }
+}
+
+pub fn vcs_process_run_options(input: &VcsProcessInput) -> ProcessRunOptions {
+    ProcessRunOptions {
+        cwd: Some(
+            input
+                .spawn_cwd
+                .as_deref()
+                .unwrap_or(input.cwd.as_str())
+                .into(),
+        ),
+        timeout_ms: input.timeout_ms.unwrap_or(DEFAULT_VCS_TIMEOUT_MS),
+        env: input.env.clone(),
+        stdin: input.stdin.clone(),
+        allow_non_zero_exit: true,
+        max_buffer_bytes: input
+            .max_output_bytes
+            .unwrap_or(DEFAULT_VCS_MAX_OUTPUT_BYTES),
+        output_mode: ProcessOutputMode::Truncate,
+    }
+}
+
+pub fn map_vcs_process_result(
+    input: &VcsProcessInput,
+    result: ProcessRunResult,
+) -> Result<VcsProcessOutput, VcsProcessError> {
+    let context = vcs_process_error_context(input);
+    if result.timed_out {
+        return Err(VcsProcessError {
+            context,
+            kind: VcsProcessErrorKind::Timeout {
+                timeout_ms: input.timeout_ms.unwrap_or(DEFAULT_VCS_TIMEOUT_MS),
+            },
+        });
+    }
+    let Some(exit_code) = result.code else {
+        return Err(VcsProcessError {
+            context,
+            kind: VcsProcessErrorKind::OutputDecode {
+                detail: "process completed without an exit code".to_string(),
+            },
+        });
+    };
+    if !input.allow_non_zero_exit && exit_code != 0 {
+        let detail = result.stderr.trim();
+        let detail = if detail.is_empty() {
+            format!(
+                "{} exited with code {exit_code}.",
+                vcs_command_label(&input.command, &input.args)
+            )
+        } else {
+            detail.to_string()
+        };
+        return Err(VcsProcessError {
+            context,
+            kind: VcsProcessErrorKind::Exit { exit_code, detail },
+        });
+    }
+
+    Ok(VcsProcessOutput {
+        exit_code,
+        stdout: apply_vcs_truncation_marker(
+            result.stdout,
+            result.stdout_truncated,
+            input.append_truncation_marker,
+        ),
+        stderr: apply_vcs_truncation_marker(
+            result.stderr,
+            result.stderr_truncated,
+            input.append_truncation_marker,
+        ),
+        stdout_truncated: result.stdout_truncated,
+        stderr_truncated: result.stderr_truncated,
+    })
+}
+
+pub fn run_vcs_process(input: &VcsProcessInput) -> Result<VcsProcessOutput, VcsProcessError> {
+    let args = input.args.iter().map(String::as_str).collect::<Vec<_>>();
+    let result =
+        run_process(&input.command, &args, vcs_process_run_options(input)).map_err(|_| {
+            VcsProcessError {
+                context: vcs_process_error_context(input),
+                kind: VcsProcessErrorKind::Spawn,
+            }
+        })?;
+    map_vcs_process_result(input, result)
+}
+
 pub fn is_command_available(command: &str, platform: &str, env: &BTreeMap<String, String>) -> bool {
     resolve_command_path(command, platform, env).is_some()
 }
@@ -597,6 +746,17 @@ pub fn encode_utf16_le_base64(input: &str) -> String {
 
 pub fn windows_detached_shell_args(args: &[String]) -> Vec<String> {
     args.iter().map(|arg| format!("\"{arg}\"")).collect()
+}
+
+fn apply_vcs_truncation_marker(
+    mut value: String,
+    truncated: bool,
+    append_truncation_marker: bool,
+) -> String {
+    if truncated && append_truncation_marker {
+        value.push_str(VCS_OUTPUT_TRUNCATED_MARKER);
+    }
+    value
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -972,6 +1132,22 @@ mod tests {
         dir
     }
 
+    fn vcs_input() -> VcsProcessInput {
+        VcsProcessInput {
+            operation: "test.stdout".to_string(),
+            command: "git".to_string(),
+            args: vec!["status".to_string(), "--short".to_string()],
+            cwd: "/repo".to_string(),
+            spawn_cwd: None,
+            stdin: None,
+            env: None,
+            allow_non_zero_exit: false,
+            timeout_ms: None,
+            max_output_bytes: None,
+            append_truncation_marker: false,
+        }
+    }
+
     #[test]
     fn ports_upstream_process_output_limit_modes() {
         let bytes = vec![b'x'; 2048];
@@ -1008,6 +1184,141 @@ mod tests {
         ));
         assert!(is_windows_command_not_found("win32", Some(9009), ""));
         assert!(!is_windows_command_not_found("linux", Some(9009), ""));
+    }
+
+    #[test]
+    fn ports_vcs_process_defaults_and_error_mapping() {
+        let mut input = vcs_input();
+        input.spawn_cwd = Some("/spawn".to_string());
+        input.stdin = Some("payload".to_string());
+        input.env = Some(env(&[("GIT_CONFIG_GLOBAL", "/tmp/gitconfig")]));
+        input.timeout_ms = Some(50);
+        input.max_output_bytes = Some(128);
+        input.append_truncation_marker = true;
+
+        assert_eq!(
+            vcs_command_label(&input.command, &input.args),
+            "git status --short"
+        );
+        assert_eq!(
+            vcs_process_error_context(&input),
+            VcsProcessErrorContext {
+                operation: "test.stdout".to_string(),
+                command: "git status --short".to_string(),
+                cwd: "/repo".to_string(),
+            }
+        );
+        assert_eq!(
+            vcs_process_run_options(&input),
+            ProcessRunOptions {
+                cwd: Some(PathBuf::from("/spawn")),
+                timeout_ms: 50,
+                env: Some(env(&[("GIT_CONFIG_GLOBAL", "/tmp/gitconfig")])),
+                stdin: Some("payload".to_string()),
+                allow_non_zero_exit: true,
+                max_buffer_bytes: 128,
+                output_mode: ProcessOutputMode::Truncate,
+            }
+        );
+
+        let output = map_vcs_process_result(
+            &input,
+            ProcessRunResult {
+                stdout: "x".repeat(128),
+                stderr: String::new(),
+                code: Some(0),
+                signal: None,
+                timed_out: false,
+                stdout_truncated: true,
+                stderr_truncated: false,
+            },
+        )
+        .unwrap();
+        assert!(output.stdout.ends_with(VCS_OUTPUT_TRUNCATED_MARKER));
+        assert!(output.stdout_truncated);
+
+        let timeout = map_vcs_process_result(
+            &input,
+            ProcessRunResult {
+                stdout: String::new(),
+                stderr: String::new(),
+                code: None,
+                signal: None,
+                timed_out: true,
+                stdout_truncated: false,
+                stderr_truncated: false,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            timeout.kind,
+            VcsProcessErrorKind::Timeout { timeout_ms: 50 }
+        );
+    }
+
+    #[test]
+    fn ports_vcs_process_exit_and_decode_errors() {
+        let input = vcs_input();
+        let exit_error = map_vcs_process_result(
+            &input,
+            ProcessRunResult {
+                stdout: String::new(),
+                stderr: "boom".to_string(),
+                code: Some(2),
+                signal: None,
+                timed_out: false,
+                stdout_truncated: false,
+                stderr_truncated: false,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            exit_error.kind,
+            VcsProcessErrorKind::Exit {
+                exit_code: 2,
+                detail: "boom".to_string(),
+            }
+        );
+
+        let mut allowed = vcs_input();
+        allowed.allow_non_zero_exit = true;
+        assert_eq!(
+            map_vcs_process_result(
+                &allowed,
+                ProcessRunResult {
+                    stdout: String::new(),
+                    stderr: "boom".to_string(),
+                    code: Some(2),
+                    signal: None,
+                    timed_out: false,
+                    stdout_truncated: false,
+                    stderr_truncated: false,
+                },
+            )
+            .unwrap()
+            .exit_code,
+            2
+        );
+
+        let missing_exit = map_vcs_process_result(
+            &allowed,
+            ProcessRunResult {
+                stdout: String::new(),
+                stderr: String::new(),
+                code: None,
+                signal: None,
+                timed_out: false,
+                stdout_truncated: false,
+                stderr_truncated: false,
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            missing_exit.kind,
+            VcsProcessErrorKind::OutputDecode {
+                detail: "process completed without an exit code".to_string(),
+            }
+        );
     }
 
     #[test]

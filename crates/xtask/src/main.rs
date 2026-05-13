@@ -1741,10 +1741,10 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
         )
     } else if path.starts_with("apps/server/src/git/") || path.starts_with("apps/server/src/vcs/") {
         (
-            "branch/git presentation helpers in crates/r3_core/src/lib.rs",
+            "branch/git presentation helpers in crates/r3_core/src/lib.rs plus VCS process default/error/truncation contracts in crates/r3_core/src/process.rs",
             "partial",
-            "`cargo test --workspace` branch/git menu tests",
-            "Port git status, refs, worktrees, commits, push, checkout, and VCS process wrappers.",
+            "`cargo test -p r3_core process`; branch/git menu tests",
+            "Port live git status, refs, worktrees, commits, push, checkout, and VCS process execution/service wiring.",
         )
     } else if path.starts_with("apps/server/src/terminal/") {
         (
