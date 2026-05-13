@@ -1281,6 +1281,13 @@ pub struct BrowserApiCorsLayerPlan {
     pub max_age_seconds: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerEnvironmentRouteResponse {
+    pub descriptor: ExecutionEnvironmentDescriptor,
+    pub status: u16,
+    pub headers: BTreeMap<String, String>,
+}
+
 pub const BROWSER_API_CORS_ALLOWED_METHODS: &[&str] = &["GET", "POST", "OPTIONS"];
 pub const BROWSER_API_CORS_ALLOWED_HEADERS: &[&str] =
     &["authorization", "b3", "traceparent", "content-type"];
@@ -1830,6 +1837,16 @@ pub fn apply_browser_api_cors_headers(
         headers.insert(key.to_string(), value);
     }
     headers
+}
+
+pub fn server_environment_route_response(
+    descriptor: ExecutionEnvironmentDescriptor,
+) -> ServerEnvironmentRouteResponse {
+    ServerEnvironmentRouteResponse {
+        descriptor,
+        status: 200,
+        headers: apply_browser_api_cors_headers(BTreeMap::new()),
+    }
 }
 
 pub fn browser_api_cors_route_decision(method: &str) -> BrowserApiCorsRouteDecision {
@@ -3145,6 +3162,24 @@ mod tests {
         assert_eq!(
             execution_platform_arch_from_node_arch("ia32"),
             ExecutionEnvironmentPlatformArch::Other
+        );
+        assert_eq!(
+            server_environment_route_response(descriptor.clone()),
+            ServerEnvironmentRouteResponse {
+                descriptor,
+                status: 200,
+                headers: BTreeMap::from([
+                    ("access-control-allow-origin".to_string(), "*".to_string()),
+                    (
+                        "access-control-allow-methods".to_string(),
+                        "GET, POST, OPTIONS".to_string()
+                    ),
+                    (
+                        "access-control-allow-headers".to_string(),
+                        "authorization, b3, traceparent, content-type".to_string()
+                    ),
+                ]),
+            }
         );
     }
 
