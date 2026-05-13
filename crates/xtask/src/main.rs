@@ -1671,9 +1671,16 @@ fn is_inventory_source_file(path: &Path) -> bool {
 }
 
 fn classify_inventory_path(path: &str) -> InventoryRow {
-    let (rust_target, status, proof, remaining_gap) = if path
-        .starts_with("apps/web/src/components/ChatMarkdown")
+    let (rust_target, status, proof, remaining_gap) = if path == "apps/web/src/markdown-links.ts"
+        || path == "apps/web/src/markdown-links.test.ts"
     {
+        (
+            "markdown file URI rewrite, encoded-path preservation, file-link target resolution, line/column hash mapping, Windows path normalization, relative display labels, and app-route rejection in crates/r3_core/src/markdown.rs",
+            "partial",
+            "`cargo test -p r3_core markdown_links_helpers_match_upstream_contract`",
+            "Wire exact link metadata into all live GPUI markdown click, tooltip, context-menu, and open-in-editor interactions.",
+        )
+    } else if path.starts_with("apps/web/src/components/ChatMarkdown") {
         (
             "chat markdown file-link rewrite/label contracts and GPUI assistant markdown rendering in crates/r3_core/src/markdown.rs and crates/r3_ui/src/shell.rs",
             "partial",

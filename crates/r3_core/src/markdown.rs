@@ -83,45 +83,61 @@ pub fn normalize_markdown_link_destination(value: &str) -> String {
 
 pub fn rewrite_markdown_file_uri_href(href: Option<&str>) -> Option<String> {
     let href = normalize_markdown_link_destination(href?);
-    let rest = href.strip_prefix("file://")?;
-    let (path, hash) = split_hash(rest);
-    if path.is_empty() {
-        return None;
-    }
-    Some(format!("{}{}", decode_uri_component(path), hash))
+    let (path, hash) = parse_file_url_href(&href, false)?;
+    Some(format!("{path}{hash}"))
 }
 
-pub fn resolve_markdown_file_link_meta(
-    href: Option<&str>,
-    cwd: Option<&str>,
-) -> Option<MarkdownFileLinkMeta> {
+pub fn resolve_markdown_file_link_target(href: Option<&str>, cwd: Option<&str>) -> Option<String> {
     let raw_href = normalize_markdown_link_destination(href?);
     if raw_href.is_empty() || raw_href.starts_with('#') {
         return None;
     }
 
-    let rewritten_file_uri = rewrite_markdown_file_uri_href(Some(&raw_href));
-    let source = rewritten_file_uri.as_deref().unwrap_or(&raw_href);
-    let (path_without_hash, hash) = split_hash(source);
-    let decoded_path = normalize_windows_drive_path(&decode_uri_component(
-        path_without_hash
+    let (decoded_path, hash) = if raw_href.len() >= 5 && raw_href[..5].eq_ignore_ascii_case("file:")
+    {
+        parse_file_url_href(&raw_href, true)?
+    } else {
+        let (path_with_search, hash) = split_hash(&raw_href);
+        let path = path_with_search
             .split('?')
             .next()
-            .unwrap_or(path_without_hash),
-    ));
-    if decoded_path.is_empty() || has_external_scheme(&decoded_path) {
+            .unwrap_or(path_with_search);
+        (
+            normalize_windows_drive_path(&decode_uri_component(path.trim())),
+            hash.to_string(),
+        )
+    };
+
+    if decoded_path.is_empty() {
+        return None;
+    }
+    if !is_windows_drive_path(&decoded_path)
+        && !decoded_path.starts_with("\\\\")
+        && has_external_scheme(&decoded_path)
+    {
         return None;
     }
     if !is_likely_path_candidate(&decoded_path) {
         return None;
     }
 
-    let path_with_position = append_line_column_from_hash(&decoded_path, hash);
-    let target_path = if is_relative_path(&path_with_position) {
-        resolve_relative_path(&path_with_position, cwd?)?
+    let path_with_position = append_line_column_from_hash(&decoded_path, &hash);
+    if !is_relative_path(&path_with_position) {
+        return Some(path_with_position);
+    }
+
+    if let Some(cwd) = cwd {
+        resolve_relative_path(&path_with_position, cwd)
     } else {
-        path_with_position
-    };
+        None
+    }
+}
+
+pub fn resolve_markdown_file_link_meta(
+    href: Option<&str>,
+    cwd: Option<&str>,
+) -> Option<MarkdownFileLinkMeta> {
+    let target_path = resolve_markdown_file_link_target(href, cwd)?;
     let (file_path, line, column) = split_path_and_position(&target_path);
     let basename = basename_of_path(&file_path).to_string();
     let display_path = format_workspace_relative_path(&target_path, cwd);
@@ -562,6 +578,33 @@ fn split_hash(value: &str) -> (&str, &str) {
     }
 }
 
+fn strip_prefix_case_insensitive<'a>(input: &'a str, prefix: &str) -> Option<&'a str> {
+    if input.len() < prefix.len() {
+        return None;
+    }
+    let (head, rest) = input.split_at(prefix.len());
+    head.eq_ignore_ascii_case(prefix).then_some(rest)
+}
+
+fn parse_file_url_href(href: &str, decode_path: bool) -> Option<(String, String)> {
+    let rest = strip_prefix_case_insensitive(href, "file://")?;
+    let (path_with_search, hash) = split_hash(rest);
+    let path = path_with_search
+        .split('?')
+        .next()
+        .unwrap_or(path_with_search);
+    if path.is_empty() {
+        return None;
+    }
+    let normalized = normalize_windows_drive_path(path);
+    let path = if decode_path {
+        decode_uri_component(&normalized)
+    } else {
+        normalized
+    };
+    Some((path, hash.to_string()))
+}
+
 fn append_line_column_from_hash(path: &str, hash: &str) -> String {
     if hash.is_empty() || has_position_suffix(path) {
         return path.to_string();
@@ -618,16 +661,47 @@ fn resolve_relative_path(path: &str, cwd: &str) -> Option<String> {
 }
 
 fn format_workspace_relative_path(target_path: &str, cwd: Option<&str>) -> String {
+    let (path, line, column) = split_path_and_position(target_path);
+    let normalized_path = normalize_windows_drive_path(&path.replace('\\', "/"));
+    let mut display_path = normalized_path.clone();
+
     let Some(cwd) = cwd else {
-        return target_path.to_string();
+        return append_position_suffix(&display_path, line, column);
     };
-    let normalized_target = target_path.replace('\\', "/");
-    let normalized_cwd = cwd.replace('\\', "/");
-    let cwd_prefix = format!("{}/", normalized_cwd.trim_end_matches('/'));
-    normalized_target
-        .strip_prefix(&cwd_prefix)
-        .unwrap_or(&normalized_target)
-        .to_string()
+    let normalized_cwd =
+        normalize_windows_drive_path(&cwd.replace('\\', "/").trim_end_matches('/').to_string());
+    let workspace_label = basename_of_path(&normalized_cwd);
+    let path_for_compare = normalized_path.to_ascii_lowercase();
+    let cwd_for_compare = normalized_cwd.to_ascii_lowercase();
+    let cwd_with_separator = format!("{cwd_for_compare}/");
+    let workspace_label_with_separator = format!("{}/", workspace_label.to_ascii_lowercase());
+
+    if path_for_compare == cwd_for_compare {
+        display_path = workspace_label.to_string();
+    } else if path_for_compare.starts_with(&cwd_with_separator) {
+        let relative_suffix = &normalized_path[normalized_cwd.len() + 1..];
+        display_path = format!("{workspace_label}/{relative_suffix}");
+    } else if !normalized_path.starts_with('/') {
+        let relative_path = normalized_path
+            .trim_start_matches("./")
+            .trim_start_matches('/')
+            .to_string();
+        display_path = if path_for_compare.starts_with(&workspace_label_with_separator) {
+            normalized_path
+        } else {
+            format!("{workspace_label}/{relative_path}")
+        };
+    }
+
+    append_position_suffix(&display_path, line, column)
+}
+
+fn append_position_suffix(path: &str, line: Option<u32>, column: Option<u32>) -> String {
+    match (line, column) {
+        (Some(line), Some(column)) => format!("{path}:{line}:{column}"),
+        (Some(line), None) => format!("{path}:{line}"),
+        _ => path.to_string(),
+    }
 }
 
 fn extract_fence_language(language: &str) -> String {
@@ -660,12 +734,13 @@ fn looks_like_posix_filesystem_path(path: &str) -> bool {
 }
 
 fn looks_like_relative_file_path(path: &str) -> bool {
+    let (path, _, _) = split_path_and_position(path);
     if path.contains('/') {
         return path
             .split('/')
             .all(|segment| !segment.is_empty() && is_safe_path_segment(segment));
     }
-    basename_of_path(path).contains('.')
+    basename_of_path(&path).contains('.')
 }
 
 fn is_safe_path_segment(segment: &str) -> bool {
@@ -777,6 +852,117 @@ mod tests {
         assert_eq!(column.target_path, format!("{path}:1:7"));
         assert_eq!(column.line, Some(1));
         assert_eq!(column.column, Some(7));
+    }
+
+    #[test]
+    fn markdown_links_helpers_match_upstream_contract() {
+        assert_eq!(
+            rewrite_markdown_file_uri_href(Some("file:///Users/julius/project/src/main.ts#L42"))
+                .as_deref(),
+            Some("/Users/julius/project/src/main.ts#L42")
+        );
+        assert_eq!(
+            rewrite_markdown_file_uri_href(Some("file:///Users/julius/project/file%2520name.md",))
+                .as_deref(),
+            Some("/Users/julius/project/file%2520name.md")
+        );
+        assert_eq!(
+            rewrite_markdown_file_uri_href(Some(
+                "file:///D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx#L69",
+            ))
+            .as_deref(),
+            Some("D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx#L69")
+        );
+        assert_eq!(
+            rewrite_markdown_file_uri_href(Some(
+                " <file:///D:/Programme/t3code/apps/web/src/markdown-links.ts> ",
+            ))
+            .as_deref(),
+            Some("D:/Programme/t3code/apps/web/src/markdown-links.ts")
+        );
+
+        assert_eq!(
+            resolve_markdown_file_link_target(Some("/Users/julius/project/AGENTS.md"), None)
+                .as_deref(),
+            Some("/Users/julius/project/AGENTS.md")
+        );
+        assert_eq!(
+            resolve_markdown_file_link_target(
+                Some("src/processRunner.ts:71"),
+                Some("/Users/julius/project"),
+            )
+            .as_deref(),
+            Some("/Users/julius/project/src/processRunner.ts:71")
+        );
+        assert_eq!(
+            resolve_markdown_file_link_target(Some("script.ts:10"), Some("/Users/julius/project"))
+                .as_deref(),
+            Some("/Users/julius/project/script.ts:10")
+        );
+        assert_eq!(
+            resolve_markdown_file_link_target(Some("AGENTS.md"), Some("/Users/julius/project"))
+                .as_deref(),
+            Some("/Users/julius/project/AGENTS.md")
+        );
+        assert_eq!(
+            resolve_markdown_file_link_target(
+                Some("/Users/julius/project/src/main.ts#L42C7"),
+                None
+            )
+            .as_deref(),
+            Some("/Users/julius/project/src/main.ts:42:7")
+        );
+        assert_eq!(
+            resolve_markdown_file_link_target(Some("https://example.com/docs"), None),
+            None
+        );
+        assert_eq!(
+            resolve_markdown_file_link_target(
+                Some("file:///Users/julius/project/file%2520name.md"),
+                None,
+            )
+            .as_deref(),
+            Some("/Users/julius/project/file%20name.md")
+        );
+
+        assert_eq!(
+            resolve_markdown_file_link_meta(
+                Some("file:///C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts#L501"),
+                Some("C:/Users/mike/dev-stuff/t3code"),
+            )
+            .unwrap()
+            .display_path,
+            "t3code/apps/web/src/session-logic.ts:501"
+        );
+        assert_eq!(
+            resolve_markdown_file_link_meta(
+                Some("/C:/Users/mike/dev-stuff/t3code/apps/web/src/components/chat/MessagesTimeline.virtualization.browser.tsx"),
+                Some("C:/Users/mike/dev-stuff/t3code"),
+            )
+            .unwrap()
+            .display_path,
+            "t3code/apps/web/src/components/chat/MessagesTimeline.virtualization.browser.tsx"
+        );
+        assert_eq!(
+            resolve_markdown_file_link_target(
+                Some("/D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx#L69"),
+                None,
+            )
+            .as_deref(),
+            Some("D:/Programme/t3code/apps/web/src/components/chat/OpenInPicker.tsx:69")
+        );
+        assert_eq!(
+            resolve_markdown_file_link_target(
+                Some("</D:/Programme/t3code/apps/web/src/components/ChatMarkdown.tsx:1>"),
+                None,
+            )
+            .as_deref(),
+            Some("D:/Programme/t3code/apps/web/src/components/ChatMarkdown.tsx:1")
+        );
+        assert_eq!(
+            resolve_markdown_file_link_target(Some("/chat/settings"), None),
+            None
+        );
     }
 
     #[test]
