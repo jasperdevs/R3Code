@@ -14395,6 +14395,27 @@ pub struct DesktopSshEnvironmentTarget {
     pub port: Option<u16>,
 }
 
+pub const CLIENT_SETTINGS_STORAGE_KEY: &str = "r3code:client-settings:v1";
+pub const SAVED_ENVIRONMENT_REGISTRY_STORAGE_KEY: &str = "r3code:saved-environment-registry:v1";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrowserSavedEnvironmentRecord {
+    pub environment_id: String,
+    pub label: String,
+    pub http_base_url: String,
+    pub ws_base_url: String,
+    pub created_at: String,
+    pub last_connected_at: Option<String>,
+    pub desktop_ssh: Option<DesktopSshEnvironmentTarget>,
+    pub bearer_token: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct BrowserSavedEnvironmentRegistryDocument {
+    pub version: Option<u32>,
+    pub records: Vec<BrowserSavedEnvironmentRecord>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DesktopDiscoveredSshHost {
     pub alias: String,
@@ -14867,6 +14888,121 @@ pub fn format_desktop_ssh_target(target: &DesktopSshEnvironmentTarget) -> String
         format!("{authority}:{port}")
     } else {
         authority
+    }
+}
+
+pub fn to_persisted_saved_environment_record(
+    record: &BrowserSavedEnvironmentRecord,
+) -> BrowserSavedEnvironmentRecord {
+    BrowserSavedEnvironmentRecord {
+        environment_id: record.environment_id.clone(),
+        label: record.label.clone(),
+        http_base_url: record.http_base_url.clone(),
+        ws_base_url: record.ws_base_url.clone(),
+        created_at: record.created_at.clone(),
+        last_connected_at: record.last_connected_at.clone(),
+        desktop_ssh: record.desktop_ssh.clone(),
+        bearer_token: None,
+    }
+}
+
+pub fn read_browser_saved_environment_registry(
+    document: &BrowserSavedEnvironmentRegistryDocument,
+) -> Vec<BrowserSavedEnvironmentRecord> {
+    document
+        .records
+        .iter()
+        .map(to_persisted_saved_environment_record)
+        .collect()
+}
+
+pub fn write_browser_saved_environment_registry(
+    existing_document: &BrowserSavedEnvironmentRegistryDocument,
+    records: &[BrowserSavedEnvironmentRecord],
+) -> BrowserSavedEnvironmentRegistryDocument {
+    let existing_tokens = existing_document
+        .records
+        .iter()
+        .filter_map(|record| {
+            record
+                .bearer_token
+                .as_ref()
+                .map(|token| (record.environment_id.as_str(), token.as_str()))
+        })
+        .collect::<BTreeMap<_, _>>();
+
+    BrowserSavedEnvironmentRegistryDocument {
+        version: Some(1),
+        records: records
+            .iter()
+            .map(|record| {
+                let mut next_record = to_persisted_saved_environment_record(record);
+                if let Some(token) = existing_tokens.get(record.environment_id.as_str()) {
+                    next_record.bearer_token = Some((*token).to_string());
+                }
+                next_record
+            })
+            .collect(),
+    }
+}
+
+pub fn read_browser_saved_environment_secret(
+    document: &BrowserSavedEnvironmentRegistryDocument,
+    environment_id: &str,
+) -> Option<String> {
+    document
+        .records
+        .iter()
+        .find(|record| record.environment_id == environment_id)
+        .and_then(|record| record.bearer_token.clone())
+}
+
+pub fn write_browser_saved_environment_secret(
+    document: &BrowserSavedEnvironmentRegistryDocument,
+    environment_id: &str,
+    secret: &str,
+) -> (BrowserSavedEnvironmentRegistryDocument, bool) {
+    let mut found = false;
+    let records = document
+        .records
+        .iter()
+        .map(|record| {
+            if record.environment_id != environment_id {
+                return record.clone();
+            }
+            found = true;
+            let mut next_record = to_persisted_saved_environment_record(record);
+            next_record.bearer_token = Some(secret.to_string());
+            next_record
+        })
+        .collect();
+
+    (
+        BrowserSavedEnvironmentRegistryDocument {
+            version: Some(document.version.unwrap_or(1)),
+            records,
+        },
+        found,
+    )
+}
+
+pub fn remove_browser_saved_environment_secret(
+    document: &BrowserSavedEnvironmentRegistryDocument,
+    environment_id: &str,
+) -> BrowserSavedEnvironmentRegistryDocument {
+    BrowserSavedEnvironmentRegistryDocument {
+        version: Some(document.version.unwrap_or(1)),
+        records: document
+            .records
+            .iter()
+            .map(|record| {
+                if record.environment_id == environment_id {
+                    to_persisted_saved_environment_record(record)
+                } else {
+                    record.clone()
+                }
+            })
+            .collect(),
     }
 }
 
@@ -23473,6 +23609,60 @@ mod tests {
         );
         assert!(REMOTE_PICK_PORT_SCRIPT.contains("const filePath = process.argv[2] ?? \"\";"));
         assert!(build_remote_log_tail_script(&target).contains("tail -n 80 \"$LOG_FILE\""));
+    }
+
+    #[test]
+    fn client_persistence_storage_preserves_saved_environment_secrets() {
+        assert_eq!(CLIENT_SETTINGS_STORAGE_KEY, "r3code:client-settings:v1");
+        assert_eq!(
+            SAVED_ENVIRONMENT_REGISTRY_STORAGE_KEY,
+            "r3code:saved-environment-registry:v1"
+        );
+
+        let saved_record = browser_saved_environment_record();
+        let document = write_browser_saved_environment_registry(
+            &BrowserSavedEnvironmentRegistryDocument::default(),
+            std::slice::from_ref(&saved_record),
+        );
+        let (document, found) =
+            write_browser_saved_environment_secret(&document, "environment-1", "bearer-token");
+        assert!(found);
+        let document = write_browser_saved_environment_registry(
+            &document,
+            std::slice::from_ref(&saved_record),
+        );
+
+        assert_eq!(
+            read_browser_saved_environment_registry(&document),
+            vec![saved_record.clone()]
+        );
+        assert_eq!(
+            read_browser_saved_environment_secret(&document, "environment-1").as_deref(),
+            Some("bearer-token")
+        );
+        assert_eq!(
+            document,
+            BrowserSavedEnvironmentRegistryDocument {
+                version: Some(1),
+                records: vec![BrowserSavedEnvironmentRecord {
+                    bearer_token: Some("bearer-token".to_string()),
+                    ..saved_record.clone()
+                }],
+            }
+        );
+
+        let (unchanged, missing_found) =
+            write_browser_saved_environment_secret(&document, "missing", "new-token");
+        assert!(!missing_found);
+        assert_eq!(unchanged, document);
+
+        assert_eq!(
+            remove_browser_saved_environment_secret(&document, "environment-1"),
+            BrowserSavedEnvironmentRegistryDocument {
+                version: Some(1),
+                records: vec![saved_record],
+            }
+        );
     }
 
     #[test]
@@ -35520,6 +35710,24 @@ mod tests {
             disabled: false,
             children: Vec::new(),
         })
+    }
+
+    fn browser_saved_environment_record() -> BrowserSavedEnvironmentRecord {
+        BrowserSavedEnvironmentRecord {
+            environment_id: "environment-1".to_string(),
+            label: "Remote environment".to_string(),
+            http_base_url: "https://remote.example.com/".to_string(),
+            ws_base_url: "wss://remote.example.com/".to_string(),
+            created_at: "2026-04-09T00:00:00.000Z".to_string(),
+            last_connected_at: None,
+            desktop_ssh: Some(DesktopSshEnvironmentTarget {
+                alias: "devbox".to_string(),
+                hostname: "devbox.example.com".to_string(),
+                username: Some("julius".to_string()),
+                port: Some(22),
+            }),
+            bearer_token: None,
+        }
     }
 
     #[test]

@@ -1681,6 +1681,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core context_menu_fallback_helpers_match_upstream_contract`",
             "Wire helpers into a live GPUI/native context menu fallback path and exact pointer/keyboard cleanup behavior.",
         )
+    } else if path == "apps/web/src/clientPersistenceStorage.ts"
+        || path == "apps/web/src/clientPersistenceStorage.test.ts"
+    {
+        (
+            "R3-branded browser persistence storage keys, saved-environment registry document transforms, secret-preserving registry rewrites, secret read/write/remove behavior, and desktop SSH record preservation in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core client_persistence_storage_preserves_saved_environment_secrets`",
+            "Wire transforms into live GPUI browser/local persistence and schema-backed client settings decode/encode.",
+        )
     } else if path == "apps/web/src/markdown-links.ts"
         || path == "apps/web/src/markdown-links.test.ts"
     {
