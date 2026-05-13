@@ -197,6 +197,175 @@ impl ChatRoute {
     }
 }
 
+pub const CHAT_VIEW_ROOT_CLASS_NAME: &str =
+    "flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden bg-background";
+pub const CHAT_VIEW_HEADER_BASE_CLASS_NAME: &str = "border-b border-border";
+pub const CHAT_VIEW_HEADER_ELECTRON_CLASS_NAME: &str =
+    "drag-region flex h-[52px] items-center px-3 sm:px-5 wco:h-[env(titlebar-area-height)]";
+pub const CHAT_VIEW_HEADER_TITLEBAR_INSET_CLASS_NAME: &str =
+    "wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]";
+pub const CHAT_VIEW_HEADER_WEB_CLASS_NAME: &str = "pb-2 pl-[calc(env(safe-area-inset-left)+0.75rem)] pr-[calc(env(safe-area-inset-right)+0.75rem)] pt-2 sm:pb-3 sm:pl-[calc(env(safe-area-inset-left)+1.25rem)] sm:pr-[calc(env(safe-area-inset-right)+1.25rem)] sm:pt-3";
+pub const CHAT_VIEW_MAIN_CLASS_NAME: &str = "flex min-h-0 min-w-0 flex-1";
+pub const CHAT_VIEW_CHAT_COLUMN_CLASS_NAME: &str = "flex min-h-0 min-w-0 flex-1 flex-col";
+pub const CHAT_VIEW_MESSAGES_WRAPPER_CLASS_NAME: &str = "relative flex min-h-0 flex-1 flex-col";
+pub const CHAT_VIEW_SCROLL_TO_BOTTOM_WRAPPER_CLASS_NAME: &str = "pointer-events-none absolute bottom-1 left-1/2 z-30 flex -translate-x-1/2 justify-center py-1.5";
+pub const CHAT_VIEW_SCROLL_TO_BOTTOM_BUTTON_CLASS_NAME: &str = "pointer-events-auto flex items-center gap-1.5 rounded-full border border-border/60 bg-card px-3 py-1 text-muted-foreground text-xs shadow-sm transition-colors hover:border-border hover:text-foreground hover:cursor-pointer";
+pub const CHAT_VIEW_SCROLL_TO_BOTTOM_ICON_CLASS_NAME: &str = "size-3.5";
+pub const CHAT_VIEW_SCROLL_TO_BOTTOM_LABEL: &str = "Scroll to bottom";
+pub const CHAT_VIEW_INPUT_BASE_CLASS_NAME: &str = "pl-[calc(env(safe-area-inset-left)+0.75rem)] pr-[calc(env(safe-area-inset-right)+0.75rem)] pt-1.5 sm:pl-[calc(env(safe-area-inset-left)+1.25rem)] sm:pr-[calc(env(safe-area-inset-right)+1.25rem)] sm:pt-2";
+pub const CHAT_VIEW_INPUT_GIT_REPO_PADDING_CLASS_NAME: &str =
+    "pb-[calc(env(safe-area-inset-bottom)+0.25rem)]";
+pub const CHAT_VIEW_INPUT_NO_GIT_REPO_PADDING_CLASS_NAME: &str =
+    "pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:pb-[calc(env(safe-area-inset-bottom)+1rem)]";
+pub const CHAT_VIEW_COMPOSER_ISOLATE_CLASS_NAME: &str = "relative isolate";
+pub const CHAT_VIEW_COMPOSER_BANNER_STACK_CLASS_NAME: &str = "relative z-0";
+pub const CHAT_VIEW_COMPOSER_STACK_CLASS_NAME: &str = "relative z-10";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChatViewPlanSidebarPlacement {
+    Hidden,
+    Sidebar,
+    Sheet,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatViewRenderContract {
+    pub no_active_thread_state: bool,
+    pub root_class_name: Option<String>,
+    pub header_class_name: Option<String>,
+    pub main_class_name: Option<&'static str>,
+    pub chat_column_class_name: Option<&'static str>,
+    pub messages_wrapper_class_name: Option<&'static str>,
+    pub show_provider_status_banner: bool,
+    pub show_thread_error_banner: bool,
+    pub show_scroll_to_bottom: bool,
+    pub scroll_to_bottom_wrapper_class_name: Option<&'static str>,
+    pub scroll_to_bottom_button_class_name: Option<&'static str>,
+    pub scroll_to_bottom_icon_class_name: Option<&'static str>,
+    pub scroll_to_bottom_label: Option<&'static str>,
+    pub input_class_name: Option<String>,
+    pub composer_isolate_class_name: Option<&'static str>,
+    pub composer_banner_stack_class_name: Option<&'static str>,
+    pub composer_stack_class_name: Option<&'static str>,
+    pub show_branch_toolbar: bool,
+    pub plan_sidebar_placement: ChatViewPlanSidebarPlacement,
+    pub render_mounted_terminal_drawers: bool,
+    pub render_expanded_image_dialog: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChatViewRenderInput {
+    pub has_active_thread: bool,
+    pub is_electron: bool,
+    pub reserve_titlebar_control_inset: bool,
+    pub is_git_repo: bool,
+    pub show_scroll_to_bottom: bool,
+    pub plan_sidebar_open: bool,
+    pub should_use_plan_sidebar_sheet: bool,
+    pub has_expanded_image: bool,
+}
+
+pub fn derive_chat_view_render_contract(input: ChatViewRenderInput) -> ChatViewRenderContract {
+    if !input.has_active_thread {
+        return ChatViewRenderContract {
+            no_active_thread_state: true,
+            root_class_name: None,
+            header_class_name: None,
+            main_class_name: None,
+            chat_column_class_name: None,
+            messages_wrapper_class_name: None,
+            show_provider_status_banner: false,
+            show_thread_error_banner: false,
+            show_scroll_to_bottom: false,
+            scroll_to_bottom_wrapper_class_name: None,
+            scroll_to_bottom_button_class_name: None,
+            scroll_to_bottom_icon_class_name: None,
+            scroll_to_bottom_label: None,
+            input_class_name: None,
+            composer_isolate_class_name: None,
+            composer_banner_stack_class_name: None,
+            composer_stack_class_name: None,
+            show_branch_toolbar: false,
+            plan_sidebar_placement: ChatViewPlanSidebarPlacement::Hidden,
+            render_mounted_terminal_drawers: false,
+            render_expanded_image_dialog: false,
+        };
+    }
+
+    let header_class_name = if input.is_electron {
+        join_class_names([
+            CHAT_VIEW_HEADER_BASE_CLASS_NAME,
+            CHAT_VIEW_HEADER_ELECTRON_CLASS_NAME,
+            input
+                .reserve_titlebar_control_inset
+                .then_some(CHAT_VIEW_HEADER_TITLEBAR_INSET_CLASS_NAME)
+                .unwrap_or(""),
+        ])
+    } else {
+        join_class_names([
+            CHAT_VIEW_HEADER_BASE_CLASS_NAME,
+            CHAT_VIEW_HEADER_WEB_CLASS_NAME,
+            "",
+        ])
+    };
+    let input_class_name = join_class_names([
+        CHAT_VIEW_INPUT_BASE_CLASS_NAME,
+        if input.is_git_repo {
+            CHAT_VIEW_INPUT_GIT_REPO_PADDING_CLASS_NAME
+        } else {
+            CHAT_VIEW_INPUT_NO_GIT_REPO_PADDING_CLASS_NAME
+        },
+        "",
+    ]);
+    let plan_sidebar_placement = if !input.plan_sidebar_open {
+        ChatViewPlanSidebarPlacement::Hidden
+    } else if input.should_use_plan_sidebar_sheet {
+        ChatViewPlanSidebarPlacement::Sheet
+    } else {
+        ChatViewPlanSidebarPlacement::Sidebar
+    };
+
+    ChatViewRenderContract {
+        no_active_thread_state: false,
+        root_class_name: Some(CHAT_VIEW_ROOT_CLASS_NAME.to_string()),
+        header_class_name: Some(header_class_name),
+        main_class_name: Some(CHAT_VIEW_MAIN_CLASS_NAME),
+        chat_column_class_name: Some(CHAT_VIEW_CHAT_COLUMN_CLASS_NAME),
+        messages_wrapper_class_name: Some(CHAT_VIEW_MESSAGES_WRAPPER_CLASS_NAME),
+        show_provider_status_banner: true,
+        show_thread_error_banner: true,
+        show_scroll_to_bottom: input.show_scroll_to_bottom,
+        scroll_to_bottom_wrapper_class_name: input
+            .show_scroll_to_bottom
+            .then_some(CHAT_VIEW_SCROLL_TO_BOTTOM_WRAPPER_CLASS_NAME),
+        scroll_to_bottom_button_class_name: input
+            .show_scroll_to_bottom
+            .then_some(CHAT_VIEW_SCROLL_TO_BOTTOM_BUTTON_CLASS_NAME),
+        scroll_to_bottom_icon_class_name: input
+            .show_scroll_to_bottom
+            .then_some(CHAT_VIEW_SCROLL_TO_BOTTOM_ICON_CLASS_NAME),
+        scroll_to_bottom_label: input
+            .show_scroll_to_bottom
+            .then_some(CHAT_VIEW_SCROLL_TO_BOTTOM_LABEL),
+        input_class_name: Some(input_class_name),
+        composer_isolate_class_name: Some(CHAT_VIEW_COMPOSER_ISOLATE_CLASS_NAME),
+        composer_banner_stack_class_name: Some(CHAT_VIEW_COMPOSER_BANNER_STACK_CLASS_NAME),
+        composer_stack_class_name: Some(CHAT_VIEW_COMPOSER_STACK_CLASS_NAME),
+        show_branch_toolbar: input.is_git_repo,
+        plan_sidebar_placement,
+        render_mounted_terminal_drawers: true,
+        render_expanded_image_dialog: input.has_expanded_image,
+    }
+}
+
+fn join_class_names<const N: usize>(parts: [&str; N]) -> String {
+    parts
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ThreadRouteTarget {
     Server { thread_ref: ScopedThreadRef },
@@ -34456,6 +34625,139 @@ mod tests {
             })
         );
         assert_eq!(resolve_thread_route_target(None, None, None), None);
+    }
+
+    #[test]
+    fn chat_view_render_contract_matches_upstream_shell() {
+        let empty = derive_chat_view_render_contract(ChatViewRenderInput {
+            has_active_thread: false,
+            is_electron: false,
+            reserve_titlebar_control_inset: false,
+            is_git_repo: true,
+            show_scroll_to_bottom: true,
+            plan_sidebar_open: true,
+            should_use_plan_sidebar_sheet: true,
+            has_expanded_image: true,
+        });
+        assert!(empty.no_active_thread_state);
+        assert_eq!(empty.root_class_name, None);
+        assert_eq!(empty.header_class_name, None);
+        assert!(!empty.show_branch_toolbar);
+        assert_eq!(
+            empty.plan_sidebar_placement,
+            ChatViewPlanSidebarPlacement::Hidden
+        );
+        assert!(!empty.render_mounted_terminal_drawers);
+        assert!(!empty.render_expanded_image_dialog);
+
+        let web = derive_chat_view_render_contract(ChatViewRenderInput {
+            has_active_thread: true,
+            is_electron: false,
+            reserve_titlebar_control_inset: false,
+            is_git_repo: true,
+            show_scroll_to_bottom: true,
+            plan_sidebar_open: true,
+            should_use_plan_sidebar_sheet: false,
+            has_expanded_image: false,
+        });
+        assert_eq!(
+            web.root_class_name,
+            Some(CHAT_VIEW_ROOT_CLASS_NAME.to_string())
+        );
+        assert_eq!(
+            web.header_class_name,
+            Some(format!(
+                "{} {}",
+                CHAT_VIEW_HEADER_BASE_CLASS_NAME, CHAT_VIEW_HEADER_WEB_CLASS_NAME
+            ))
+        );
+        assert_eq!(web.main_class_name, Some(CHAT_VIEW_MAIN_CLASS_NAME));
+        assert_eq!(
+            web.chat_column_class_name,
+            Some(CHAT_VIEW_CHAT_COLUMN_CLASS_NAME)
+        );
+        assert_eq!(
+            web.messages_wrapper_class_name,
+            Some(CHAT_VIEW_MESSAGES_WRAPPER_CLASS_NAME)
+        );
+        assert!(web.show_provider_status_banner);
+        assert!(web.show_thread_error_banner);
+        assert_eq!(
+            web.scroll_to_bottom_wrapper_class_name,
+            Some(CHAT_VIEW_SCROLL_TO_BOTTOM_WRAPPER_CLASS_NAME)
+        );
+        assert_eq!(
+            web.scroll_to_bottom_button_class_name,
+            Some(CHAT_VIEW_SCROLL_TO_BOTTOM_BUTTON_CLASS_NAME)
+        );
+        assert_eq!(
+            web.scroll_to_bottom_icon_class_name,
+            Some(CHAT_VIEW_SCROLL_TO_BOTTOM_ICON_CLASS_NAME)
+        );
+        assert_eq!(
+            web.scroll_to_bottom_label,
+            Some(CHAT_VIEW_SCROLL_TO_BOTTOM_LABEL)
+        );
+        assert_eq!(
+            web.input_class_name,
+            Some(format!(
+                "{} {}",
+                CHAT_VIEW_INPUT_BASE_CLASS_NAME, CHAT_VIEW_INPUT_GIT_REPO_PADDING_CLASS_NAME
+            ))
+        );
+        assert_eq!(
+            web.composer_isolate_class_name,
+            Some(CHAT_VIEW_COMPOSER_ISOLATE_CLASS_NAME)
+        );
+        assert_eq!(
+            web.composer_banner_stack_class_name,
+            Some(CHAT_VIEW_COMPOSER_BANNER_STACK_CLASS_NAME)
+        );
+        assert_eq!(
+            web.composer_stack_class_name,
+            Some(CHAT_VIEW_COMPOSER_STACK_CLASS_NAME)
+        );
+        assert!(web.show_branch_toolbar);
+        assert_eq!(
+            web.plan_sidebar_placement,
+            ChatViewPlanSidebarPlacement::Sidebar
+        );
+        assert!(web.render_mounted_terminal_drawers);
+        assert!(!web.render_expanded_image_dialog);
+
+        let electron_sheet = derive_chat_view_render_contract(ChatViewRenderInput {
+            has_active_thread: true,
+            is_electron: true,
+            reserve_titlebar_control_inset: true,
+            is_git_repo: false,
+            show_scroll_to_bottom: false,
+            plan_sidebar_open: true,
+            should_use_plan_sidebar_sheet: true,
+            has_expanded_image: true,
+        });
+        assert_eq!(
+            electron_sheet.header_class_name,
+            Some(format!(
+                "{} {} {}",
+                CHAT_VIEW_HEADER_BASE_CLASS_NAME,
+                CHAT_VIEW_HEADER_ELECTRON_CLASS_NAME,
+                CHAT_VIEW_HEADER_TITLEBAR_INSET_CLASS_NAME
+            ))
+        );
+        assert_eq!(electron_sheet.scroll_to_bottom_label, None);
+        assert_eq!(
+            electron_sheet.input_class_name,
+            Some(format!(
+                "{} {}",
+                CHAT_VIEW_INPUT_BASE_CLASS_NAME, CHAT_VIEW_INPUT_NO_GIT_REPO_PADDING_CLASS_NAME
+            ))
+        );
+        assert!(!electron_sheet.show_branch_toolbar);
+        assert_eq!(
+            electron_sheet.plan_sidebar_placement,
+            ChatViewPlanSidebarPlacement::Sheet
+        );
+        assert!(electron_sheet.render_expanded_image_dialog);
     }
 
     #[test]

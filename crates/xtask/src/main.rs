@@ -2464,6 +2464,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace websocket_connection_state_matches_upstream_reconnect_logic`; `cargo test --workspace request_latency_state_matches_upstream_ack_tracking`",
             "Wire live GPUI toast lifecycle, browser online/focus listeners, debounce timers, manual reconnect action, and slow request expandable details.",
         )
+    } else if path == "apps/web/src/components/ChatView.browser.tsx"
+        || path == "apps/web/src/components/ChatView.tsx"
+    {
+        (
+            "ChatView no-active-thread fallback, root/header/input/timeline wrapper class contracts, scroll-to-bottom pill, banner mounting, branch toolbar gate, plan sidebar placement, mounted terminal drawer gate, and expanded image dialog gate in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace chat_view_render_contract_matches_upstream_shell`; `cargo test --workspace composer_send_state_and_expired_terminal_copy_match_upstream`",
+            "Wire the full live GPUI ChatView render tree, browser layout assertions, local dispatch lifecycle, scroll virtualization, route canonicalization, and every interaction covered by the upstream browser test.",
+        )
     } else if path == "apps/web/src/components/ChatView.logic.test.ts"
         || path == "apps/web/src/components/ChatView.logic.ts"
     {
