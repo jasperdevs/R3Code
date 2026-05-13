@@ -2753,6 +2753,16 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace input_and_textarea_primitive_contracts_match_upstream_components`; current screenshot gates where captured",
             "Maintain these primitive contracts if upstream changes Input or Textarea sizing, control styling, native-input behavior, or file/search branches.",
         )
+    } else if path == "apps/web/src/components/ui/checkbox.tsx"
+        || path == "apps/web/src/components/ui/radio-group.tsx"
+        || path == "apps/web/src/components/ui/switch.tsx"
+    {
+        (
+            "Checkbox, RadioGroup/Radio, and Switch primitive data slots, root/indicator/thumb class contracts, checkbox SVG attributes, checkbox path data, and RadioGroupItem export alias in crates/r3_core/src/lib.rs",
+            "covered",
+            "`cargo test --workspace selection_control_primitive_contracts_match_upstream_components`; current screenshot gates where captured",
+            "Maintain these primitive contracts if upstream changes selection-control slots, classes, SVG path data, or export aliases.",
+        )
     } else if path == "apps/web/src/components/ui/kbd.tsx"
         || path == "apps/web/src/components/ui/label.tsx"
         || path == "apps/web/src/components/ui/separator.tsx"

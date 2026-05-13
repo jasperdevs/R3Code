@@ -945,6 +945,36 @@ pub fn textarea_size_class_name(size: FieldControlSize) -> Option<&'static str> 
     }
 }
 
+pub const CHECKBOX_SLOT: &str = "checkbox";
+pub const CHECKBOX_INDICATOR_SLOT: &str = "checkbox-indicator";
+pub const CHECKBOX_CLASS_NAME: &str = "relative inline-flex size-4.5 shrink-0 items-center justify-center rounded-[.25rem] border border-input bg-background not-dark:bg-clip-padding shadow-xs/5 outline-none ring-ring transition-shadow before:pointer-events-none before:absolute before:inset-0 before:rounded-[3px] not-data-disabled:not-data-checked:not-aria-invalid:before:shadow-[0_1px_--theme(--color-black/4%)] focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-offset-background aria-invalid:border-destructive/36 focus-visible:aria-invalid:border-destructive/64 focus-visible:aria-invalid:ring-destructive/48 data-disabled:opacity-64 sm:size-4 dark:not-data-checked:bg-input/32 dark:aria-invalid:ring-destructive/24 dark:not-data-disabled:not-data-checked:not-aria-invalid:before:shadow-[0_-1px_--theme(--color-white/6%)] [[data-disabled],[data-checked],[aria-invalid]]:shadow-none";
+pub const CHECKBOX_INDICATOR_CLASS_NAME: &str = "-inset-px absolute flex items-center justify-center rounded-[.25rem] text-primary-foreground data-unchecked:hidden data-checked:bg-primary data-indeterminate:text-foreground";
+pub const CHECKBOX_SVG_CLASS_NAME: &str = "size-3.5 sm:size-3";
+pub const CHECKBOX_SVG_FILL: &str = "none";
+pub const CHECKBOX_SVG_HEIGHT: &str = "24";
+pub const CHECKBOX_SVG_STROKE: &str = "currentColor";
+pub const CHECKBOX_SVG_STROKE_LINECAP: &str = "round";
+pub const CHECKBOX_SVG_STROKE_LINEJOIN: &str = "round";
+pub const CHECKBOX_SVG_STROKE_WIDTH: &str = "3";
+pub const CHECKBOX_SVG_VIEW_BOX: &str = "0 0 24 24";
+pub const CHECKBOX_SVG_WIDTH: &str = "24";
+pub const CHECKBOX_SVG_XMLNS: &str = "http://www.w3.org/2000/svg";
+pub const CHECKBOX_INDETERMINATE_PATH: &str = "M5.252 12h13.496";
+pub const CHECKBOX_CHECKED_PATH: &str = "M5.252 12.7 10.2 18.63 18.748 5.37";
+
+pub const SWITCH_SLOT: &str = "switch";
+pub const SWITCH_THUMB_SLOT: &str = "switch-thumb";
+pub const SWITCH_CLASS_NAME: &str = "inline-flex h-[calc(var(--thumb-size)+2px)] w-[calc(var(--thumb-size)*2-2px)] shrink-0 cursor-pointer items-center rounded-full p-px outline-none transition-[background-color,box-shadow] duration-200 [--thumb-size:--spacing(5)] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background data-checked:bg-primary data-unchecked:bg-input data-disabled:cursor-not-allowed data-disabled:opacity-64 sm:[--thumb-size:--spacing(4)]";
+pub const SWITCH_THUMB_CLASS_NAME: &str = "pointer-events-none block aspect-square h-full origin-left in-[[role=switch]:active,[data-slot=label]:active,[data-slot=field-label]:active]:not-data-disabled:scale-x-110 in-[[role=switch]:active,[data-slot=label]:active,[data-slot=field-label]:active]:rounded-[var(--thumb-size)/calc(var(--thumb-size)*1.1)] rounded-(--thumb-size) bg-background shadow-sm/5 will-change-transform [transition:translate_.15s,border-radius_.15s,scale_.1s_.1s,transform-origin_.15s] data-checked:origin-[var(--thumb-size)_50%] data-checked:translate-x-[calc(var(--thumb-size)-4px)]";
+
+pub const RADIO_GROUP_SLOT: &str = "radio-group";
+pub const RADIO_GROUP_CLASS_NAME: &str = "flex flex-col gap-3";
+pub const RADIO_SLOT: &str = "radio";
+pub const RADIO_INDICATOR_SLOT: &str = "radio-indicator";
+pub const RADIO_CLASS_NAME: &str = "relative inline-flex size-4.5 shrink-0 items-center justify-center rounded-full border border-input bg-background not-dark:bg-clip-padding shadow-xs/5 outline-none transition-shadow before:pointer-events-none before:absolute before:inset-0 before:rounded-full not-data-disabled:not-data-checked:not-aria-invalid:before:shadow-[0_1px_--theme(--color-black/4%)] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background aria-invalid:border-destructive/36 focus-visible:aria-invalid:border-destructive/64 focus-visible:aria-invalid:ring-destructive/48 data-disabled:opacity-64 sm:size-4 dark:not-data-checked:bg-input/32 dark:aria-invalid:ring-destructive/24 dark:not-data-disabled:not-data-checked:not-aria-invalid:before:shadow-[0_-1px_--theme(--color-white/6%)] [[data-disabled],[data-checked],[aria-invalid]]:shadow-none";
+pub const RADIO_INDICATOR_CLASS_NAME: &str = "-inset-px absolute flex size-4.5 items-center justify-center rounded-full before:size-2 before:rounded-full before:bg-primary-foreground data-unchecked:hidden data-checked:bg-primary sm:size-4 sm:before:size-1.5";
+pub const RADIO_GROUP_ITEM_EXPORT_ALIAS: &str = "Radio";
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmptyMediaVariant {
     Default,
@@ -37070,6 +37100,57 @@ mod tests {
         );
         assert_eq!(textarea_size_class_name(FieldControlSize::Default), None);
         assert_eq!(textarea_size_class_name(FieldControlSize::Number), None);
+    }
+
+    #[test]
+    fn selection_control_primitive_contracts_match_upstream_components() {
+        assert_eq!(CHECKBOX_SLOT, "checkbox");
+        assert_eq!(CHECKBOX_INDICATOR_SLOT, "checkbox-indicator");
+        assert_eq!(
+            CHECKBOX_CLASS_NAME,
+            "relative inline-flex size-4.5 shrink-0 items-center justify-center rounded-[.25rem] border border-input bg-background not-dark:bg-clip-padding shadow-xs/5 outline-none ring-ring transition-shadow before:pointer-events-none before:absolute before:inset-0 before:rounded-[3px] not-data-disabled:not-data-checked:not-aria-invalid:before:shadow-[0_1px_--theme(--color-black/4%)] focus-visible:ring-2 focus-visible:ring-offset-1 focus-visible:ring-offset-background aria-invalid:border-destructive/36 focus-visible:aria-invalid:border-destructive/64 focus-visible:aria-invalid:ring-destructive/48 data-disabled:opacity-64 sm:size-4 dark:not-data-checked:bg-input/32 dark:aria-invalid:ring-destructive/24 dark:not-data-disabled:not-data-checked:not-aria-invalid:before:shadow-[0_-1px_--theme(--color-white/6%)] [[data-disabled],[data-checked],[aria-invalid]]:shadow-none"
+        );
+        assert_eq!(
+            CHECKBOX_INDICATOR_CLASS_NAME,
+            "-inset-px absolute flex items-center justify-center rounded-[.25rem] text-primary-foreground data-unchecked:hidden data-checked:bg-primary data-indeterminate:text-foreground"
+        );
+        assert_eq!(CHECKBOX_SVG_CLASS_NAME, "size-3.5 sm:size-3");
+        assert_eq!(CHECKBOX_SVG_FILL, "none");
+        assert_eq!(CHECKBOX_SVG_HEIGHT, "24");
+        assert_eq!(CHECKBOX_SVG_STROKE, "currentColor");
+        assert_eq!(CHECKBOX_SVG_STROKE_LINECAP, "round");
+        assert_eq!(CHECKBOX_SVG_STROKE_LINEJOIN, "round");
+        assert_eq!(CHECKBOX_SVG_STROKE_WIDTH, "3");
+        assert_eq!(CHECKBOX_SVG_VIEW_BOX, "0 0 24 24");
+        assert_eq!(CHECKBOX_SVG_WIDTH, "24");
+        assert_eq!(CHECKBOX_SVG_XMLNS, "http://www.w3.org/2000/svg");
+        assert_eq!(CHECKBOX_INDETERMINATE_PATH, "M5.252 12h13.496");
+        assert_eq!(CHECKBOX_CHECKED_PATH, "M5.252 12.7 10.2 18.63 18.748 5.37");
+
+        assert_eq!(SWITCH_SLOT, "switch");
+        assert_eq!(SWITCH_THUMB_SLOT, "switch-thumb");
+        assert_eq!(
+            SWITCH_CLASS_NAME,
+            "inline-flex h-[calc(var(--thumb-size)+2px)] w-[calc(var(--thumb-size)*2-2px)] shrink-0 cursor-pointer items-center rounded-full p-px outline-none transition-[background-color,box-shadow] duration-200 [--thumb-size:--spacing(5)] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background data-checked:bg-primary data-unchecked:bg-input data-disabled:cursor-not-allowed data-disabled:opacity-64 sm:[--thumb-size:--spacing(4)]"
+        );
+        assert_eq!(
+            SWITCH_THUMB_CLASS_NAME,
+            "pointer-events-none block aspect-square h-full origin-left in-[[role=switch]:active,[data-slot=label]:active,[data-slot=field-label]:active]:not-data-disabled:scale-x-110 in-[[role=switch]:active,[data-slot=label]:active,[data-slot=field-label]:active]:rounded-[var(--thumb-size)/calc(var(--thumb-size)*1.1)] rounded-(--thumb-size) bg-background shadow-sm/5 will-change-transform [transition:translate_.15s,border-radius_.15s,scale_.1s_.1s,transform-origin_.15s] data-checked:origin-[var(--thumb-size)_50%] data-checked:translate-x-[calc(var(--thumb-size)-4px)]"
+        );
+
+        assert_eq!(RADIO_GROUP_SLOT, "radio-group");
+        assert_eq!(RADIO_GROUP_CLASS_NAME, "flex flex-col gap-3");
+        assert_eq!(RADIO_SLOT, "radio");
+        assert_eq!(RADIO_INDICATOR_SLOT, "radio-indicator");
+        assert_eq!(
+            RADIO_CLASS_NAME,
+            "relative inline-flex size-4.5 shrink-0 items-center justify-center rounded-full border border-input bg-background not-dark:bg-clip-padding shadow-xs/5 outline-none transition-shadow before:pointer-events-none before:absolute before:inset-0 before:rounded-full not-data-disabled:not-data-checked:not-aria-invalid:before:shadow-[0_1px_--theme(--color-black/4%)] focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background aria-invalid:border-destructive/36 focus-visible:aria-invalid:border-destructive/64 focus-visible:aria-invalid:ring-destructive/48 data-disabled:opacity-64 sm:size-4 dark:not-data-checked:bg-input/32 dark:aria-invalid:ring-destructive/24 dark:not-data-disabled:not-data-checked:not-aria-invalid:before:shadow-[0_-1px_--theme(--color-white/6%)] [[data-disabled],[data-checked],[aria-invalid]]:shadow-none"
+        );
+        assert_eq!(
+            RADIO_INDICATOR_CLASS_NAME,
+            "-inset-px absolute flex size-4.5 items-center justify-center rounded-full before:size-2 before:rounded-full before:bg-primary-foreground data-unchecked:hidden data-checked:bg-primary sm:size-4 sm:before:size-1.5"
+        );
+        assert_eq!(RADIO_GROUP_ITEM_EXPORT_ALIAS, "Radio");
     }
 
     #[test]
