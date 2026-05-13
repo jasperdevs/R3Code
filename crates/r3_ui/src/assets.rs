@@ -7,6 +7,10 @@ pub struct R3Assets;
 
 const ICON_ASSETS: &[(&str, &[u8])] = &[
     (
+        "icons/acp-registry.svg",
+        include_bytes!("../assets/icons/acp-registry.svg"),
+    ),
+    (
         "icons/archive.svg",
         include_bytes!("../assets/icons/archive.svg"),
     ),
@@ -335,6 +339,7 @@ mod tests {
     fn upstream_lucide_icons_used_by_native_surfaces_are_listed() {
         let icons = assets_list();
         for icon in [
+            "acp-registry.svg",
             "check.svg",
             "bug.svg",
             "azure-devops.svg",

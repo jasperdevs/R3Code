@@ -348,7 +348,7 @@ pub const UPSTREAM_WEB_ICON_CONTRACTS: &[UpstreamWebIconContract] = &[
     },
     UpstreamWebIconContract {
         export_name: "ACPRegistryIcon",
-        native_asset_path: None,
+        native_asset_path: Some("icons/acp-registry.svg"),
         view_box: "0 0 576 220",
         generated_id_suffixes: &[],
         themed_class_name: Some("fill-black dark:fill-white"),
@@ -47184,7 +47184,7 @@ mod tests {
 
         assert_eq!(
             upstream_web_icon_exports_missing_native_assets(),
-            vec!["JujutsuIcon", "AntigravityIcon", "ACPRegistryIcon",]
+            vec!["JujutsuIcon", "AntigravityIcon"]
         );
     }
 
