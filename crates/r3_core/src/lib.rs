@@ -6031,6 +6031,13 @@ pub struct SourceControlProviderAuth {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlAuthProbeInput {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VcsDiscoveryItem {
     pub kind: VcsDriverKind,
     pub label: String,
@@ -6052,6 +6059,38 @@ pub struct SourceControlProviderDiscoveryItem {
     pub install_hint: String,
     pub detail: Option<String>,
     pub auth: SourceControlProviderAuth,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlProcessPlan {
+    pub operation: &'static str,
+    pub command: String,
+    pub args: Vec<String>,
+    pub cwd: String,
+    pub allow_non_zero_exit: bool,
+    pub timeout_ms: u64,
+    pub max_output_bytes: usize,
+    pub append_truncation_marker: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlCliDiscoverySpec {
+    pub kind: SourceControlProviderKind,
+    pub label: &'static str,
+    pub executable: &'static str,
+    pub version_args: &'static [&'static str],
+    pub auth_args: &'static [&'static str],
+    pub install_hint: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlVcsProbeSpec {
+    pub kind: VcsDriverKind,
+    pub label: &'static str,
+    pub executable: &'static str,
+    pub version_args: &'static [&'static str],
+    pub implemented: bool,
+    pub install_hint: &'static str,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -6078,6 +6117,11 @@ pub enum SourceControlStatusTone {
     Success,
 }
 
+pub const SOURCE_CONTROL_DISCOVERY_TIMEOUT_MS: u64 = 5_000;
+pub const SOURCE_CONTROL_DISCOVERY_MAX_OUTPUT_BYTES: usize = 8_000;
+pub const SOURCE_CONTROL_MISSING_CLI_AUTH_DETAIL: &str =
+    "Hosting integration command was not found on the server PATH.";
+
 pub fn normalize_git_fetch_interval_seconds(value: Option<f64>) -> u32 {
     let Some(value) = value else {
         return 0;
@@ -6090,6 +6134,203 @@ pub fn normalize_git_fetch_interval_seconds(value: Option<f64>) -> u32 {
 
 pub fn git_fetch_interval_seconds_from_millis(milliseconds: i64) -> i64 {
     ((milliseconds as f64) / 1_000.0).round() as i64
+}
+
+fn trimmed_optional_string(value: Option<&str>) -> Option<String> {
+    let trimmed = value?.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+pub fn source_control_provider_auth(
+    status: SourceControlProviderAuthStatus,
+    account: Option<&str>,
+    host: Option<&str>,
+    detail: Option<&str>,
+) -> SourceControlProviderAuth {
+    SourceControlProviderAuth {
+        status,
+        account: trimmed_optional_string(account),
+        host: trimmed_optional_string(host),
+        detail: trimmed_optional_string(detail),
+    }
+}
+
+pub fn source_control_unknown_auth(detail: Option<&str>) -> SourceControlProviderAuth {
+    source_control_provider_auth(SourceControlProviderAuthStatus::Unknown, None, None, detail)
+}
+
+pub fn source_control_first_non_empty_line(text: &str) -> Option<String> {
+    text.lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(str::to_string)
+}
+
+pub fn source_control_combined_auth_output(input: &SourceControlAuthProbeInput) -> String {
+    [input.stdout.as_str(), input.stderr.as_str()]
+        .into_iter()
+        .filter(|entry| !entry.trim().is_empty())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn is_token_auth_line(line: &str) -> bool {
+    let normalized = line
+        .trim_start_matches(|character: char| character == '-' || character.is_whitespace())
+        .to_ascii_lowercase();
+    normalized.starts_with("token: ")
+        || normalized == "token:"
+        || normalized.starts_with("token scope: ")
+        || normalized == "token scope:"
+        || normalized.starts_with("token scopes: ")
+        || normalized == "token scopes:"
+}
+
+pub fn source_control_sanitized_auth_lines(text: &str) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .filter(|line| !is_token_auth_line(line))
+        .map(str::to_string)
+        .collect()
+}
+
+pub fn source_control_first_safe_auth_line(text: &str) -> Option<String> {
+    source_control_sanitized_auth_lines(text).into_iter().next()
+}
+
+pub fn source_control_parse_cli_host(text: &str) -> Option<String> {
+    source_control_sanitized_auth_lines(text)
+        .into_iter()
+        .map(|line| {
+            line.trim_start_matches(|character: char| !character.is_ascii_alphanumeric())
+                .to_string()
+        })
+        .find(|line| {
+            !line.is_empty()
+                && line.chars().all(|character| {
+                    character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | ':')
+                })
+                && line
+                    .chars()
+                    .next()
+                    .is_some_and(|character| character.is_ascii_alphanumeric())
+        })
+}
+
+pub fn source_control_provider_probe_plan(
+    spec: &SourceControlCliDiscoverySpec,
+    cwd: &str,
+) -> SourceControlProcessPlan {
+    SourceControlProcessPlan {
+        operation: "source-control.discovery.probe",
+        command: spec.executable.to_string(),
+        args: spec
+            .version_args
+            .iter()
+            .map(|arg| (*arg).to_string())
+            .collect(),
+        cwd: cwd.to_string(),
+        allow_non_zero_exit: false,
+        timeout_ms: SOURCE_CONTROL_DISCOVERY_TIMEOUT_MS,
+        max_output_bytes: SOURCE_CONTROL_DISCOVERY_MAX_OUTPUT_BYTES,
+        append_truncation_marker: true,
+    }
+}
+
+pub fn source_control_provider_auth_plan(
+    spec: &SourceControlCliDiscoverySpec,
+    cwd: &str,
+) -> SourceControlProcessPlan {
+    SourceControlProcessPlan {
+        operation: "source-control.discovery.auth",
+        command: spec.executable.to_string(),
+        args: spec
+            .auth_args
+            .iter()
+            .map(|arg| (*arg).to_string())
+            .collect(),
+        cwd: cwd.to_string(),
+        allow_non_zero_exit: true,
+        timeout_ms: SOURCE_CONTROL_DISCOVERY_TIMEOUT_MS,
+        max_output_bytes: SOURCE_CONTROL_DISCOVERY_MAX_OUTPUT_BYTES,
+        append_truncation_marker: true,
+    }
+}
+
+pub fn source_control_vcs_probe_specs() -> Vec<SourceControlVcsProbeSpec> {
+    vec![
+        SourceControlVcsProbeSpec {
+            kind: VcsDriverKind::Git,
+            label: "Git",
+            executable: "git",
+            version_args: &["--version"],
+            implemented: true,
+            install_hint: "Install Git from https://git-scm.com/downloads or with your package manager.",
+        },
+        SourceControlVcsProbeSpec {
+            kind: VcsDriverKind::Jj,
+            label: "Jujutsu",
+            executable: "jj",
+            version_args: &["--version"],
+            implemented: false,
+            install_hint: "Install Jujutsu with `brew install jj` or from https://github.com/jj-vcs/jj.",
+        },
+    ]
+}
+
+pub fn source_control_vcs_probe_plan(
+    spec: &SourceControlVcsProbeSpec,
+    cwd: &str,
+) -> SourceControlProcessPlan {
+    SourceControlProcessPlan {
+        operation: "source-control.discovery.probe",
+        command: spec.executable.to_string(),
+        args: spec
+            .version_args
+            .iter()
+            .map(|arg| (*arg).to_string())
+            .collect(),
+        cwd: cwd.to_string(),
+        allow_non_zero_exit: false,
+        timeout_ms: SOURCE_CONTROL_DISCOVERY_TIMEOUT_MS,
+        max_output_bytes: SOURCE_CONTROL_DISCOVERY_MAX_OUTPUT_BYTES,
+        append_truncation_marker: true,
+    }
+}
+
+pub fn source_control_vcs_probe_available_item(
+    spec: &SourceControlVcsProbeSpec,
+    stdout: &str,
+    stderr: &str,
+) -> VcsDiscoveryItem {
+    VcsDiscoveryItem {
+        kind: spec.kind,
+        label: spec.label.to_string(),
+        executable: Some(spec.executable.to_string()),
+        implemented: spec.implemented,
+        status: SourceControlDiscoveryStatus::Available,
+        version: source_control_first_non_empty_line(stdout)
+            .or_else(|| source_control_first_non_empty_line(stderr)),
+        install_hint: spec.install_hint.to_string(),
+        detail: None,
+    }
+}
+
+pub fn source_control_vcs_probe_missing_item(
+    spec: &SourceControlVcsProbeSpec,
+    detail: Option<&str>,
+) -> VcsDiscoveryItem {
+    VcsDiscoveryItem {
+        kind: spec.kind,
+        label: spec.label.to_string(),
+        executable: Some(spec.executable.to_string()),
+        implemented: spec.implemented,
+        status: SourceControlDiscoveryStatus::Missing,
+        version: None,
+        install_hint: spec.install_hint.to_string(),
+        detail: trimmed_optional_string(detail),
+    }
 }
 
 pub fn source_control_auth_presentation(
@@ -17091,6 +17332,130 @@ mod tests {
         assert_eq!(normalize_git_fetch_interval_seconds(Some(f64::NAN)), 0);
         assert_eq!(normalize_git_fetch_interval_seconds(Some(-3.4)), 0);
         assert_eq!(normalize_git_fetch_interval_seconds(Some(7.6)), 8);
+
+        assert_eq!(
+            source_control_first_non_empty_line("\n  \r\ngh version 2.83.0\n"),
+            Some("gh version 2.83.0".to_string())
+        );
+        let auth_probe = SourceControlAuthProbeInput {
+            stdout: "github.com\n- Token: gho_secret\n".to_string(),
+            stderr: "warning\n".to_string(),
+            exit_code: 0,
+        };
+        assert_eq!(
+            source_control_combined_auth_output(&auth_probe),
+            "github.com\n- Token: gho_secret\n\nwarning\n"
+        );
+        assert_eq!(
+            source_control_sanitized_auth_lines(
+                "github.com\n- Token: gho_secret\n- Token scopes: repo\nLogged in"
+            ),
+            vec!["github.com".to_string(), "Logged in".to_string()]
+        );
+        assert_eq!(
+            source_control_first_safe_auth_line("- Token: nope\n  gitlab.com\n"),
+            Some("gitlab.com".to_string())
+        );
+        assert_eq!(
+            source_control_parse_cli_host("! gitlab.example.com:8443\nLogged in"),
+            Some("gitlab.example.com:8443".to_string())
+        );
+
+        assert_eq!(
+            source_control_provider_auth(
+                SourceControlProviderAuthStatus::Authenticated,
+                Some(" jasper "),
+                Some(" github.com "),
+                Some(" ")
+            ),
+            SourceControlProviderAuth {
+                status: SourceControlProviderAuthStatus::Authenticated,
+                account: Some("jasper".to_string()),
+                host: Some("github.com".to_string()),
+                detail: None,
+            }
+        );
+        assert_eq!(
+            source_control_unknown_auth(Some(SOURCE_CONTROL_MISSING_CLI_AUTH_DETAIL)),
+            SourceControlProviderAuth {
+                status: SourceControlProviderAuthStatus::Unknown,
+                account: None,
+                host: None,
+                detail: Some(SOURCE_CONTROL_MISSING_CLI_AUTH_DETAIL.to_string()),
+            }
+        );
+
+        let github_cli = SourceControlCliDiscoverySpec {
+            kind: SourceControlProviderKind::Github,
+            label: "GitHub",
+            executable: "gh",
+            version_args: &["--version"],
+            auth_args: &["auth", "status"],
+            install_hint: "Install GitHub CLI.",
+        };
+        assert_eq!(
+            source_control_provider_probe_plan(&github_cli, "/repo"),
+            SourceControlProcessPlan {
+                operation: "source-control.discovery.probe",
+                command: "gh".to_string(),
+                args: vec!["--version".to_string()],
+                cwd: "/repo".to_string(),
+                allow_non_zero_exit: false,
+                timeout_ms: 5_000,
+                max_output_bytes: 8_000,
+                append_truncation_marker: true,
+            }
+        );
+        assert_eq!(
+            source_control_provider_auth_plan(&github_cli, "/repo"),
+            SourceControlProcessPlan {
+                operation: "source-control.discovery.auth",
+                command: "gh".to_string(),
+                args: vec!["auth".to_string(), "status".to_string()],
+                cwd: "/repo".to_string(),
+                allow_non_zero_exit: true,
+                timeout_ms: 5_000,
+                max_output_bytes: 8_000,
+                append_truncation_marker: true,
+            }
+        );
+
+        let vcs_specs = source_control_vcs_probe_specs();
+        assert_eq!(vcs_specs.len(), 2);
+        assert_eq!(vcs_specs[0].kind, VcsDriverKind::Git);
+        assert!(vcs_specs[0].implemented);
+        assert_eq!(vcs_specs[1].kind, VcsDriverKind::Jj);
+        assert!(!vcs_specs[1].implemented);
+        assert_eq!(
+            source_control_vcs_probe_plan(&vcs_specs[0], "/repo").command,
+            "git"
+        );
+        assert_eq!(
+            source_control_vcs_probe_available_item(&vcs_specs[0], "", "git version 2.51.0\n"),
+            VcsDiscoveryItem {
+                kind: VcsDriverKind::Git,
+                label: "Git".to_string(),
+                executable: Some("git".to_string()),
+                implemented: true,
+                status: SourceControlDiscoveryStatus::Available,
+                version: Some("git version 2.51.0".to_string()),
+                install_hint: vcs_specs[0].install_hint.to_string(),
+                detail: None,
+            }
+        );
+        assert_eq!(
+            source_control_vcs_probe_missing_item(&vcs_specs[1], Some("jj not found")),
+            VcsDiscoveryItem {
+                kind: VcsDriverKind::Jj,
+                label: "Jujutsu".to_string(),
+                executable: Some("jj".to_string()),
+                implemented: false,
+                status: SourceControlDiscoveryStatus::Missing,
+                version: None,
+                install_hint: vcs_specs[1].install_hint.to_string(),
+                detail: Some("jj not found".to_string()),
+            }
+        );
 
         let authenticated = SourceControlProviderAuth {
             status: SourceControlProviderAuthStatus::Authenticated,

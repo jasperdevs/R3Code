@@ -1749,10 +1749,10 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
         )
     } else if path.starts_with("apps/server/src/sourceControl/") {
         (
-            "source-control presentation helpers in crates/r3_core/src/lib.rs",
+            "source-control presentation plus discovery helper contracts, safe auth-line filtering, auth trimming, CLI/VCS probe command plans, and VCS probe item mapping in crates/r3_core/src/lib.rs",
             "partial",
             "`cargo test --workspace` source-control tests",
-            "Port provider discovery, auth, PR/MR workflows, and mutations.",
+            "Port live provider discovery execution, provider-specific auth parsers, PR/MR workflows, and mutations.",
         )
     } else if path.starts_with("apps/server/src/git/") || path.starts_with("apps/server/src/vcs/") {
         (
