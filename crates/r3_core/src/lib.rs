@@ -428,6 +428,23 @@ pub struct WorktreeCleanupThread {
     pub worktree_path: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandPaletteOpenIntentKind {
+    AddProject,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CommandPaletteOpenIntent {
+    pub kind: CommandPaletteOpenIntentKind,
+    pub request_id: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct CommandPaletteStoreState {
+    pub open: bool,
+    pub open_intent: Option<CommandPaletteOpenIntent>,
+}
+
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ModelPickerOpenState {
     pub open: bool,
@@ -2415,6 +2432,55 @@ pub fn format_worktree_path_for_display(worktree_path: &str) -> String {
         .filter(|last_part| !last_part.is_empty())
         .map(str::to_string)
         .unwrap_or_else(|| trimmed.to_string())
+}
+
+pub fn initial_command_palette_store_state() -> CommandPaletteStoreState {
+    CommandPaletteStoreState {
+        open: false,
+        open_intent: None,
+    }
+}
+
+pub fn set_command_palette_open(
+    state: CommandPaletteStoreState,
+    open: bool,
+) -> CommandPaletteStoreState {
+    CommandPaletteStoreState {
+        open,
+        open_intent: if open { state.open_intent } else { None },
+    }
+}
+
+pub fn toggle_command_palette_open(state: CommandPaletteStoreState) -> CommandPaletteStoreState {
+    CommandPaletteStoreState {
+        open: !state.open,
+        open_intent: if state.open { None } else { state.open_intent },
+    }
+}
+
+pub fn open_command_palette_add_project(
+    state: CommandPaletteStoreState,
+) -> CommandPaletteStoreState {
+    CommandPaletteStoreState {
+        open: true,
+        open_intent: Some(CommandPaletteOpenIntent {
+            kind: CommandPaletteOpenIntentKind::AddProject,
+            request_id: state
+                .open_intent
+                .map(|intent| intent.request_id)
+                .unwrap_or(0)
+                + 1,
+        }),
+    }
+}
+
+pub fn clear_command_palette_open_intent(
+    state: CommandPaletteStoreState,
+) -> CommandPaletteStoreState {
+    CommandPaletteStoreState {
+        open_intent: None,
+        ..state
+    }
 }
 
 pub fn initial_model_picker_open_state() -> ModelPickerOpenState {
@@ -27312,6 +27378,53 @@ mod tests {
             "my-worktree"
         );
         assert_eq!(format_worktree_path_for_display("   "), "   ");
+    }
+
+    #[test]
+    fn command_palette_store_transitions_match_upstream_zustand_logic() {
+        let initial = initial_command_palette_store_state();
+        assert_eq!(
+            initial,
+            CommandPaletteStoreState {
+                open: false,
+                open_intent: None,
+            }
+        );
+
+        let opened = set_command_palette_open(initial, true);
+        assert!(opened.open);
+        assert_eq!(opened.open_intent, None);
+
+        let add_project = open_command_palette_add_project(opened);
+        assert_eq!(
+            add_project,
+            CommandPaletteStoreState {
+                open: true,
+                open_intent: Some(CommandPaletteOpenIntent {
+                    kind: CommandPaletteOpenIntentKind::AddProject,
+                    request_id: 1,
+                }),
+            }
+        );
+
+        let add_project_again = open_command_palette_add_project(add_project);
+        assert_eq!(add_project_again.open_intent.unwrap().request_id, 2);
+
+        let cleared = clear_command_palette_open_intent(add_project_again);
+        assert!(cleared.open);
+        assert_eq!(cleared.open_intent, None);
+
+        let closed = set_command_palette_open(add_project_again, false);
+        assert!(!closed.open);
+        assert_eq!(closed.open_intent, None);
+
+        let toggled_open = toggle_command_palette_open(closed);
+        assert!(toggled_open.open);
+        assert_eq!(toggled_open.open_intent, None);
+
+        let toggled_closed = toggle_command_palette_open(add_project_again);
+        assert!(!toggled_closed.open);
+        assert_eq!(toggled_closed.open_intent, None);
     }
 
     #[test]

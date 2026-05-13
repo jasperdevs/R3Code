@@ -1894,6 +1894,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core transport_error_filtering`",
             "Wire helper into live GPUI thread error surfaces.",
         )
+    } else if path == "apps/web/src/commandPaletteStore.ts" {
+        (
+            "command palette open state, toggle behavior, add-project open intent request IDs, and intent clearing helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core command_palette_store_transitions`",
+            "Wire helpers into the live GPUI command palette store.",
+        )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
             "logical project path normalization, physical/grouping/order keys, repository-scoped keys, settings override resolution, ref fallback, and group-label helpers in crates/r3_core/src/lib.rs",
