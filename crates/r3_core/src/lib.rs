@@ -5033,6 +5033,197 @@ pub struct VcsListRemotesResult {
     pub freshness: VcsFreshness,
 }
 
+pub const GIT_WORKSPACE_FILES_MAX_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
+pub const GIT_CHECK_IGNORE_MAX_STDIN_BYTES: usize = 256 * 1024;
+pub const GIT_CHECKPOINT_DIFF_MAX_OUTPUT_BYTES: usize = 10_000_000;
+pub const GIT_WORKSPACE_HARDENED_CONFIG_ARGS: [&str; 4] = [
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "core.untrackedCache=false",
+];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GitVcsCommandPlan {
+    pub operation: &'static str,
+    pub args: Vec<String>,
+    pub stdin: Option<String>,
+    pub allow_non_zero_exit: bool,
+    pub timeout_ms: u64,
+    pub max_output_bytes: usize,
+    pub append_truncation_marker: bool,
+}
+
+pub fn git_list_workspace_files_plan() -> GitVcsCommandPlan {
+    GitVcsCommandPlan {
+        operation: "GitVcsDriver.listWorkspaceFiles",
+        args: GIT_WORKSPACE_HARDENED_CONFIG_ARGS
+            .into_iter()
+            .chain([
+                "ls-files",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "-z",
+            ])
+            .map(|value| value.to_string())
+            .collect(),
+        stdin: None,
+        allow_non_zero_exit: true,
+        timeout_ms: 20_000,
+        max_output_bytes: GIT_WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+        append_truncation_marker: true,
+    }
+}
+
+pub fn git_list_remotes_plan() -> GitVcsCommandPlan {
+    GitVcsCommandPlan {
+        operation: "GitVcsDriver.listRemotes",
+        args: vec!["remote".to_string(), "-v".to_string()],
+        stdin: None,
+        allow_non_zero_exit: true,
+        timeout_ms: 5_000,
+        max_output_bytes: 64 * 1024,
+        append_truncation_marker: false,
+    }
+}
+
+pub fn git_filter_ignored_paths_plan(relative_paths: &[String]) -> GitVcsCommandPlan {
+    let stdin = if relative_paths.is_empty() {
+        String::new()
+    } else {
+        format!("{}\0", relative_paths.join("\0"))
+    };
+    GitVcsCommandPlan {
+        operation: "GitVcsDriver.filterIgnoredPaths",
+        args: GIT_WORKSPACE_HARDENED_CONFIG_ARGS
+            .into_iter()
+            .chain(["check-ignore", "--no-index", "-z", "--stdin"])
+            .map(|value| value.to_string())
+            .collect(),
+        stdin: Some(stdin),
+        allow_non_zero_exit: true,
+        timeout_ms: 20_000,
+        max_output_bytes: GIT_WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+        append_truncation_marker: true,
+    }
+}
+
+pub fn split_null_separated_git_paths(input: &str, truncated: bool) -> Vec<String> {
+    let mut parts = input.split('\0').map(str::to_string).collect::<Vec<_>>();
+    if truncated && parts.last().is_some_and(|part| !part.is_empty()) {
+        parts.pop();
+    }
+    parts
+        .into_iter()
+        .filter(|value| !value.is_empty())
+        .collect()
+}
+
+pub fn chunk_paths_for_git_check_ignore(relative_paths: &[String]) -> Vec<Vec<String>> {
+    let mut chunks = Vec::new();
+    let mut chunk = Vec::new();
+    let mut chunk_bytes = 0usize;
+
+    for relative_path in relative_paths {
+        let relative_path_bytes = relative_path.len() + 1;
+        if !chunk.is_empty() && chunk_bytes + relative_path_bytes > GIT_CHECK_IGNORE_MAX_STDIN_BYTES
+        {
+            chunks.push(chunk);
+            chunk = Vec::new();
+            chunk_bytes = 0;
+        }
+
+        chunk.push(relative_path.clone());
+        chunk_bytes += relative_path_bytes;
+
+        if chunk_bytes >= GIT_CHECK_IGNORE_MAX_STDIN_BYTES {
+            chunks.push(chunk);
+            chunk = Vec::new();
+            chunk_bytes = 0;
+        }
+    }
+
+    if !chunk.is_empty() {
+        chunks.push(chunk);
+    }
+
+    chunks
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct GitRemoteVerboseBuilder {
+    name: String,
+    url: Option<String>,
+    push_url: Option<String>,
+}
+
+pub fn parse_git_remote_verbose_output(output: &str) -> Vec<VcsRemote> {
+    let mut remotes = Vec::<GitRemoteVerboseBuilder>::new();
+
+    for line in output.lines() {
+        let mut parts = line.split_whitespace();
+        let Some(name) = parts.next() else {
+            continue;
+        };
+        let Some(url) = parts.next() else {
+            continue;
+        };
+        let Some(direction) = parts.next() else {
+            continue;
+        };
+        if parts.next().is_some() {
+            continue;
+        }
+        if direction != "(fetch)" && direction != "(push)" {
+            continue;
+        }
+
+        let index = remotes
+            .iter()
+            .position(|remote| remote.name == name)
+            .unwrap_or_else(|| {
+                remotes.push(GitRemoteVerboseBuilder {
+                    name: name.to_string(),
+                    ..GitRemoteVerboseBuilder::default()
+                });
+                remotes.len() - 1
+            });
+        if direction == "(fetch)" {
+            remotes[index].url = Some(url.to_string());
+        } else {
+            remotes[index].push_url = Some(url.to_string());
+        }
+    }
+
+    remotes
+        .into_iter()
+        .filter_map(|remote| {
+            let url = remote.url?;
+            Some(VcsRemote {
+                is_primary: remote.name == "origin",
+                name: remote.name,
+                url,
+                push_url: remote.push_url,
+            })
+        })
+        .collect()
+}
+
+pub fn filter_git_ignored_paths(relative_paths: &[String], ignored_stdout: &str) -> Vec<String> {
+    let ignored_paths = split_null_separated_git_paths(ignored_stdout, false)
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    if ignored_paths.is_empty() {
+        return relative_paths.to_vec();
+    }
+    relative_paths
+        .iter()
+        .filter(|relative_path| !ignored_paths.contains(*relative_path))
+        .cloned()
+        .collect()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VcsProcessErrorContext {
     pub operation: String,
@@ -15925,6 +16116,98 @@ mod tests {
             freshness,
         };
         assert!(remotes.remotes[0].is_primary);
+
+        let workspace_plan = git_list_workspace_files_plan();
+        assert_eq!(workspace_plan.operation, "GitVcsDriver.listWorkspaceFiles");
+        assert_eq!(
+            workspace_plan.args,
+            vec![
+                "-c",
+                "core.fsmonitor=false",
+                "-c",
+                "core.untrackedCache=false",
+                "ls-files",
+                "--cached",
+                "--others",
+                "--exclude-standard",
+                "-z",
+            ]
+        );
+        assert_eq!(workspace_plan.timeout_ms, 20_000);
+        assert_eq!(
+            workspace_plan.max_output_bytes,
+            GIT_WORKSPACE_FILES_MAX_OUTPUT_BYTES
+        );
+        assert!(workspace_plan.allow_non_zero_exit);
+        assert!(workspace_plan.append_truncation_marker);
+
+        assert_eq!(
+            split_null_separated_git_paths("src/main.rs\0README.md\0partial", true),
+            vec!["src/main.rs".to_string(), "README.md".to_string()]
+        );
+        assert_eq!(
+            split_null_separated_git_paths("src/main.rs\0README.md\0", true),
+            vec!["src/main.rs".to_string(), "README.md".to_string()]
+        );
+
+        let chunk_seed = vec![
+            "a".repeat(GIT_CHECK_IGNORE_MAX_STDIN_BYTES - 2),
+            "b".to_string(),
+            "ignored.log".to_string(),
+        ];
+        let chunks = chunk_paths_for_git_check_ignore(&chunk_seed);
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(
+            chunks[0],
+            vec!["a".repeat(GIT_CHECK_IGNORE_MAX_STDIN_BYTES - 2)]
+        );
+        assert_eq!(
+            git_filter_ignored_paths_plan(&chunks[1]).stdin.as_deref(),
+            Some("b\0ignored.log\0")
+        );
+        assert_eq!(
+            filter_git_ignored_paths(&chunk_seed, "ignored.log\0"),
+            vec![
+                "a".repeat(GIT_CHECK_IGNORE_MAX_STDIN_BYTES - 2),
+                "b".to_string()
+            ]
+        );
+
+        assert_eq!(
+            git_list_remotes_plan(),
+            GitVcsCommandPlan {
+                operation: "GitVcsDriver.listRemotes",
+                args: vec!["remote".to_string(), "-v".to_string()],
+                stdin: None,
+                allow_non_zero_exit: true,
+                timeout_ms: 5_000,
+                max_output_bytes: 64 * 1024,
+                append_truncation_marker: false,
+            }
+        );
+        assert_eq!(
+            parse_git_remote_verbose_output(
+                "upstream https://github.com/pingdotgg/t3code.git (push)\n\
+                 origin git@github.com:pingdotgg/t3code.git (fetch)\n\
+                 origin git@github.com:jasperdevs/r3code.git (push)\n\
+                 bad line\n\
+                 backup https://example.com/repo.git (fetch)\n"
+            ),
+            vec![
+                VcsRemote {
+                    name: "origin".to_string(),
+                    url: "git@github.com:pingdotgg/t3code.git".to_string(),
+                    push_url: Some("git@github.com:jasperdevs/r3code.git".to_string()),
+                    is_primary: true,
+                },
+                VcsRemote {
+                    name: "backup".to_string(),
+                    url: "https://example.com/repo.git".to_string(),
+                    push_url: None,
+                    is_primary: false,
+                },
+            ]
+        );
 
         let context = VcsProcessErrorContext {
             operation: "VcsProcess.run".to_string(),
