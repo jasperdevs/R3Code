@@ -8281,6 +8281,35 @@ pub fn normalize_gitlab_cli_error(
     )
 }
 
+pub fn normalize_azure_devops_cli_error(
+    operation: &str,
+    error_text: &str,
+) -> SourceControlCliErrorContract {
+    let lower = error_text.to_ascii_lowercase();
+    let detail = if lower.contains("command not found: az") || lower.contains("enoent") {
+        "Azure CLI (`az`) with the Azure DevOps extension is required but not available on PATH."
+    } else if lower.contains("az devops login")
+        || lower.contains("please run az login")
+        || lower.contains("not logged in")
+        || lower.contains("authentication failed")
+        || lower.contains("unauthorized")
+    {
+        "Azure DevOps CLI is not authenticated. Run `az devops login` and retry."
+    } else if lower.contains("pull request")
+        && (lower.contains("not found") || lower.contains("does not exist"))
+    {
+        "Pull request not found. Check the PR number or URL and try again."
+    } else {
+        error_text
+    };
+    source_control_cli_error(
+        SourceControlProviderKind::AzureDevops,
+        operation,
+        detail,
+        Some(error_text),
+    )
+}
+
 pub fn source_control_provider_detection_error(
     operation: &str,
     cwd: &str,
@@ -21670,6 +21699,24 @@ mod tests {
         assert_eq!(
             normalize_gitlab_cli_error("stdout", None).detail,
             "GitLab CLI command failed."
+        );
+        assert_eq!(
+            normalize_azure_devops_cli_error("execute", "Command not found: az").message(),
+            "Azure DevOps CLI failed in execute: Azure CLI (`az`) with the Azure DevOps extension is required but not available on PATH."
+        );
+        assert_eq!(
+            normalize_azure_devops_cli_error("execute", "please run az login").detail,
+            "Azure DevOps CLI is not authenticated. Run `az devops login` and retry."
+        );
+        assert_eq!(
+            normalize_azure_devops_cli_error("execute", "Pull request 4888 does not exist"),
+            SourceControlCliErrorContract {
+                provider: SourceControlProviderKind::AzureDevops,
+                operation: "execute".to_string(),
+                detail: "Pull request not found. Check the PR number or URL and try again."
+                    .to_string(),
+                cause: Some("Pull request 4888 does not exist".to_string()),
+            }
         );
         assert_eq!(
             source_control_provider_detection_error("detectProvider", "/repo").message(),
