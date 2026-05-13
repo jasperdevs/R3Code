@@ -6194,6 +6194,35 @@ pub struct SourceControlPublishRepositoryResult {
     pub status: SourceControlPublishStatus,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlProviderRegistrationContract {
+    pub kind: SourceControlProviderKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlProviderHandleContract {
+    pub provider_kind: SourceControlProviderKind,
+    pub context: Option<SourceControlProviderContext>,
+    pub unsupported: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceControlProviderOperation {
+    ListChangeRequests,
+    GetChangeRequest,
+    CreateChangeRequest,
+    GetRepositoryCloneUrls,
+    CreateRepository,
+    GetDefaultBranch,
+    CheckoutChangeRequest,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlProviderBoundContextDecision {
+    pub operation: SourceControlProviderOperation,
+    pub context: Option<SourceControlProviderContext>,
+}
+
 impl SourceControlProviderErrorContract {
     pub fn message(&self) -> String {
         format!(
@@ -6335,6 +6364,73 @@ pub fn source_control_provider_kind_contract_value(
         SourceControlProviderKind::Bitbucket => "bitbucket",
         SourceControlProviderKind::Unknown => "unknown",
     }
+}
+
+pub fn source_control_provider_operation_name(
+    operation: SourceControlProviderOperation,
+) -> &'static str {
+    match operation {
+        SourceControlProviderOperation::ListChangeRequests => "listChangeRequests",
+        SourceControlProviderOperation::GetChangeRequest => "getChangeRequest",
+        SourceControlProviderOperation::CreateChangeRequest => "createChangeRequest",
+        SourceControlProviderOperation::GetRepositoryCloneUrls => "getRepositoryCloneUrls",
+        SourceControlProviderOperation::CreateRepository => "createRepository",
+        SourceControlProviderOperation::GetDefaultBranch => "getDefaultBranch",
+        SourceControlProviderOperation::CheckoutChangeRequest => "checkoutChangeRequest",
+    }
+}
+
+pub fn source_control_registered_provider_handle(
+    registrations: &[SourceControlProviderRegistrationContract],
+    kind: SourceControlProviderKind,
+) -> SourceControlProviderHandleContract {
+    SourceControlProviderHandleContract {
+        provider_kind: kind,
+        context: None,
+        unsupported: !registrations
+            .iter()
+            .any(|registration| registration.kind == kind),
+    }
+}
+
+pub fn source_control_resolve_provider_handle(
+    registrations: &[SourceControlProviderRegistrationContract],
+    context: Option<SourceControlProviderContext>,
+) -> SourceControlProviderHandleContract {
+    let kind = context
+        .as_ref()
+        .map(|context| context.provider.kind)
+        .unwrap_or(SourceControlProviderKind::Unknown);
+    SourceControlProviderHandleContract {
+        provider_kind: kind,
+        context,
+        unsupported: !registrations
+            .iter()
+            .any(|registration| registration.kind == kind),
+    }
+}
+
+pub fn source_control_provider_bound_context(
+    operation: SourceControlProviderOperation,
+    input_context: Option<&SourceControlProviderContext>,
+    bound_context: Option<&SourceControlProviderContext>,
+) -> SourceControlProviderBoundContextDecision {
+    let context = if operation == SourceControlProviderOperation::CreateRepository {
+        input_context.cloned()
+    } else {
+        input_context.cloned().or_else(|| bound_context.cloned())
+    };
+    SourceControlProviderBoundContextDecision { operation, context }
+}
+
+pub fn source_control_unsupported_provider_operation_error(
+    kind: SourceControlProviderKind,
+    operation: SourceControlProviderOperation,
+) -> SourceControlProviderErrorContract {
+    unsupported_source_control_provider_error(
+        kind,
+        source_control_provider_operation_name(operation),
+    )
 }
 
 pub fn change_request_state_contract_value(state: ChangeRequestState) -> &'static str {
@@ -19962,6 +20058,138 @@ mod tests {
                 branch: "feature/remote-v1".to_string(),
                 upstream_branch: Some("origin-1/feature/remote-v1".to_string()),
                 status: SourceControlPublishStatus::Pushed,
+            }
+        );
+    }
+
+    #[test]
+    fn source_control_provider_registry_decisions_match_upstream_binding_rules() {
+        let registrations = vec![
+            SourceControlProviderRegistrationContract {
+                kind: SourceControlProviderKind::Github,
+            },
+            SourceControlProviderRegistrationContract {
+                kind: SourceControlProviderKind::Gitlab,
+            },
+            SourceControlProviderRegistrationContract {
+                kind: SourceControlProviderKind::AzureDevops,
+            },
+            SourceControlProviderRegistrationContract {
+                kind: SourceControlProviderKind::Bitbucket,
+            },
+        ];
+        assert_eq!(SOURCE_CONTROL_PROVIDER_DETECTION_CACHE_CAPACITY, 2_048);
+        assert_eq!(SOURCE_CONTROL_PROVIDER_DETECTION_CACHE_TTL_MS, 5_000);
+        assert_eq!(
+            source_control_registered_provider_handle(
+                &registrations,
+                SourceControlProviderKind::Github
+            ),
+            SourceControlProviderHandleContract {
+                provider_kind: SourceControlProviderKind::Github,
+                context: None,
+                unsupported: false,
+            }
+        );
+        assert_eq!(
+            source_control_registered_provider_handle(
+                &registrations,
+                SourceControlProviderKind::Unknown
+            ),
+            SourceControlProviderHandleContract {
+                provider_kind: SourceControlProviderKind::Unknown,
+                context: None,
+                unsupported: true,
+            }
+        );
+
+        let context = select_source_control_provider_context(&[VcsRemote {
+            name: "origin".to_string(),
+            url: "git@github.com:pingdotgg/t3code.git".to_string(),
+            push_url: None,
+            is_primary: true,
+        }])
+        .unwrap();
+        assert_eq!(
+            source_control_resolve_provider_handle(&registrations, Some(context.clone())),
+            SourceControlProviderHandleContract {
+                provider_kind: SourceControlProviderKind::Github,
+                context: Some(context.clone()),
+                unsupported: false,
+            }
+        );
+        assert_eq!(
+            source_control_resolve_provider_handle(&registrations, None),
+            SourceControlProviderHandleContract {
+                provider_kind: SourceControlProviderKind::Unknown,
+                context: None,
+                unsupported: true,
+            }
+        );
+        assert_eq!(
+            source_control_unsupported_provider_operation_error(
+                SourceControlProviderKind::Unknown,
+                SourceControlProviderOperation::GetDefaultBranch
+            )
+            .message(),
+            "Source control provider unknown failed in getDefaultBranch: No unknown source control provider is registered."
+        );
+        assert_eq!(
+            source_control_provider_detection_error("detectProvider", "/repo").message(),
+            "Source control provider unknown failed in detectProvider: Failed to detect source control provider for /repo."
+        );
+
+        let explicit_context = SourceControlProviderContext {
+            provider: SourceControlProviderInfo {
+                kind: SourceControlProviderKind::Gitlab,
+                name: "GitLab".to_string(),
+                base_url: "https://gitlab.com".to_string(),
+            },
+            remote_name: "upstream".to_string(),
+            remote_url: "git@gitlab.com:group/project.git".to_string(),
+        };
+        assert_eq!(
+            source_control_provider_bound_context(
+                SourceControlProviderOperation::ListChangeRequests,
+                None,
+                Some(&context),
+            ),
+            SourceControlProviderBoundContextDecision {
+                operation: SourceControlProviderOperation::ListChangeRequests,
+                context: Some(context.clone()),
+            }
+        );
+        assert_eq!(
+            source_control_provider_bound_context(
+                SourceControlProviderOperation::CheckoutChangeRequest,
+                Some(&explicit_context),
+                Some(&context),
+            ),
+            SourceControlProviderBoundContextDecision {
+                operation: SourceControlProviderOperation::CheckoutChangeRequest,
+                context: Some(explicit_context.clone()),
+            }
+        );
+        assert_eq!(
+            source_control_provider_bound_context(
+                SourceControlProviderOperation::CreateRepository,
+                None,
+                Some(&context),
+            ),
+            SourceControlProviderBoundContextDecision {
+                operation: SourceControlProviderOperation::CreateRepository,
+                context: None,
+            }
+        );
+        assert_eq!(
+            source_control_provider_bound_context(
+                SourceControlProviderOperation::CreateRepository,
+                Some(&explicit_context),
+                Some(&context),
+            ),
+            SourceControlProviderBoundContextDecision {
+                operation: SourceControlProviderOperation::CreateRepository,
+                context: Some(explicit_context),
             }
         );
     }
