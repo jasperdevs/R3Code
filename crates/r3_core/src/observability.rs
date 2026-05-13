@@ -252,6 +252,62 @@ pub struct BrowserTraceCollectorRecordPlan {
     pub sink_operation: &'static str,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientTracingResource {
+    pub service_name: String,
+    pub attributes: BTreeMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientTracingConfigPlan {
+    pub otlp_traces_url: String,
+    pub export_interval_ms: u64,
+    pub export_interval: String,
+    pub config_key: String,
+    pub resource: ClientTracingResource,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ClientTracingRuntimeState {
+    pub active_config_key: Option<String>,
+    pub active_delegate_present: bool,
+    pub active_runtime_present: bool,
+    pub active_scope_present: bool,
+    pub configuration_generation: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClientTracingConfigureDecision {
+    ReturnPendingConfiguration,
+    ReuseActiveDelegate,
+    Reconfigure {
+        next_generation: u64,
+        plan: ClientTracingConfigPlan,
+        clear_active_state: bool,
+        dispose_previous_runtime: bool,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClientTracingSuccessDecision {
+    InstallDelegate,
+    DisposeStaleRuntime,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ClientTracingFailureDecision {
+    IgnoreStaleFailure,
+    Warn {
+        message: String,
+        otlp_traces_url: String,
+    },
+}
+
+pub const CLIENT_TRACING_DEFAULT_EXPORT_INTERVAL_MS: u64 = 1_000;
+pub const CLIENT_TRACING_MIN_EXPORT_INTERVAL_MS: u64 = 10;
+pub const CLIENT_TRACING_OTLP_TRACES_PATH: &str = "/api/observability/v1/traces";
+pub const CLIENT_TRACING_SERVICE_NAME: &str = "t3-web";
+
 pub const RPC_REQUESTS_TOTAL: MetricSpec = MetricSpec {
     name: "t3_rpc_requests_total",
     description: "Total RPC requests handled by the websocket RPC server.",
@@ -815,6 +871,121 @@ fn otlp_export_plan(
     }
 }
 
+pub fn client_tracing_resource(is_electron: bool, app_version: &str) -> ClientTracingResource {
+    ClientTracingResource {
+        service_name: CLIENT_TRACING_SERVICE_NAME.to_string(),
+        attributes: BTreeMap::from([
+            (
+                "service.runtime".to_string(),
+                CLIENT_TRACING_SERVICE_NAME.to_string(),
+            ),
+            (
+                "service.mode".to_string(),
+                if is_electron { "electron" } else { "browser" }.to_string(),
+            ),
+            ("service.version".to_string(), app_version.to_string()),
+        ]),
+    }
+}
+
+pub fn client_tracing_config_plan(
+    otlp_traces_url: &str,
+    export_interval_ms: Option<u64>,
+    is_electron: bool,
+    app_version: &str,
+) -> ClientTracingConfigPlan {
+    let export_interval_ms = export_interval_ms
+        .unwrap_or(CLIENT_TRACING_DEFAULT_EXPORT_INTERVAL_MS)
+        .max(CLIENT_TRACING_MIN_EXPORT_INTERVAL_MS);
+    ClientTracingConfigPlan {
+        otlp_traces_url: otlp_traces_url.to_string(),
+        export_interval_ms,
+        export_interval: format!("{export_interval_ms} millis"),
+        config_key: format!("{otlp_traces_url}|{export_interval_ms}"),
+        resource: client_tracing_resource(is_electron, app_version),
+    }
+}
+
+pub fn decide_client_tracing_configuration(
+    state: &ClientTracingRuntimeState,
+    otlp_traces_url: &str,
+    export_interval_ms: Option<u64>,
+    is_electron: bool,
+    app_version: &str,
+) -> ClientTracingConfigureDecision {
+    if export_interval_ms.is_none() && state.active_config_key.is_some() {
+        return ClientTracingConfigureDecision::ReturnPendingConfiguration;
+    }
+
+    let plan = client_tracing_config_plan(
+        otlp_traces_url,
+        export_interval_ms,
+        is_electron,
+        app_version,
+    );
+
+    if state.active_config_key.as_deref() == Some(plan.config_key.as_str())
+        && state.active_delegate_present
+    {
+        return ClientTracingConfigureDecision::ReuseActiveDelegate;
+    }
+
+    ClientTracingConfigureDecision::Reconfigure {
+        next_generation: state.configuration_generation + 1,
+        plan,
+        clear_active_state: true,
+        dispose_previous_runtime: state.active_runtime_present && state.active_scope_present,
+    }
+}
+
+pub fn client_tracing_success_decision(
+    started_generation: u64,
+    current_generation: u64,
+) -> ClientTracingSuccessDecision {
+    if started_generation == current_generation {
+        ClientTracingSuccessDecision::InstallDelegate
+    } else {
+        ClientTracingSuccessDecision::DisposeStaleRuntime
+    }
+}
+
+pub fn client_tracing_failure_decision(
+    started_generation: u64,
+    current_generation: u64,
+    otlp_traces_url: &str,
+    error_message: Option<&str>,
+    fallback: &str,
+) -> ClientTracingFailureDecision {
+    if started_generation != current_generation {
+        return ClientTracingFailureDecision::IgnoreStaleFailure;
+    }
+
+    ClientTracingFailureDecision::Warn {
+        message: format_client_tracing_error(error_message, fallback),
+        otlp_traces_url: otlp_traces_url.to_string(),
+    }
+}
+
+pub fn format_client_tracing_error(error_message: Option<&str>, fallback: &str) -> String {
+    if let Some(message) = error_message {
+        if !message.trim().is_empty() {
+            return message.to_string();
+        }
+    }
+
+    fallback.to_string()
+}
+
+pub fn reset_client_tracing_state(state: &ClientTracingRuntimeState) -> ClientTracingRuntimeState {
+    ClientTracingRuntimeState {
+        active_config_key: None,
+        active_delegate_present: false,
+        active_runtime_present: false,
+        active_scope_present: false,
+        configuration_generation: state.configuration_generation + 1,
+    }
+}
+
 pub fn observability_layer_plan(input: &ObservabilityLayerInput) -> ObservabilityLayerPlan {
     let resource_attributes = BTreeMap::from([
         ("service.mode".to_string(), input.mode.clone()),
@@ -1316,6 +1487,157 @@ mod tests {
             Some("http://localhost:4318/v1/metrics")
         );
         assert_eq!(metrics_plan.otlp_tracer, None);
+    }
+
+    #[test]
+    fn ports_client_tracing_configuration_contracts() {
+        assert_eq!(
+            CLIENT_TRACING_OTLP_TRACES_PATH,
+            "/api/observability/v1/traces"
+        );
+        assert_eq!(CLIENT_TRACING_DEFAULT_EXPORT_INTERVAL_MS, 1_000);
+        assert_eq!(CLIENT_TRACING_MIN_EXPORT_INTERVAL_MS, 10);
+
+        let browser_plan = client_tracing_config_plan(
+            "http://localhost:3000/api/observability/v1/traces",
+            None,
+            false,
+            "1.2.3",
+        );
+        assert_eq!(browser_plan.export_interval_ms, 1_000);
+        assert_eq!(browser_plan.export_interval, "1000 millis");
+        assert_eq!(
+            browser_plan.config_key,
+            "http://localhost:3000/api/observability/v1/traces|1000"
+        );
+        assert_eq!(browser_plan.resource.service_name, "t3-web");
+        assert_eq!(
+            browser_plan.resource.attributes,
+            BTreeMap::from([
+                ("service.runtime".to_string(), "t3-web".to_string()),
+                ("service.mode".to_string(), "browser".to_string()),
+                ("service.version".to_string(), "1.2.3".to_string()),
+            ])
+        );
+
+        let electron_plan = client_tracing_config_plan(
+            "https://example.test/api/observability/v1/traces",
+            Some(1),
+            true,
+            "2.0.0",
+        );
+        assert_eq!(electron_plan.export_interval_ms, 10);
+        assert_eq!(electron_plan.export_interval, "10 millis");
+        assert_eq!(
+            electron_plan.config_key,
+            "https://example.test/api/observability/v1/traces|10"
+        );
+        assert_eq!(
+            electron_plan.resource.attributes["service.mode"],
+            "electron"
+        );
+
+        let configured_state = ClientTracingRuntimeState {
+            active_config_key: Some(browser_plan.config_key.clone()),
+            active_delegate_present: false,
+            active_runtime_present: true,
+            active_scope_present: true,
+            configuration_generation: 7,
+        };
+        assert_eq!(
+            decide_client_tracing_configuration(
+                &configured_state,
+                &browser_plan.otlp_traces_url,
+                None,
+                false,
+                "1.2.3",
+            ),
+            ClientTracingConfigureDecision::ReturnPendingConfiguration
+        );
+
+        let mut reusable_state = configured_state.clone();
+        reusable_state.active_delegate_present = true;
+        assert_eq!(
+            decide_client_tracing_configuration(
+                &reusable_state,
+                &browser_plan.otlp_traces_url,
+                Some(1_000),
+                false,
+                "1.2.3",
+            ),
+            ClientTracingConfigureDecision::ReuseActiveDelegate
+        );
+
+        assert_eq!(
+            decide_client_tracing_configuration(
+                &configured_state,
+                &browser_plan.otlp_traces_url,
+                Some(1_000),
+                false,
+                "1.2.3",
+            ),
+            ClientTracingConfigureDecision::Reconfigure {
+                next_generation: 8,
+                plan: browser_plan.clone(),
+                clear_active_state: true,
+                dispose_previous_runtime: true,
+            }
+        );
+
+        assert_eq!(
+            client_tracing_success_decision(8, 8),
+            ClientTracingSuccessDecision::InstallDelegate
+        );
+        assert_eq!(
+            client_tracing_success_decision(8, 9),
+            ClientTracingSuccessDecision::DisposeStaleRuntime
+        );
+        assert_eq!(
+            client_tracing_failure_decision(
+                8,
+                8,
+                &browser_plan.otlp_traces_url,
+                Some("network failed"),
+                "fallback",
+            ),
+            ClientTracingFailureDecision::Warn {
+                message: "network failed".to_string(),
+                otlp_traces_url: browser_plan.otlp_traces_url.clone(),
+            }
+        );
+        assert_eq!(
+            client_tracing_failure_decision(
+                8,
+                8,
+                &browser_plan.otlp_traces_url,
+                Some("   "),
+                "fallback debug",
+            ),
+            ClientTracingFailureDecision::Warn {
+                message: "fallback debug".to_string(),
+                otlp_traces_url: browser_plan.otlp_traces_url.clone(),
+            }
+        );
+        assert_eq!(
+            client_tracing_failure_decision(
+                8,
+                9,
+                &browser_plan.otlp_traces_url,
+                Some("network failed"),
+                "fallback",
+            ),
+            ClientTracingFailureDecision::IgnoreStaleFailure
+        );
+        assert_eq!(
+            reset_client_tracing_state(&configured_state),
+            ClientTracingRuntimeState {
+                active_config_key: None,
+                active_delegate_present: false,
+                active_runtime_present: false,
+                active_scope_present: false,
+                configuration_generation: 8,
+            }
+        );
     }
 
     #[test]

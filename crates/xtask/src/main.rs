@@ -1760,6 +1760,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core web_env_electron_detection_matches_upstream_bridge_contract`",
             "Wire helper into live GPUI/web runtime initialization wherever desktop/browser behavior branches.",
         )
+    } else if path == "apps/web/src/observability/clientTracing.ts" {
+        (
+            "client tracing OTLP path, default/min export interval, resource attributes, config key, active-delegate reuse, stale-generation disposal, warning formatting, and reset-state contracts in crates/r3_core/src/observability.rs",
+            "partial",
+            "`cargo test -p r3_core ports_client_tracing_configuration_contracts`",
+            "Wire the plan into live GPUI tracing runtime setup with HTTP URL resolution, exporter delegate lifecycle, async serialization layer, and authenticated bootstrap.",
+        )
     } else if path == "apps/web/src/markdown-links.ts"
         || path == "apps/web/src/markdown-links.test.ts"
     {
