@@ -6242,6 +6242,13 @@ pub struct SourceControlSetBranchUpstreamPlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlPushCurrentBranchPlan {
+    pub cwd: String,
+    pub fallback_branch: Option<String>,
+    pub remote_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceControlSwitchRefPlan {
     pub cwd: String,
     pub ref_name: String,
@@ -6891,6 +6898,30 @@ pub fn source_control_publish_head_check_plan(cwd: &str) -> SourceControlGitComm
         args: strings(&["rev-parse", "--verify", "HEAD"]),
         timeout_ms: None,
         max_output_bytes: None,
+    }
+}
+
+pub fn source_control_publish_ensure_remote_plan(
+    cwd: &str,
+    remote_name: Option<&str>,
+    remote_url: &str,
+) -> SourceControlEnsureRemotePlan {
+    SourceControlEnsureRemotePlan {
+        cwd: cwd.to_string(),
+        preferred_name: trimmed_optional_string(remote_name)
+            .unwrap_or_else(|| "origin".to_string()),
+        url: remote_url.trim().to_string(),
+    }
+}
+
+pub fn source_control_publish_push_current_branch_plan(
+    cwd: &str,
+    remote_name: &str,
+) -> SourceControlPushCurrentBranchPlan {
+    SourceControlPushCurrentBranchPlan {
+        cwd: cwd.to_string(),
+        fallback_branch: None,
+        remote_name: remote_name.to_string(),
     }
 }
 
@@ -20986,6 +21017,35 @@ mod tests {
                 ],
                 timeout_ms: None,
                 max_output_bytes: None,
+            }
+        );
+        assert_eq!(
+            source_control_publish_ensure_remote_plan(
+                "/workspace",
+                Some("  upstream  "),
+                "  git@github.com:octocat/t3code.git  ",
+            ),
+            SourceControlEnsureRemotePlan {
+                cwd: "/workspace".to_string(),
+                preferred_name: "upstream".to_string(),
+                url: "git@github.com:octocat/t3code.git".to_string(),
+            }
+        );
+        assert_eq!(
+            source_control_publish_ensure_remote_plan(
+                "/workspace",
+                Some("   "),
+                "git@github.com:octocat/t3code.git",
+            )
+            .preferred_name,
+            "origin"
+        );
+        assert_eq!(
+            source_control_publish_push_current_branch_plan("/workspace", "origin-1"),
+            SourceControlPushCurrentBranchPlan {
+                cwd: "/workspace".to_string(),
+                fallback_branch: None,
+                remote_name: "origin-1".to_string(),
             }
         );
         assert_eq!(
