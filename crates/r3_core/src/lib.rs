@@ -378,6 +378,7 @@ pub enum DraftThreadEnvMode {
 
 pub const INLINE_TERMINAL_CONTEXT_PLACEHOLDER: char = '\u{FFFC}';
 pub const RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY: &str = "(max-width: 980px)";
+pub const WINDOW_CONTROLS_OVERLAY_CLASS_NAME: &str = "wco";
 pub const RIGHT_PANEL_SHEET_CLASS_NAME: &str = "w-[min(42vw,28rem)] min-w-80 max-w-[28rem] p-0 max-[760px]:w-[min(88vw,24rem)] max-[760px]:min-w-0 wco:mt-[env(titlebar-area-height)] wco:h-[calc(100%-env(titlebar-area-height))] wco:max-h-[calc(100%-env(titlebar-area-height))]";
 pub const TERMINAL_HELPER_TEXTAREA_CLASS: &str = "xterm-helper-textarea";
 pub const THREAD_TERMINAL_DRAWER_XTERM_SELECTOR: &str = ".thread-terminal-drawer .xterm";
@@ -17318,6 +17319,26 @@ pub fn is_terminal_focused_from_active_element(
     has_helper_textarea_class || has_thread_terminal_drawer_xterm_ancestor
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WindowControlsOverlayClassSync {
+    pub should_update_document_class: bool,
+    pub class_name: &'static str,
+    pub class_present: bool,
+    pub listens_for_geometry_changes: bool,
+}
+
+pub fn sync_window_controls_overlay_class_plan(
+    document_available: bool,
+    overlay_visible: Option<bool>,
+) -> WindowControlsOverlayClassSync {
+    WindowControlsOverlayClassSync {
+        should_update_document_class: document_available,
+        class_name: WINDOW_CONTROLS_OVERLAY_CLASS_NAME,
+        class_present: document_available && overlay_visible.unwrap_or(false),
+        listens_for_geometry_changes: document_available && overlay_visible.is_some(),
+    }
+}
+
 pub fn select_terminal_event_entries_after_snapshot(
     entries: &[TerminalEventEntry],
     snapshot_updated_at: &str,
@@ -29191,6 +29212,7 @@ mod tests {
     #[test]
     fn right_panel_and_terminal_focus_helpers_match_upstream_constants() {
         assert_eq!(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY, "(max-width: 980px)");
+        assert_eq!(WINDOW_CONTROLS_OVERLAY_CLASS_NAME, "wco");
         assert_eq!(
             RIGHT_PANEL_SHEET_CLASS_NAME,
             "w-[min(42vw,28rem)] min-w-80 max-w-[28rem] p-0 max-[760px]:w-[min(88vw,24rem)] max-[760px]:min-w-0 wco:mt-[env(titlebar-area-height)] wco:h-[calc(100%-env(titlebar-area-height))] wco:max-h-[calc(100%-env(titlebar-area-height))]"
@@ -29216,6 +29238,43 @@ mod tests {
         assert!(!is_terminal_focused_from_active_element(
             true, true, false, false
         ));
+
+        assert_eq!(
+            sync_window_controls_overlay_class_plan(false, Some(true)),
+            WindowControlsOverlayClassSync {
+                should_update_document_class: false,
+                class_name: "wco",
+                class_present: false,
+                listens_for_geometry_changes: false,
+            }
+        );
+        assert_eq!(
+            sync_window_controls_overlay_class_plan(true, None),
+            WindowControlsOverlayClassSync {
+                should_update_document_class: true,
+                class_name: "wco",
+                class_present: false,
+                listens_for_geometry_changes: false,
+            }
+        );
+        assert_eq!(
+            sync_window_controls_overlay_class_plan(true, Some(false)),
+            WindowControlsOverlayClassSync {
+                should_update_document_class: true,
+                class_name: "wco",
+                class_present: false,
+                listens_for_geometry_changes: true,
+            }
+        );
+        assert_eq!(
+            sync_window_controls_overlay_class_plan(true, Some(true)),
+            WindowControlsOverlayClassSync {
+                should_update_document_class: true,
+                class_name: "wco",
+                class_present: true,
+                listens_for_geometry_changes: true,
+            }
+        );
     }
 
     #[test]

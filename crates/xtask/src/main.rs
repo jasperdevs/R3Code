@@ -1886,6 +1886,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core lru_cache_matches_upstream_entry_and_memory_eviction`",
             "Wire cache into live GPUI markdown/highlighter surfaces where upstream uses lruCache.ts.",
         )
+    } else if path == "apps/web/src/lib/windowControlsOverlay.ts" {
+        (
+            "window controls overlay `wco` class sync and geometrychange listener decisions in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core right_panel_and_terminal_focus_helpers`",
+            "Wire live GPUI/Electron titlebar overlay state into shell root class handling.",
+        )
     } else if path == "apps/web/src/components/chat/modelPickerModelHighlights.ts" {
         (
             "model picker new-model highlight key lookup in crates/r3_core/src/lib.rs",
