@@ -4289,6 +4289,23 @@ pub struct CommitOnBlurEffect {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CopyToClipboardState {
+    pub is_copied: bool,
+    pub timeout_ms: u64,
+    pub timeout_active: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CopyToClipboardOutcome {
+    pub attempted_write: bool,
+    pub copied_callback: bool,
+    pub error_callback: Option<String>,
+    pub should_log_error: bool,
+    pub cleared_existing_timeout: bool,
+    pub scheduled_reset_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelPickerState {
     pub active_entry: Option<ProviderInstanceEntry>,
     pub trigger_title: String,
@@ -8031,6 +8048,83 @@ impl CommitOnBlurState {
             prevent_default: key == "Enter",
             blur_target: key == "Enter",
         }
+    }
+}
+
+impl CopyToClipboardState {
+    pub fn new(timeout_ms: Option<u64>) -> Self {
+        Self {
+            is_copied: false,
+            timeout_ms: timeout_ms.unwrap_or(2_000),
+            timeout_active: false,
+        }
+    }
+
+    pub fn copy_to_clipboard(
+        &mut self,
+        value: &str,
+        has_window: bool,
+        has_clipboard_write_text: bool,
+        write_succeeds: bool,
+        has_error_callback: bool,
+    ) -> CopyToClipboardOutcome {
+        if !has_window || !has_clipboard_write_text {
+            return CopyToClipboardOutcome {
+                attempted_write: false,
+                copied_callback: false,
+                error_callback: Some("Clipboard API unavailable.".to_string()),
+                should_log_error: false,
+                cleared_existing_timeout: false,
+                scheduled_reset_ms: None,
+            };
+        }
+
+        if value.is_empty() {
+            return CopyToClipboardOutcome {
+                attempted_write: false,
+                copied_callback: false,
+                error_callback: None,
+                should_log_error: false,
+                cleared_existing_timeout: false,
+                scheduled_reset_ms: None,
+            };
+        }
+
+        if !write_succeeds {
+            return CopyToClipboardOutcome {
+                attempted_write: true,
+                copied_callback: false,
+                error_callback: has_error_callback.then(|| "Clipboard write failed.".to_string()),
+                should_log_error: !has_error_callback,
+                cleared_existing_timeout: false,
+                scheduled_reset_ms: None,
+            };
+        }
+
+        let cleared_existing_timeout = self.timeout_active;
+        self.is_copied = true;
+        self.timeout_active = self.timeout_ms != 0;
+        CopyToClipboardOutcome {
+            attempted_write: true,
+            copied_callback: true,
+            error_callback: None,
+            should_log_error: false,
+            cleared_existing_timeout,
+            scheduled_reset_ms: (self.timeout_ms != 0).then_some(self.timeout_ms),
+        }
+    }
+
+    pub fn timeout_elapsed(&mut self) {
+        if self.timeout_active {
+            self.is_copied = false;
+            self.timeout_active = false;
+        }
+    }
+
+    pub fn cleanup(&mut self) -> bool {
+        let cleared = self.timeout_active;
+        self.timeout_active = false;
+        cleared
     }
 }
 
@@ -32122,6 +32216,80 @@ mod tests {
                 committed_value: None,
                 prevent_default: false,
                 blur_target: false,
+            }
+        );
+    }
+
+    #[test]
+    fn copy_to_clipboard_helpers_match_upstream_contract() {
+        let mut state = CopyToClipboardState::new(None);
+        assert_eq!(state.timeout_ms, 2_000);
+        assert_eq!(
+            state.copy_to_clipboard("hello", false, true, true, true),
+            CopyToClipboardOutcome {
+                attempted_write: false,
+                copied_callback: false,
+                error_callback: Some("Clipboard API unavailable.".to_string()),
+                should_log_error: false,
+                cleared_existing_timeout: false,
+                scheduled_reset_ms: None,
+            }
+        );
+        assert!(!state.is_copied);
+        assert_eq!(
+            state.copy_to_clipboard("", true, true, true, true),
+            CopyToClipboardOutcome {
+                attempted_write: false,
+                copied_callback: false,
+                error_callback: None,
+                should_log_error: false,
+                cleared_existing_timeout: false,
+                scheduled_reset_ms: None,
+            }
+        );
+
+        assert_eq!(
+            state.copy_to_clipboard("hello", true, true, true, true),
+            CopyToClipboardOutcome {
+                attempted_write: true,
+                copied_callback: true,
+                error_callback: None,
+                should_log_error: false,
+                cleared_existing_timeout: false,
+                scheduled_reset_ms: Some(2_000),
+            }
+        );
+        assert!(state.is_copied);
+        assert!(state.timeout_active);
+        assert_eq!(
+            state
+                .copy_to_clipboard("again", true, true, true, true)
+                .cleared_existing_timeout,
+            true
+        );
+        state.timeout_elapsed();
+        assert!(!state.is_copied);
+        assert!(!state.timeout_active);
+
+        let mut no_reset = CopyToClipboardState::new(Some(0));
+        assert_eq!(
+            no_reset
+                .copy_to_clipboard("sticky", true, true, true, true)
+                .scheduled_reset_ms,
+            None
+        );
+        assert!(no_reset.is_copied);
+        assert!(!no_reset.timeout_active);
+
+        assert_eq!(
+            no_reset.copy_to_clipboard("fail", true, true, false, false),
+            CopyToClipboardOutcome {
+                attempted_write: true,
+                copied_callback: false,
+                error_callback: None,
+                should_log_error: true,
+                cleared_existing_timeout: false,
+                scheduled_reset_ms: None,
             }
         );
     }

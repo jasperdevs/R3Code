@@ -1704,6 +1704,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core commit_on_blur_helpers_match_upstream_contract`",
             "Wire state helper into live GPUI settings inputs and exact focus/keyboard event handling.",
         )
+    } else if path == "apps/web/src/hooks/useCopyToClipboard.ts" {
+        (
+            "copy-to-clipboard state helper for default/custom timeout, unavailable Clipboard API errors, empty-value no-op, successful write copied state, prior timeout clearing, optional reset scheduling, write-error callback/logging, timeout reset, and cleanup in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core copy_to_clipboard_helpers_match_upstream_contract`",
+            "Wire helper into live GPUI clipboard actions and real async clipboard/write timer behavior.",
+        )
     } else if path == "apps/web/src/markdown-links.ts"
         || path == "apps/web/src/markdown-links.test.ts"
     {
