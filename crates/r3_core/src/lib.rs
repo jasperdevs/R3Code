@@ -13564,6 +13564,99 @@ pub struct RemotePairingFields {
     pub pairing_code: String,
 }
 
+pub const DEFAULT_HOSTED_APP_URL: &str = "https://app.t3.codes";
+pub const HOSTED_CHANNEL_SELECTION_PATH: &str = "/__t3code/channel";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HostedPairingRequest {
+    pub host: String,
+    pub token: String,
+    pub label: String,
+}
+
+pub fn configured_hosted_app_url(configured: Option<&str>) -> String {
+    configured
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or(DEFAULT_HOSTED_APP_URL)
+        .to_string()
+}
+
+pub fn origin_from_url(value: &str) -> Option<String> {
+    ParsedPairingUrl::parse(value).map(|parsed| parsed.origin)
+}
+
+pub fn is_hosted_static_app(
+    current_url: &str,
+    hosted_app_url: Option<&str>,
+    configured_http_url: Option<&str>,
+    configured_ws_url: Option<&str>,
+    configured_channel: Option<&str>,
+) -> bool {
+    let has_backend_url = configured_http_url
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+        || configured_ws_url
+            .map(str::trim)
+            .is_some_and(|value| !value.is_empty());
+    if has_backend_url {
+        return false;
+    }
+
+    if normalize_hosted_app_channel(configured_channel).is_some() {
+        return true;
+    }
+
+    let hosted_origin = origin_from_url(&configured_hosted_app_url(hosted_app_url));
+    let current_origin = origin_from_url(current_url);
+    hosted_origin.is_some() && hosted_origin == current_origin
+}
+
+pub fn read_hosted_pairing_request(input: &str) -> Option<HostedPairingRequest> {
+    let parsed = ParsedPairingUrl::parse(input.trim())?;
+    let host = parsed.query_param("host")?.trim().to_string();
+    let token = parsed.pairing_token()?.trim().to_string();
+    let label = parsed
+        .query_param("label")
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    if host.is_empty() || token.is_empty() {
+        return None;
+    }
+    Some(HostedPairingRequest { host, token, label })
+}
+
+pub fn has_hosted_pairing_request(input: &str) -> bool {
+    read_hosted_pairing_request(input).is_some()
+}
+
+pub fn build_hosted_pairing_url(
+    hosted_app_url: Option<&str>,
+    host: &str,
+    token: &str,
+    label: Option<&str>,
+) -> Option<String> {
+    let hosted_origin = origin_from_url(&configured_hosted_app_url(hosted_app_url))?;
+    let mut query = format!("host={}", form_url_encode_component(host));
+    if let Some(label) = label.map(str::trim).filter(|label| !label.is_empty()) {
+        query.push_str("&label=");
+        query.push_str(&form_url_encode_component(label));
+    }
+    set_pairing_token_on_url(&format!("{hosted_origin}/pair?{query}"), token)
+}
+
+pub fn build_hosted_channel_selection_url(
+    hosted_app_url: Option<&str>,
+    channel: HostedAppChannel,
+) -> Option<String> {
+    let hosted_origin = origin_from_url(&configured_hosted_app_url(hosted_app_url))?;
+    Some(format!(
+        "{hosted_origin}{HOSTED_CHANNEL_SELECTION_PATH}?channel={}",
+        channel.as_str()
+    ))
+}
+
 pub fn parse_pairing_url_fields(input: &str) -> Option<RemotePairingFields> {
     let parsed = ParsedPairingUrl::parse(input.trim())?;
     let token = parsed.pairing_token()?;
@@ -14334,15 +14427,19 @@ pub fn resolve_desktop_pairing_url(endpoint_url: &str, credential: &str) -> Opti
 }
 
 pub fn resolve_hosted_pairing_url(endpoint_url: &str, credential: &str) -> Option<String> {
+    resolve_hosted_pairing_url_with_hosted_app_url(endpoint_url, credential, None)
+}
+
+pub fn resolve_hosted_pairing_url_with_hosted_app_url(
+    endpoint_url: &str,
+    credential: &str,
+    configured_hosted_app_url: Option<&str>,
+) -> Option<String> {
     let parsed = ParsedPairingUrl::parse(endpoint_url)?;
     if parsed.scheme != "https" {
         return None;
     }
-    Some(format!(
-        "https://app.t3.codes/pair?host={}#token={}",
-        form_url_encode_component(endpoint_url),
-        form_url_encode_component(credential)
-    ))
+    build_hosted_pairing_url(configured_hosted_app_url, endpoint_url, credential, None)
 }
 
 pub fn resolve_advertised_endpoint_pairing_url(
@@ -19847,6 +19944,75 @@ mod tests {
     }
 
     #[test]
+    fn hosted_pairing_helpers_match_upstream_url_logic() {
+        assert_eq!(
+            configured_hosted_app_url(Some(" https://preview.t3.codes/app ")),
+            "https://preview.t3.codes/app"
+        );
+        assert_eq!(
+            configured_hosted_app_url(Some("   ")),
+            DEFAULT_HOSTED_APP_URL
+        );
+        assert_eq!(
+            origin_from_url("https://preview.t3.codes/app/path?x=1#hash").as_deref(),
+            Some("https://preview.t3.codes")
+        );
+        assert!(is_hosted_static_app(
+            "https://preview.t3.codes/pair",
+            Some("https://preview.t3.codes"),
+            None,
+            None,
+            None
+        ));
+        assert!(!is_hosted_static_app(
+            "https://preview.t3.codes/pair",
+            Some("https://preview.t3.codes"),
+            Some("https://backend.example.com"),
+            None,
+            Some("nightly")
+        ));
+        assert!(is_hosted_static_app(
+            "https://elsewhere.example.com",
+            Some("https://preview.t3.codes"),
+            None,
+            None,
+            Some("nightly")
+        ));
+
+        let hosted_url = build_hosted_pairing_url(
+            Some("https://preview.t3.codes/app"),
+            "https://host.tailnet.example.ts.net:3773",
+            "PAIR CODE",
+            Some(" Tailnet Desktop "),
+        )
+        .unwrap();
+        assert_eq!(
+            hosted_url,
+            "https://preview.t3.codes/pair?host=https%3A%2F%2Fhost.tailnet.example.ts.net%3A3773&label=Tailnet+Desktop#token=PAIR+CODE"
+        );
+        assert_eq!(
+            read_hosted_pairing_request(&hosted_url),
+            Some(HostedPairingRequest {
+                host: "https://host.tailnet.example.ts.net:3773".to_string(),
+                token: "PAIR CODE".to_string(),
+                label: "Tailnet Desktop".to_string(),
+            })
+        );
+        assert!(has_hosted_pairing_request(&hosted_url));
+        assert!(!has_hosted_pairing_request(
+            "https://preview.t3.codes/pair?host=https%3A%2F%2Fhost"
+        ));
+        assert_eq!(
+            build_hosted_channel_selection_url(
+                Some("https://preview.t3.codes/app"),
+                HostedAppChannel::Nightly
+            )
+            .as_deref(),
+            Some("https://preview.t3.codes/__t3code/channel?channel=nightly")
+        );
+    }
+
+    #[test]
     fn formats_desktop_ssh_connection_errors_like_upstream() {
         assert_eq!(
             format_desktop_ssh_connection_error(Some(
@@ -19931,6 +20097,17 @@ mod tests {
         assert_eq!(
             resolve_advertised_endpoint_pairing_url(&tailscale_https, "PAIRCODE").unwrap(),
             "https://app.t3.codes/pair?host=https%3A%2F%2Fdesktop.tailnet.ts.net%3A8765#token=PAIRCODE"
+        );
+        assert_eq!(
+            resolve_hosted_pairing_url_with_hosted_app_url(
+                "https://host.tailnet.example.ts.net:3773",
+                "PAIRCODE",
+                Some("https://preview.t3.codes")
+            )
+            .as_deref(),
+            Some(
+                "https://preview.t3.codes/pair?host=https%3A%2F%2Fhost.tailnet.example.ts.net%3A3773#token=PAIRCODE"
+            )
         );
     }
 

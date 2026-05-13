@@ -1835,6 +1835,31 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core terminal_activity_and_event_filters`",
             "Wire event projection into live GPUI terminal activity updates.",
         )
+    } else if path == "apps/web/src/hostedPairing.ts"
+        || path == "apps/web/src/hostedPairing.test.ts"
+    {
+        (
+            "hosted static app detection, hosted pairing request parsing, hosted pairing URL construction, and channel selection URL helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core hosted_pairing_helpers`",
+            "Wire helpers into live GPUI hosted pairing bootstrap.",
+        )
+    } else if path == "apps/web/src/pairingUrl.ts" {
+        (
+            "pairing token get/strip/set URL helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core parses_remote_pairing_fields`",
+            "Wire helpers into live GPUI pairing URL handling.",
+        )
+    } else if path == "apps/web/src/components/settings/pairingUrls.ts"
+        || path == "apps/web/src/components/settings/pairingUrls.test.ts"
+    {
+        (
+            "desktop and hosted settings pairing URL resolution helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core selects_and_resolves_advertised_pairing_endpoints`; `cargo test -p r3_core hosted_pairing_helpers`",
+            "Wire helpers into live GPUI connection settings pairing links.",
+        )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
             "logical project path normalization, physical/grouping/order keys, repository-scoped keys, settings override resolution, ref fallback, and group-label helpers in crates/r3_core/src/lib.rs",
