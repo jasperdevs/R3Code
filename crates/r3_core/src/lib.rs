@@ -18990,6 +18990,287 @@ pub fn resolve_remote_websocket_connection_url_with_token(
     set_url_query_param(&base, "wsToken", ws_token)
 }
 
+pub const AUTH_SESSION_ESTABLISH_TIMEOUT_MS: u64 = 2_000;
+pub const AUTH_SESSION_ESTABLISH_STEP_MS: u64 = 100;
+pub const BOOTSTRAP_RETRY_TIMEOUT_MS: u64 = 15_000;
+pub const BOOTSTRAP_RETRY_STEP_MS: u64 = 500;
+pub const TRANSIENT_BOOTSTRAP_STATUS_CODES: &[u16] = &[502, 503, 504];
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PrimaryEnvironmentTarget {
+    pub source: String,
+    pub http_base_url: String,
+    pub ws_base_url: String,
+}
+
+pub fn normalize_hostname_for_loopback(hostname: &str) -> String {
+    hostname
+        .trim()
+        .to_ascii_lowercase()
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or_else(|| hostname.trim())
+        .to_ascii_lowercase()
+}
+
+pub fn is_loopback_hostname(hostname: &str) -> bool {
+    matches!(
+        normalize_hostname_for_loopback(hostname).as_str(),
+        "127.0.0.1" | "::1" | "localhost"
+    )
+}
+
+pub fn swap_primary_base_url_protocol(
+    raw_value: &str,
+    next_protocol: &str,
+    current_origin: &str,
+) -> Option<String> {
+    let parts = parse_remote_url_like(raw_value, current_origin)?;
+    let protocol = next_protocol.trim_end_matches(':');
+    Some(remote_url_origin_with_scheme(&parts, protocol))
+}
+
+pub fn resolve_configured_primary_target(
+    configured_http_base_url: Option<&str>,
+    configured_ws_base_url: Option<&str>,
+    current_origin: &str,
+) -> Option<PrimaryEnvironmentTarget> {
+    let configured_http_base_url =
+        configured_http_base_url.and_then(|value| (!value.trim().is_empty()).then(|| value.trim()));
+    let configured_ws_base_url =
+        configured_ws_base_url.and_then(|value| (!value.trim().is_empty()).then(|| value.trim()));
+    if configured_http_base_url.is_none() && configured_ws_base_url.is_none() {
+        return None;
+    }
+
+    let http_base_url = configured_http_base_url
+        .map(|value| normalize_remote_http_base_url(value, current_origin).ok())
+        .unwrap_or_else(|| {
+            configured_ws_base_url.and_then(|value| {
+                let protocol = if value.trim().starts_with("wss:") {
+                    "https:"
+                } else {
+                    "http:"
+                };
+                swap_primary_base_url_protocol(value, protocol, current_origin)
+            })
+        })?;
+    let ws_base_url = configured_ws_base_url
+        .map(|value| normalize_remote_ws_base_url(value, current_origin).ok())
+        .unwrap_or_else(|| {
+            configured_http_base_url.and_then(|value| {
+                let protocol = if value.trim().starts_with("https:") {
+                    "wss:"
+                } else {
+                    "ws:"
+                };
+                swap_primary_base_url_protocol(value, protocol, current_origin)
+            })
+        })?;
+
+    Some(PrimaryEnvironmentTarget {
+        source: "configured".to_string(),
+        http_base_url,
+        ws_base_url,
+    })
+}
+
+pub fn resolve_window_origin_primary_target(
+    current_origin: &str,
+) -> Result<PrimaryEnvironmentTarget, String> {
+    let http_base_url = normalize_remote_http_base_url(current_origin, current_origin)?;
+    let scheme = parse_remote_url_like(&http_base_url, current_origin)
+        .map(|parts| parts.scheme)
+        .unwrap_or_default();
+    let ws_protocol = match scheme.as_str() {
+        "http" => "ws:",
+        "https" => "wss:",
+        other => return Err(format!("Unsupported HTTP base URL protocol: {other}:")),
+    };
+    Ok(PrimaryEnvironmentTarget {
+        source: "window-origin".to_string(),
+        ws_base_url: swap_primary_base_url_protocol(&http_base_url, ws_protocol, current_origin)
+            .ok_or_else(|| "Unable to resolve window origin websocket URL.".to_string())?,
+        http_base_url,
+    })
+}
+
+pub fn resolve_desktop_primary_target(
+    desktop_http_base_url: Option<&str>,
+    desktop_ws_base_url: Option<&str>,
+    current_origin: &str,
+) -> Result<Option<PrimaryEnvironmentTarget>, String> {
+    if desktop_http_base_url.is_none() && desktop_ws_base_url.is_none() {
+        return Ok(None);
+    }
+    let (Some(http_base_url), Some(ws_base_url)) = (desktop_http_base_url, desktop_ws_base_url)
+    else {
+        return Err(
+            "Desktop bootstrap must provide both httpBaseUrl and wsBaseUrl for the local environment."
+                .to_string(),
+        );
+    };
+    Ok(Some(PrimaryEnvironmentTarget {
+        source: "desktop-managed".to_string(),
+        http_base_url: normalize_remote_http_base_url(http_base_url, current_origin)?,
+        ws_base_url: normalize_remote_ws_base_url(ws_base_url, current_origin)?,
+    }))
+}
+
+fn remote_url_authority(input: &str, current_origin: &str) -> Option<String> {
+    parse_remote_url_like(input, current_origin).map(|parts| parts.authority)
+}
+
+fn hostname_from_authority(authority: &str) -> String {
+    if let Some(rest) = authority.strip_prefix('[') {
+        if let Some((host, _)) = rest.split_once(']') {
+            return host.to_string();
+        }
+    }
+    authority.split(':').next().unwrap_or(authority).to_string()
+}
+
+pub fn resolve_primary_http_request_base_url(
+    http_base_url: &str,
+    configured_dev_server_url: Option<&str>,
+    current_href: &str,
+) -> String {
+    let Some(configured_dev_server_url) = configured_dev_server_url
+        .and_then(|value| (!value.trim().is_empty()).then(|| value.trim()))
+    else {
+        return http_base_url.to_string();
+    };
+    let Some(current) = parse_remote_url_like(current_href, "http://localhost") else {
+        return http_base_url.to_string();
+    };
+    if current.scheme != "http" && current.scheme != "https" {
+        return http_base_url.to_string();
+    }
+    let current_origin = remote_url_origin_with_scheme(&current, &current.scheme);
+    let dev_origin =
+        match normalize_remote_http_base_url(configured_dev_server_url, &current_origin) {
+            Ok(value) => value,
+            Err(_) => return http_base_url.to_string(),
+        };
+    let target_origin = match normalize_remote_http_base_url(http_base_url, &current_origin) {
+        Ok(value) => value,
+        Err(_) => return http_base_url.to_string(),
+    };
+    if current_origin != dev_origin
+        || current_origin == target_origin
+        || !remote_url_authority(&current_origin, &current_origin)
+            .map(|authority| hostname_from_authority(&authority))
+            .is_some_and(|host| is_loopback_hostname(&host))
+        || !remote_url_authority(&target_origin, &current_origin)
+            .map(|authority| hostname_from_authority(&authority))
+            .is_some_and(|host| is_loopback_hostname(&host))
+    {
+        return http_base_url.to_string();
+    }
+    current_origin
+}
+
+pub fn resolve_primary_environment_http_url(
+    primary_http_base_url: &str,
+    pathname: &str,
+    search_params: &[(&str, &str)],
+    configured_dev_server_url: Option<&str>,
+    current_href: &str,
+) -> Option<String> {
+    let base = resolve_primary_http_request_base_url(
+        primary_http_base_url,
+        configured_dev_server_url,
+        current_href,
+    );
+    let mut url = remote_endpoint_url(&base, pathname)?;
+    if !search_params.is_empty() {
+        url.push('?');
+        url.push_str(
+            &search_params
+                .iter()
+                .map(|(key, value)| {
+                    format!(
+                        "{}={}",
+                        form_url_encode_component(key),
+                        form_url_encode_component(value)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("&"),
+        );
+    }
+    Some(url)
+}
+
+pub fn parse_bootstrap_error_message(message: &str) -> String {
+    let trimmed = message.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    extract_top_level_json_string_field(trimmed, "error")
+        .map(|error| error.trim().to_string())
+        .filter(|error| !error.is_empty())
+        .unwrap_or_else(|| trimmed.to_string())
+}
+
+pub fn friendly_bootstrap_error_message(status: u16, message: &str) -> String {
+    let parsed = parse_bootstrap_error_message(message);
+    if status == 401
+        && matches!(
+            parsed.as_str(),
+            "Invalid bootstrap credential." | "Unknown bootstrap credential."
+        )
+    {
+        return "Invalid pairing token. Check the token and try again.".to_string();
+    }
+    parsed
+}
+
+pub fn is_transient_bootstrap_status(status: u16) -> bool {
+    TRANSIENT_BOOTSTRAP_STATUS_CODES.contains(&status)
+}
+
+pub fn should_retry_transient_bootstrap(
+    status: Option<u16>,
+    error_kind: Option<&str>,
+    elapsed_ms: u64,
+) -> bool {
+    let transient = status.is_some_and(is_transient_bootstrap_status)
+        || matches!(error_kind, Some("TypeError") | Some("AbortError"));
+    transient && elapsed_ms < BOOTSTRAP_RETRY_TIMEOUT_MS
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ServerAuthGateStatePlan {
+    Authenticated,
+    RequiresAuth {
+        auth: String,
+        error_message: Option<String>,
+    },
+}
+
+pub fn bootstrap_server_auth_gate_plan(
+    current_session_authenticated: bool,
+    current_session_auth: &str,
+    desktop_bootstrap_credential: Option<&str>,
+    bootstrap_error_message: Option<&str>,
+) -> ServerAuthGateStatePlan {
+    if current_session_authenticated {
+        return ServerAuthGateStatePlan::Authenticated;
+    }
+    if desktop_bootstrap_credential
+        .map(|credential| !credential.is_empty())
+        .unwrap_or(false)
+        && bootstrap_error_message.is_none()
+    {
+        return ServerAuthGateStatePlan::Authenticated;
+    }
+    ServerAuthGateStatePlan::RequiresAuth {
+        auth: current_session_auth.to_string(),
+        error_message: bootstrap_error_message.map(str::to_string),
+    }
+}
+
 fn json_escape_string(value: &str) -> String {
     let encoded = serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string());
     encoded
@@ -28495,6 +28776,167 @@ mod tests {
             )
             .as_deref(),
             Some("wss://remote.example.com/?wsToken=ws+token")
+        );
+    }
+
+    #[test]
+    fn primary_environment_target_and_auth_helpers_match_upstream_contract() {
+        assert_eq!(AUTH_SESSION_ESTABLISH_TIMEOUT_MS, 2_000);
+        assert_eq!(AUTH_SESSION_ESTABLISH_STEP_MS, 100);
+        assert_eq!(BOOTSTRAP_RETRY_TIMEOUT_MS, 15_000);
+        assert_eq!(BOOTSTRAP_RETRY_STEP_MS, 500);
+        assert!(is_transient_bootstrap_status(502));
+        assert!(is_transient_bootstrap_status(503));
+        assert!(is_transient_bootstrap_status(504));
+        assert!(!is_transient_bootstrap_status(401));
+
+        assert!(is_loopback_hostname(" [::1] "));
+        assert!(is_loopback_hostname("LOCALHOST"));
+        assert!(!is_loopback_hostname("example.com"));
+
+        assert_eq!(
+            resolve_configured_primary_target(
+                Some("https://remote.example.com"),
+                None,
+                "http://localhost:5173"
+            )
+            .unwrap(),
+            PrimaryEnvironmentTarget {
+                source: "configured".to_string(),
+                http_base_url: "https://remote.example.com/".to_string(),
+                ws_base_url: "wss://remote.example.com/".to_string(),
+            }
+        );
+        assert_eq!(
+            resolve_configured_primary_target(
+                None,
+                Some("wss://remote.example.com"),
+                "http://localhost:5173"
+            )
+            .unwrap(),
+            PrimaryEnvironmentTarget {
+                source: "configured".to_string(),
+                http_base_url: "https://remote.example.com/".to_string(),
+                ws_base_url: "wss://remote.example.com/".to_string(),
+            }
+        );
+        assert_eq!(
+            resolve_configured_primary_target(None, None, "http://localhost:5173"),
+            None
+        );
+        assert_eq!(
+            resolve_window_origin_primary_target("http://localhost:3773").unwrap(),
+            PrimaryEnvironmentTarget {
+                source: "window-origin".to_string(),
+                http_base_url: "http://localhost:3773/".to_string(),
+                ws_base_url: "ws://localhost:3773/".to_string(),
+            }
+        );
+        assert_eq!(
+            resolve_desktop_primary_target(
+                Some("http://127.0.0.1:3773"),
+                Some("ws://127.0.0.1:3773"),
+                "http://127.0.0.1:5733",
+            )
+            .unwrap()
+            .unwrap(),
+            PrimaryEnvironmentTarget {
+                source: "desktop-managed".to_string(),
+                http_base_url: "http://127.0.0.1:3773/".to_string(),
+                ws_base_url: "ws://127.0.0.1:3773/".to_string(),
+            }
+        );
+        assert_eq!(
+            resolve_desktop_primary_target(
+                Some("http://127.0.0.1:3773"),
+                None,
+                "http://127.0.0.1:5733",
+            )
+            .unwrap_err(),
+            "Desktop bootstrap must provide both httpBaseUrl and wsBaseUrl for the local environment."
+        );
+
+        assert_eq!(
+            resolve_primary_http_request_base_url(
+                "http://127.0.0.1:3773/",
+                Some("http://127.0.0.1:5733"),
+                "http://127.0.0.1:5733/",
+            ),
+            "http://127.0.0.1:5733/"
+        );
+        assert_eq!(
+            resolve_primary_http_request_base_url(
+                "https://remote.example.com/",
+                Some("http://127.0.0.1:5733"),
+                "http://127.0.0.1:5733/",
+            ),
+            "https://remote.example.com/"
+        );
+        assert_eq!(
+            resolve_primary_environment_http_url(
+                "http://127.0.0.1:3773/",
+                "/api/auth/session",
+                &[("token", "a b")],
+                Some("http://127.0.0.1:5733"),
+                "http://127.0.0.1:5733/",
+            )
+            .as_deref(),
+            Some("http://127.0.0.1:5733/api/auth/session?token=a+b")
+        );
+
+        assert_eq!(
+            parse_bootstrap_error_message(" {\"error\":\" Invalid bootstrap credential. \"} "),
+            "Invalid bootstrap credential."
+        );
+        assert_eq!(parse_bootstrap_error_message(" plain text "), "plain text");
+        assert_eq!(
+            friendly_bootstrap_error_message(401, "{\"error\":\"Unknown bootstrap credential.\"}"),
+            "Invalid pairing token. Check the token and try again."
+        );
+        assert_eq!(
+            friendly_bootstrap_error_message(403, "{\"error\":\"Forbidden.\"}"),
+            "Forbidden."
+        );
+        assert!(should_retry_transient_bootstrap(Some(503), None, 14_999));
+        assert!(!should_retry_transient_bootstrap(Some(503), None, 15_000));
+        assert!(should_retry_transient_bootstrap(
+            None,
+            Some("TypeError"),
+            100
+        ));
+        assert!(should_retry_transient_bootstrap(
+            None,
+            Some("AbortError"),
+            100
+        ));
+        assert!(!should_retry_transient_bootstrap(None, Some("Other"), 100));
+
+        assert_eq!(
+            bootstrap_server_auth_gate_plan(true, "cookie", None, None),
+            ServerAuthGateStatePlan::Authenticated
+        );
+        assert_eq!(
+            bootstrap_server_auth_gate_plan(false, "pairing", None, None),
+            ServerAuthGateStatePlan::RequiresAuth {
+                auth: "pairing".to_string(),
+                error_message: None,
+            }
+        );
+        assert_eq!(
+            bootstrap_server_auth_gate_plan(false, "pairing", Some("desktop-token"), None),
+            ServerAuthGateStatePlan::Authenticated
+        );
+        assert_eq!(
+            bootstrap_server_auth_gate_plan(
+                false,
+                "pairing",
+                Some("desktop-token"),
+                Some("Authentication failed.")
+            ),
+            ServerAuthGateStatePlan::RequiresAuth {
+                auth: "pairing".to_string(),
+                error_message: Some("Authentication failed.".to_string()),
+            }
         );
     }
 

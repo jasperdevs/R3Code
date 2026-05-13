@@ -2459,6 +2459,18 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace remote_environment_target_and_api_helpers_match_upstream_contract`",
             "Wire remote API helpers into live HTTP fetch, browser URL resolution, credential bootstrap, and websocket token issuance in GPUI runtime flows.",
         )
+    } else if matches!(
+        path,
+        "apps/web/src/environments/primary/auth.ts"
+            | "apps/web/src/environments/primary/bootstrap.test.ts"
+            | "apps/web/src/environments/primary/target.ts"
+    ) {
+        (
+            "primary environment target resolution, loopback/dev-server proxy rules, desktop/configured/window-origin base URL derivation, primary HTTP URL building, auth bootstrap timing/retry constants, transient bootstrap classification, friendly bootstrap error messages, and auth gate decisions in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace primary_environment_target_and_auth_helpers_match_upstream_contract`",
+            "Wire primary target/auth helpers into live desktop bridge bootstrap, browser history URL mutation, fetch credentials, in-flight auth bootstrap promise caching, and GPUI auth gate state.",
+        )
     } else if path.starts_with("apps/web/src/environments/")
         || path.starts_with("apps/web/src/environment")
         || path.starts_with("apps/web/src/auth")
