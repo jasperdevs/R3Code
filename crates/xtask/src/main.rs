@@ -1964,6 +1964,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core keybinding_shortcuts_and_when_expressions`",
             "Port cn/twMerge behavior and UUID-backed command/project/thread/draft/message ID factories where live GPUI needs them.",
         )
+    } else if path == "apps/web/src/lib/chatThreadActions.ts"
+        || path == "apps/web/src/lib/chatThreadActions.test.ts"
+    {
+        (
+            "chat thread action project-ref resolution plus contextual/default new-thread option planning in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core chat_thread_action_plans_match_upstream_context_resolution`",
+            "Wire plans into live GPUI new-thread commands and async handler dispatch.",
+        )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
             "logical project path normalization, physical/grouping/order keys, repository-scoped keys, settings override resolution, ref fallback, and group-label helpers in crates/r3_core/src/lib.rs",

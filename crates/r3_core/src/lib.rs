@@ -376,6 +376,44 @@ pub enum DraftThreadEnvMode {
     Worktree,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadActionThreadContext {
+    pub environment_id: String,
+    pub project_id: String,
+    pub branch: Option<String>,
+    pub worktree_path: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadActionDraftThreadContext {
+    pub environment_id: String,
+    pub project_id: String,
+    pub branch: Option<String>,
+    pub worktree_path: Option<String>,
+    pub env_mode: DraftThreadEnvMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChatThreadActionContext {
+    pub active_draft_thread: Option<ThreadActionDraftThreadContext>,
+    pub active_thread: Option<ThreadActionThreadContext>,
+    pub default_project_ref: Option<ScopedProjectRef>,
+    pub default_thread_env_mode: DraftThreadEnvMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ThreadActionNewThreadOptions {
+    pub branch: Option<Option<String>>,
+    pub worktree_path: Option<Option<String>>,
+    pub env_mode: Option<DraftThreadEnvMode>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadActionStartPlan {
+    pub project_ref: ScopedProjectRef,
+    pub options: ThreadActionNewThreadOptions,
+}
+
 pub const INLINE_TERMINAL_CONTEXT_PLACEHOLDER: char = '\u{FFFC}';
 pub const RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY: &str = "(max-width: 980px)";
 pub const WINDOW_CONTROLS_OVERLAY_CLASS_NAME: &str = "wco";
@@ -14411,6 +14449,110 @@ pub fn scoped_thread_key(ref_: &ScopedThreadRef) -> String {
     format!("{}:{}", ref_.environment_id, ref_.thread_id)
 }
 
+pub fn resolve_thread_action_project_ref(
+    context: &ChatThreadActionContext,
+) -> Option<ScopedProjectRef> {
+    if let Some(active_thread) = context.active_thread.as_ref() {
+        return Some(scope_project_ref(
+            &active_thread.environment_id,
+            &active_thread.project_id,
+        ));
+    }
+    if let Some(active_draft_thread) = context.active_draft_thread.as_ref() {
+        return Some(scope_project_ref(
+            &active_draft_thread.environment_id,
+            &active_draft_thread.project_id,
+        ));
+    }
+    context.default_project_ref.clone()
+}
+
+pub fn contextual_thread_action_options(
+    context: &ChatThreadActionContext,
+) -> ThreadActionNewThreadOptions {
+    let branch = context
+        .active_thread
+        .as_ref()
+        .and_then(|thread| thread.branch.clone())
+        .or_else(|| {
+            context
+                .active_draft_thread
+                .as_ref()
+                .and_then(|thread| thread.branch.clone())
+        });
+    let worktree_path = context
+        .active_thread
+        .as_ref()
+        .and_then(|thread| thread.worktree_path.clone())
+        .or_else(|| {
+            context
+                .active_draft_thread
+                .as_ref()
+                .and_then(|thread| thread.worktree_path.clone())
+        });
+    let env_mode = context
+        .active_draft_thread
+        .as_ref()
+        .map(|thread| thread.env_mode)
+        .unwrap_or_else(|| {
+            if context
+                .active_thread
+                .as_ref()
+                .and_then(|thread| thread.worktree_path.as_ref())
+                .is_some()
+            {
+                DraftThreadEnvMode::Worktree
+            } else {
+                DraftThreadEnvMode::Local
+            }
+        });
+
+    ThreadActionNewThreadOptions {
+        branch: Some(branch),
+        worktree_path: Some(worktree_path),
+        env_mode: Some(env_mode),
+    }
+}
+
+pub fn default_thread_action_options(
+    context: &ChatThreadActionContext,
+) -> ThreadActionNewThreadOptions {
+    ThreadActionNewThreadOptions {
+        env_mode: Some(context.default_thread_env_mode),
+        ..ThreadActionNewThreadOptions::default()
+    }
+}
+
+pub fn start_new_thread_in_project_from_context_plan(
+    context: &ChatThreadActionContext,
+    project_ref: ScopedProjectRef,
+) -> ThreadActionStartPlan {
+    ThreadActionStartPlan {
+        project_ref,
+        options: contextual_thread_action_options(context),
+    }
+}
+
+pub fn start_new_thread_from_context_plan(
+    context: &ChatThreadActionContext,
+) -> Option<ThreadActionStartPlan> {
+    let project_ref = resolve_thread_action_project_ref(context)?;
+    Some(start_new_thread_in_project_from_context_plan(
+        context,
+        project_ref,
+    ))
+}
+
+pub fn start_new_local_thread_from_context_plan(
+    context: &ChatThreadActionContext,
+) -> Option<ThreadActionStartPlan> {
+    let project_ref = resolve_thread_action_project_ref(context)?;
+    Some(ThreadActionStartPlan {
+        project_ref,
+        options: default_thread_action_options(context),
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ProjectAbsolutePathParts {
     root: String,
@@ -21302,6 +21444,107 @@ mod tests {
         assert!(can_navigate_up("~/repo/"));
         assert!(!can_navigate_up("\\\\server\\share\\"));
         assert!(can_navigate_up("\\\\server\\share\\repo\\"));
+    }
+
+    #[test]
+    fn chat_thread_action_plans_match_upstream_context_resolution() {
+        let environment_id = "environment-1";
+        let project_id = "project-1";
+        let fallback_project_id = "project-2";
+        let base_context = ChatThreadActionContext {
+            active_draft_thread: None,
+            active_thread: None,
+            default_project_ref: Some(scope_project_ref(environment_id, fallback_project_id)),
+            default_thread_env_mode: DraftThreadEnvMode::Local,
+        };
+
+        let draft_context = ChatThreadActionContext {
+            active_draft_thread: Some(ThreadActionDraftThreadContext {
+                environment_id: environment_id.to_string(),
+                project_id: project_id.to_string(),
+                branch: Some("feature/refactor".to_string()),
+                worktree_path: Some("/tmp/worktree".to_string()),
+                env_mode: DraftThreadEnvMode::Worktree,
+            }),
+            ..base_context.clone()
+        };
+        assert_eq!(
+            resolve_thread_action_project_ref(&draft_context),
+            Some(scope_project_ref(environment_id, project_id))
+        );
+        assert_eq!(
+            start_new_thread_from_context_plan(&draft_context),
+            Some(ThreadActionStartPlan {
+                project_ref: scope_project_ref(environment_id, project_id),
+                options: ThreadActionNewThreadOptions {
+                    branch: Some(Some("feature/refactor".to_string())),
+                    worktree_path: Some(Some("/tmp/worktree".to_string())),
+                    env_mode: Some(DraftThreadEnvMode::Worktree),
+                },
+            })
+        );
+
+        let active_thread_context = ChatThreadActionContext {
+            active_thread: Some(ThreadActionThreadContext {
+                environment_id: "environment-active".to_string(),
+                project_id: "project-active".to_string(),
+                branch: None,
+                worktree_path: Some("/tmp/active-worktree".to_string()),
+            }),
+            active_draft_thread: Some(ThreadActionDraftThreadContext {
+                environment_id: environment_id.to_string(),
+                project_id: project_id.to_string(),
+                branch: Some("draft-branch".to_string()),
+                worktree_path: None,
+                env_mode: DraftThreadEnvMode::Local,
+            }),
+            ..base_context.clone()
+        };
+        assert_eq!(
+            resolve_thread_action_project_ref(&active_thread_context),
+            Some(scope_project_ref("environment-active", "project-active"))
+        );
+        assert_eq!(
+            start_new_thread_from_context_plan(&active_thread_context)
+                .unwrap()
+                .options,
+            ThreadActionNewThreadOptions {
+                branch: Some(Some("draft-branch".to_string())),
+                worktree_path: Some(Some("/tmp/active-worktree".to_string())),
+                env_mode: Some(DraftThreadEnvMode::Local),
+            }
+        );
+
+        let default_context = ChatThreadActionContext {
+            default_project_ref: Some(scope_project_ref(environment_id, project_id)),
+            default_thread_env_mode: DraftThreadEnvMode::Worktree,
+            ..base_context.clone()
+        };
+        assert_eq!(
+            resolve_thread_action_project_ref(&default_context),
+            Some(scope_project_ref(environment_id, project_id))
+        );
+        assert_eq!(
+            start_new_local_thread_from_context_plan(&default_context),
+            Some(ThreadActionStartPlan {
+                project_ref: scope_project_ref(environment_id, project_id),
+                options: ThreadActionNewThreadOptions {
+                    branch: None,
+                    worktree_path: None,
+                    env_mode: Some(DraftThreadEnvMode::Worktree),
+                },
+            })
+        );
+
+        let missing_context = ChatThreadActionContext {
+            default_project_ref: None,
+            ..base_context
+        };
+        assert_eq!(start_new_thread_from_context_plan(&missing_context), None);
+        assert_eq!(
+            start_new_local_thread_from_context_plan(&missing_context),
+            None
+        );
     }
 
     #[test]
