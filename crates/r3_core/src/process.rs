@@ -245,9 +245,6 @@ pub fn run_process(
         thread::sleep(Duration::from_millis(10));
     };
 
-    let stdout_bytes = stdout_reader.map(join_pipe_reader).unwrap_or_else(Vec::new);
-    let stderr_bytes = stderr_reader.map(join_pipe_reader).unwrap_or_else(Vec::new);
-
     if timed_out && options.timeout_behavior == ProcessTimeoutBehavior::TimedOutResult {
         return Ok(ProcessRunResult {
             stdout: String::new(),
@@ -259,6 +256,9 @@ pub fn run_process(
             stderr_truncated: false,
         });
     }
+
+    let stdout_bytes = stdout_reader.map(join_pipe_reader).unwrap_or_else(Vec::new);
+    let stderr_bytes = stderr_reader.map(join_pipe_reader).unwrap_or_else(Vec::new);
 
     let stdout = apply_output_limit(command, args, "stdout", stdout_bytes, &options)?;
     let stderr = apply_output_limit(command, args, "stderr", stderr_bytes, &options)?;

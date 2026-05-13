@@ -4409,6 +4409,45 @@ pub struct LocalStorageSubscriptionPlan {
     pub custom_event_name: &'static str,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct SettingsSplitPatch {
+    pub server_patch: BTreeMap<String, serde_json::Value>,
+    pub client_patch: BTreeMap<String, serde_json::Value>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClientSettingsHydrationPlan {
+    AlreadyHydrated,
+    AwaitExistingPromise,
+    StartPersistenceRead,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClientSettingsHydrationResult {
+    pub snapshot: BTreeMap<String, serde_json::Value>,
+    pub hydrated: bool,
+    pub clear_hydration_promise: bool,
+    pub emitted_client_settings_change: bool,
+    pub emitted_hydration_change: bool,
+    pub logged_error_scope: Option<&'static str>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClientSettingsPersistPlan {
+    pub snapshot: BTreeMap<String, serde_json::Value>,
+    pub call_persistence_set_client_settings: bool,
+    pub error_scope: &'static str,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SettingsUpdatePlan {
+    pub server_patch: BTreeMap<String, serde_json::Value>,
+    pub client_patch: BTreeMap<String, serde_json::Value>,
+    pub apply_server_settings_updated: bool,
+    pub call_server_update_settings: bool,
+    pub persisted_client_settings: Option<BTreeMap<String, serde_json::Value>>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelPickerState {
     pub active_entry: Option<ProviderInstanceEntry>,
@@ -8596,6 +8635,127 @@ pub fn should_sync_from_storage_event(event_key: Option<&str>, key: &str) -> boo
 
 pub fn should_sync_from_local_storage_change_event(detail_key: &str, key: &str) -> bool {
     detail_key == key
+}
+
+pub const CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE: &str = "[CLIENT_SETTINGS]";
+pub const SERVER_SETTINGS_KEYS_FOR_UNIFIED_PATCH: &[&str] = &[
+    "addProjectBaseDirectory",
+    "automaticGitFetchInterval",
+    "defaultThreadEnvMode",
+    "enableAssistantStreaming",
+    "observability",
+    "providerInstances",
+    "providers",
+    "textGenerationModelSelection",
+];
+
+pub fn is_server_settings_key(key: &str) -> bool {
+    SERVER_SETTINGS_KEYS_FOR_UNIFIED_PATCH.contains(&key)
+}
+
+pub fn split_unified_settings_patch(
+    patch: BTreeMap<String, serde_json::Value>,
+) -> SettingsSplitPatch {
+    let mut server_patch = BTreeMap::new();
+    let mut client_patch = BTreeMap::new();
+    for (key, value) in patch {
+        if is_server_settings_key(&key) {
+            server_patch.insert(key, value);
+        } else {
+            client_patch.insert(key, value);
+        }
+    }
+
+    SettingsSplitPatch {
+        server_patch,
+        client_patch,
+    }
+}
+
+pub fn merge_unified_settings(
+    server_settings: &BTreeMap<String, serde_json::Value>,
+    client_settings: &BTreeMap<String, serde_json::Value>,
+) -> BTreeMap<String, serde_json::Value> {
+    let mut merged = server_settings.clone();
+    merged.extend(client_settings.clone());
+    merged
+}
+
+pub fn client_settings_hydration_plan(
+    hydrated: bool,
+    hydration_promise_in_flight: bool,
+) -> ClientSettingsHydrationPlan {
+    if hydrated {
+        ClientSettingsHydrationPlan::AlreadyHydrated
+    } else if hydration_promise_in_flight {
+        ClientSettingsHydrationPlan::AwaitExistingPromise
+    } else {
+        ClientSettingsHydrationPlan::StartPersistenceRead
+    }
+}
+
+pub fn complete_client_settings_hydration(
+    current_snapshot: &BTreeMap<String, serde_json::Value>,
+    default_client_settings: &BTreeMap<String, serde_json::Value>,
+    persisted_settings: Option<&BTreeMap<String, serde_json::Value>>,
+    was_hydrated: bool,
+    failed: bool,
+) -> ClientSettingsHydrationResult {
+    let snapshot = persisted_settings
+        .map(|persisted| merge_unified_settings(default_client_settings, persisted))
+        .unwrap_or_else(|| current_snapshot.clone());
+
+    ClientSettingsHydrationResult {
+        snapshot,
+        hydrated: true,
+        clear_hydration_promise: true,
+        emitted_client_settings_change: persisted_settings.is_some(),
+        emitted_hydration_change: !was_hydrated,
+        logged_error_scope: failed.then_some(CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE),
+    }
+}
+
+pub fn persist_client_settings_plan(
+    settings: BTreeMap<String, serde_json::Value>,
+) -> ClientSettingsPersistPlan {
+    ClientSettingsPersistPlan {
+        snapshot: settings,
+        call_persistence_set_client_settings: true,
+        error_scope: CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE,
+    }
+}
+
+pub fn update_settings_plan(
+    current_client_settings: &BTreeMap<String, serde_json::Value>,
+    patch: BTreeMap<String, serde_json::Value>,
+    has_current_server_config: bool,
+) -> SettingsUpdatePlan {
+    let SettingsSplitPatch {
+        server_patch,
+        client_patch,
+    } = split_unified_settings_patch(patch);
+    let persisted_client_settings = if client_patch.is_empty() {
+        None
+    } else {
+        Some(merge_unified_settings(
+            current_client_settings,
+            &client_patch,
+        ))
+    };
+
+    SettingsUpdatePlan {
+        apply_server_settings_updated: !server_patch.is_empty() && has_current_server_config,
+        call_server_update_settings: !server_patch.is_empty(),
+        server_patch,
+        client_patch,
+        persisted_client_settings,
+    }
+}
+
+pub fn reset_settings_patch(
+    default_unified_settings: &BTreeMap<String, serde_json::Value>,
+) -> BTreeMap<String, serde_json::Value> {
+    default_unified_settings.clone()
 }
 
 fn matches_locked_provider(
@@ -33045,6 +33205,145 @@ mod tests {
 
         storage.clear();
         assert_eq!(storage.len(), 0);
+    }
+
+    #[test]
+    fn settings_hook_helpers_match_upstream_client_server_routing() {
+        assert_eq!(CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE, "[CLIENT_SETTINGS]");
+        assert!(is_server_settings_key("providers"));
+        assert!(is_server_settings_key("textGenerationModelSelection"));
+        assert!(!is_server_settings_key("timestampFormat"));
+        assert!(!is_server_settings_key("diffWordWrap"));
+
+        let patch = BTreeMap::from([
+            (
+                "providers".to_string(),
+                serde_json::json!({ "codex": { "enabled": true } }),
+            ),
+            ("timestampFormat".to_string(), serde_json::json!("24-hour")),
+            ("diffWordWrap".to_string(), serde_json::json!(true)),
+        ]);
+        let split = split_unified_settings_patch(patch);
+        assert_eq!(split.server_patch.len(), 1);
+        assert_eq!(split.client_patch.len(), 2);
+        assert!(split.server_patch.contains_key("providers"));
+        assert!(split.client_patch.contains_key("timestampFormat"));
+
+        let server_settings = BTreeMap::from([
+            ("timestampFormat".to_string(), serde_json::json!("locale")),
+            ("providers".to_string(), serde_json::json!({ "codex": {} })),
+        ]);
+        let client_settings = BTreeMap::from([
+            ("timestampFormat".to_string(), serde_json::json!("12-hour")),
+            ("diffIgnoreWhitespace".to_string(), serde_json::json!(true)),
+        ]);
+        let merged = merge_unified_settings(&server_settings, &client_settings);
+        assert_eq!(merged["timestampFormat"], serde_json::json!("12-hour"));
+        assert_eq!(merged["providers"], serde_json::json!({ "codex": {} }));
+
+        assert_eq!(
+            client_settings_hydration_plan(true, true),
+            ClientSettingsHydrationPlan::AlreadyHydrated
+        );
+        assert_eq!(
+            client_settings_hydration_plan(false, true),
+            ClientSettingsHydrationPlan::AwaitExistingPromise
+        );
+        assert_eq!(
+            client_settings_hydration_plan(false, false),
+            ClientSettingsHydrationPlan::StartPersistenceRead
+        );
+
+        let default_client_settings =
+            BTreeMap::from([("diffWordWrap".to_string(), serde_json::json!(false))]);
+        let persisted_client_settings = BTreeMap::from([
+            ("timestampFormat".to_string(), serde_json::json!("24-hour")),
+            ("diffWordWrap".to_string(), serde_json::json!(true)),
+        ]);
+        assert_eq!(
+            complete_client_settings_hydration(
+                &client_settings,
+                &default_client_settings,
+                Some(&persisted_client_settings),
+                false,
+                false,
+            ),
+            ClientSettingsHydrationResult {
+                snapshot: BTreeMap::from([
+                    ("diffWordWrap".to_string(), serde_json::json!(true)),
+                    ("timestampFormat".to_string(), serde_json::json!("24-hour")),
+                ]),
+                hydrated: true,
+                clear_hydration_promise: true,
+                emitted_client_settings_change: true,
+                emitted_hydration_change: true,
+                logged_error_scope: None,
+            }
+        );
+        assert_eq!(
+            complete_client_settings_hydration(
+                &client_settings,
+                &default_client_settings,
+                None,
+                false,
+                true,
+            ),
+            ClientSettingsHydrationResult {
+                snapshot: client_settings.clone(),
+                hydrated: true,
+                clear_hydration_promise: true,
+                emitted_client_settings_change: false,
+                emitted_hydration_change: true,
+                logged_error_scope: Some(CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE),
+            }
+        );
+
+        assert_eq!(
+            persist_client_settings_plan(client_settings.clone()),
+            ClientSettingsPersistPlan {
+                snapshot: client_settings.clone(),
+                call_persistence_set_client_settings: true,
+                error_scope: CLIENT_SETTINGS_PERSISTENCE_ERROR_SCOPE,
+            }
+        );
+
+        let update_plan = update_settings_plan(
+            &client_settings,
+            BTreeMap::from([
+                (
+                    "providers".to_string(),
+                    serde_json::json!({ "cursor": { "enabled": true } }),
+                ),
+                ("confirmThreadDelete".to_string(), serde_json::json!(false)),
+            ]),
+            true,
+        );
+        assert!(update_plan.apply_server_settings_updated);
+        assert!(update_plan.call_server_update_settings);
+        assert_eq!(update_plan.server_patch.len(), 1);
+        assert_eq!(update_plan.client_patch.len(), 1);
+        assert_eq!(
+            update_plan
+                .persisted_client_settings
+                .unwrap()
+                .get("confirmThreadDelete"),
+            Some(&serde_json::json!(false))
+        );
+
+        let no_server_config_plan = update_settings_plan(
+            &client_settings,
+            BTreeMap::from([(
+                "defaultThreadEnvMode".to_string(),
+                serde_json::json!("worktree"),
+            )]),
+            false,
+        );
+        assert!(!no_server_config_plan.apply_server_settings_updated);
+        assert!(no_server_config_plan.call_server_update_settings);
+        assert_eq!(no_server_config_plan.persisted_client_settings, None);
+
+        let defaults = BTreeMap::from([("diffWordWrap".to_string(), serde_json::json!(false))]);
+        assert_eq!(reset_settings_patch(&defaults), defaults);
     }
 
     #[test]

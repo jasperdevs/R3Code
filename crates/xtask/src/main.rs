@@ -1718,6 +1718,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core local_storage_helpers_match_upstream_contract_with_r3_event_name`",
             "Wire helpers into live GPUI/local persistence hooks with schema-backed decode/encode and actual same-tab/cross-tab subscriptions.",
         )
+    } else if path == "apps/web/src/hooks/useSettings.ts" {
+        (
+            "settings hook client/server routing contract: server-settings key set, unified patch splitting, client-over-server merge order, client settings hydration de-dupe/start decisions, persisted/default snapshot merge, hydration/persist error scopes, updateSettings server optimistic/RPC decisions, client persistence merge, and reset patch behavior in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core settings_hook_helpers_match_upstream_client_server_routing`",
+            "Wire helpers into live GPUI settings subscriptions, local API persistence, server config updates, and selector-level re-render behavior.",
+        )
     } else if path == "apps/web/src/hooks/useTheme.ts" {
         (
             "R3-branded theme storage key, stored theme parsing, default/server snapshot, system-dark resolution, browser chrome surface/color/meta decisions, DOM apply plan, desktop bridge de-dupe/rejection handling, set-theme emission, subscription keys, storage-event filter, and system preference change behavior in crates/r3_core/src/lib.rs",
