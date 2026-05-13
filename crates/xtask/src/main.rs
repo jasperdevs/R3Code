@@ -1750,6 +1750,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core archived_threads_environment_keys`",
             "Wire helpers into live GPUI archived-thread snapshot loading and refresh.",
         )
+    } else if path == "apps/web/src/lib/processDiagnosticsState.ts"
+        || path == "apps/web/src/lib/traceDiagnosticsState.ts"
+    {
+        (
+            "diagnostics state stale/idle TTL constants and error fallback helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core diagnostics_state_constants`",
+            "Wire helpers into live GPUI diagnostics SWR loading and refresh controls.",
+        )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
             "logical project path normalization, physical/grouping/order keys, repository-scoped keys, settings override resolution, ref fallback, and group-label helpers in crates/r3_core/src/lib.rs",

@@ -293,6 +293,10 @@ pub const MAX_TRACKED_RPC_ACK_REQUESTS: usize = 256;
 pub const ARCHIVED_THREADS_STALE_TIME_MS: u64 = 5_000;
 pub const ARCHIVED_THREADS_IDLE_TTL_MS: u64 = 5 * 60_000;
 pub const ARCHIVED_THREADS_ENVIRONMENT_KEY_SEPARATOR: &str = "\u{001f}";
+pub const PROCESS_DIAGNOSTICS_STALE_TIME_MS: u64 = 2_000;
+pub const PROCESS_DIAGNOSTICS_IDLE_TTL_MS: u64 = 5 * 60_000;
+pub const TRACE_DIAGNOSTICS_STALE_TIME_MS: u64 = 5_000;
+pub const TRACE_DIAGNOSTICS_IDLE_TTL_MS: u64 = 5 * 60_000;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlineTerminalContextInsertion {
@@ -2282,6 +2286,22 @@ pub fn archived_threads_keys_to_refresh_for_environment(
         })
         .cloned()
         .collect()
+}
+
+pub fn format_process_diagnostics_state_error(error_message: Option<&str>) -> String {
+    error_message
+        .map(str::trim)
+        .filter(|message| !message.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| "Failed to load process diagnostics.".to_string())
+}
+
+pub fn format_trace_diagnostics_state_error(error_message: Option<&str>) -> String {
+    error_message
+        .map(str::trim)
+        .filter(|message| !message.is_empty())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| "Failed to load trace diagnostics.".to_string())
 }
 
 pub fn get_ws_connection_ui_state(status: &WsConnectionStatus) -> WsConnectionUiState {
@@ -26318,6 +26338,30 @@ mod tests {
                 "environment-b".to_string(),
                 "environment-c".to_string(),
             ])]
+        );
+    }
+
+    #[test]
+    fn diagnostics_state_constants_and_errors_match_upstream_logic() {
+        assert_eq!(PROCESS_DIAGNOSTICS_STALE_TIME_MS, 2_000);
+        assert_eq!(PROCESS_DIAGNOSTICS_IDLE_TTL_MS, 300_000);
+        assert_eq!(TRACE_DIAGNOSTICS_STALE_TIME_MS, 5_000);
+        assert_eq!(TRACE_DIAGNOSTICS_IDLE_TTL_MS, 300_000);
+        assert_eq!(
+            format_process_diagnostics_state_error(Some("process failed")),
+            "process failed"
+        );
+        assert_eq!(
+            format_process_diagnostics_state_error(None),
+            "Failed to load process diagnostics."
+        );
+        assert_eq!(
+            format_trace_diagnostics_state_error(Some("trace failed")),
+            "trace failed"
+        );
+        assert_eq!(
+            format_trace_diagnostics_state_error(Some("   ")),
+            "Failed to load trace diagnostics."
         );
     }
 
