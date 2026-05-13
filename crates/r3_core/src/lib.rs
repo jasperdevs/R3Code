@@ -24128,6 +24128,250 @@ pub fn resolve_assistant_message_copy_state(
     }
 }
 
+pub const MAX_COLLAPSED_USER_MESSAGE_LINES: usize = 8;
+pub const MAX_COLLAPSED_USER_MESSAGE_LENGTH: usize = 600;
+pub const COLLAPSED_USER_MESSAGE_FADE_HEIGHT_REM: f32 = 1.75;
+pub const USER_MESSAGE_SHOW_FULL_BUTTON_LABEL: &str = "Show full message";
+pub const USER_MESSAGE_SHOW_LESS_BUTTON_LABEL: &str = "Show less";
+pub const MESSAGE_COPY_BUTTON_ARIA_LABEL: &str = "Copy link";
+pub const TERMINAL_CONTEXT_INLINE_CHIP_ICON_CLASS: &str = "lucide-terminal";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UserMessageRenderContract {
+    pub visible_text: String,
+    pub copy_text: String,
+    pub terminal_labels: Vec<String>,
+    pub has_embedded_inline_labels: bool,
+    pub can_collapse: bool,
+    pub is_collapsed: bool,
+    pub body_collapsed_attr: &'static str,
+    pub body_collapsible_attr: &'static str,
+    pub body_fade_attr: &'static str,
+    pub footer_visible: bool,
+    pub collapse_button_label: Option<&'static str>,
+    pub copy_button_aria_label: Option<&'static str>,
+    pub terminal_chip_icon_class: Option<&'static str>,
+}
+
+pub fn should_collapse_user_message(text: &str) -> bool {
+    if text.trim().is_empty() {
+        return false;
+    }
+
+    text.len() > MAX_COLLAPSED_USER_MESSAGE_LENGTH
+        || text.split('\n').count() > MAX_COLLAPSED_USER_MESSAGE_LINES
+}
+
+pub fn build_user_message_render_contract(
+    prompt: &str,
+    expanded: bool,
+    footer_provided: bool,
+) -> UserMessageRenderContract {
+    let displayed = derive_displayed_user_message_state(prompt);
+    let has_visible_body =
+        !displayed.visible_text.trim().is_empty() || !displayed.contexts.is_empty();
+    let can_collapse = has_visible_body && should_collapse_user_message(&displayed.visible_text);
+    let is_collapsed = can_collapse && !expanded;
+    let terminal_labels = displayed
+        .contexts
+        .iter()
+        .map(|context| context.header.clone())
+        .collect::<Vec<_>>();
+    let has_embedded_inline_labels =
+        text_contains_inline_terminal_context_labels(&displayed.visible_text, &terminal_labels);
+    let copy_button_aria_label =
+        (!displayed.copy_text.is_empty()).then_some(MESSAGE_COPY_BUTTON_ARIA_LABEL);
+
+    UserMessageRenderContract {
+        visible_text: displayed.visible_text,
+        copy_text: displayed.copy_text,
+        terminal_labels,
+        has_embedded_inline_labels,
+        can_collapse,
+        is_collapsed,
+        body_collapsed_attr: if is_collapsed { "true" } else { "false" },
+        body_collapsible_attr: if can_collapse { "true" } else { "false" },
+        body_fade_attr: if is_collapsed { "true" } else { "false" },
+        footer_visible: can_collapse || footer_provided,
+        collapse_button_label: can_collapse.then_some(if expanded {
+            USER_MESSAGE_SHOW_LESS_BUTTON_LABEL
+        } else {
+            USER_MESSAGE_SHOW_FULL_BUTTON_LABEL
+        }),
+        copy_button_aria_label,
+        terminal_chip_icon_class: (!displayed.contexts.is_empty())
+            .then_some(TERMINAL_CONTEXT_INLINE_CHIP_ICON_CLASS),
+    }
+}
+
+pub fn messages_timeline_work_group_header_label(entries: &[WorkLogEntry]) -> Option<String> {
+    let has_overflow = entries.len() > MAX_VISIBLE_WORK_LOG_ENTRIES;
+    let only_tool_entries = entries.iter().all(|entry| entry.tone == ActivityTone::Tool);
+    if !has_overflow && only_tool_entries {
+        return None;
+    }
+
+    let label = if only_tool_entries {
+        "Tool calls"
+    } else {
+        "Work log"
+    };
+    Some(format!("{label} ({})", entries.len()))
+}
+
+pub fn messages_timeline_work_entry_preview(
+    work_entry: &WorkLogEntry,
+    workspace_root: Option<&str>,
+) -> Option<String> {
+    if let Some(command) = work_entry
+        .command
+        .as_ref()
+        .filter(|command| !command.is_empty())
+    {
+        return Some(command.clone());
+    }
+    if let Some(detail) = work_entry
+        .detail
+        .as_ref()
+        .filter(|detail| !detail.is_empty())
+    {
+        return Some(detail.clone());
+    }
+    let first_path = work_entry.changed_files.first()?;
+    let display_path = messages_timeline_format_workspace_relative_path(first_path, workspace_root);
+    if work_entry.changed_files.len() == 1 {
+        Some(display_path)
+    } else {
+        Some(format!(
+            "{} +{} more",
+            display_path,
+            work_entry.changed_files.len() - 1
+        ))
+    }
+}
+
+pub fn messages_timeline_tool_work_entry_heading(work_entry: &WorkLogEntry) -> String {
+    let raw = work_entry
+        .tool_title
+        .as_deref()
+        .filter(|tool_title| !tool_title.is_empty())
+        .unwrap_or(&work_entry.label);
+    capitalize_messages_timeline_phrase(&normalize_compact_tool_label(raw))
+}
+
+pub fn messages_timeline_work_entry_display_text(
+    work_entry: &WorkLogEntry,
+    workspace_root: Option<&str>,
+) -> String {
+    let heading = messages_timeline_tool_work_entry_heading(work_entry);
+    let preview = messages_timeline_work_entry_preview(work_entry, workspace_root);
+    if let Some(preview) = preview.filter(|preview| {
+        normalize_compact_tool_label(preview).to_lowercase()
+            != normalize_compact_tool_label(&heading).to_lowercase()
+    }) {
+        format!("{heading} - {preview}")
+    } else {
+        heading
+    }
+}
+
+pub fn messages_timeline_format_workspace_relative_path(
+    path_with_position: &str,
+    workspace_root: Option<&str>,
+) -> String {
+    let (path, line, column) = messages_timeline_split_path_and_position(path_with_position);
+    let normalized_path =
+        messages_timeline_canonicalize_windows_drive_path(&normalize_path_separators(&path));
+    let mut display_path = normalized_path.clone();
+
+    if let Some(workspace_root) = workspace_root {
+        let normalized_workspace_root = messages_timeline_canonicalize_windows_drive_path(
+            normalize_path_separators(workspace_root).trim_end_matches(['/', '\\']),
+        );
+        let workspace_label = messages_timeline_basename_of_path(&normalized_workspace_root);
+        let path_for_compare = normalized_path.to_lowercase();
+        let workspace_for_compare = normalized_workspace_root.to_lowercase();
+        let workspace_with_separator = format!("{workspace_for_compare}/");
+        let workspace_label_with_separator = format!("{}/", workspace_label.to_lowercase());
+
+        if path_for_compare == workspace_for_compare {
+            display_path = workspace_label.to_string();
+        } else if path_for_compare.starts_with(&workspace_with_separator) {
+            let relative_suffix = &normalized_path[normalized_workspace_root.len() + 1..];
+            display_path = format!("{workspace_label}/{relative_suffix}");
+        } else if !normalized_path.starts_with('/') {
+            let relative_path = messages_timeline_strip_relative_prefixes(&normalized_path);
+            display_path = if path_for_compare.starts_with(&workspace_label_with_separator) {
+                normalized_path
+            } else {
+                format!("{workspace_label}/{relative_path}")
+            };
+        }
+    }
+
+    match (line, column) {
+        (Some(line), Some(column)) => format!("{display_path}:{line}:{column}"),
+        (Some(line), None) => format!("{display_path}:{line}"),
+        _ => display_path,
+    }
+}
+
+fn messages_timeline_split_path_and_position(
+    value: &str,
+) -> (String, Option<String>, Option<String>) {
+    let mut path = value.to_string();
+    let Some((path_without_column, column)) = split_trailing_numeric_colon_segment(&path) else {
+        return (path, None, None);
+    };
+    path = path_without_column;
+    if let Some((path_without_line, line)) = split_trailing_numeric_colon_segment(&path) {
+        (path_without_line, Some(line), Some(column))
+    } else {
+        (path, Some(column), None)
+    }
+}
+
+fn split_trailing_numeric_colon_segment(value: &str) -> Option<(String, String)> {
+    let (prefix, suffix) = value.rsplit_once(':')?;
+    if suffix.is_empty() || !suffix.chars().all(|character| character.is_ascii_digit()) {
+        return None;
+    }
+    Some((prefix.to_string(), suffix.to_string()))
+}
+
+fn messages_timeline_canonicalize_windows_drive_path(path: &str) -> String {
+    if path.len() >= 4
+        && path.as_bytes()[0] == b'/'
+        && path.as_bytes()[1].is_ascii_alphabetic()
+        && path.as_bytes()[2] == b':'
+        && path.as_bytes()[3] == b'/'
+    {
+        path[1..].to_string()
+    } else {
+        path.to_string()
+    }
+}
+
+fn messages_timeline_basename_of_path(path: &str) -> &str {
+    path.rsplit(['/', '\\']).next().unwrap_or(path)
+}
+
+fn messages_timeline_strip_relative_prefixes(path: &str) -> String {
+    let mut value = path;
+    if let Some(rest) = value.strip_prefix("./") {
+        value = rest.trim_start_matches('/');
+    }
+    value.trim_start_matches('/').to_string()
+}
+
+fn capitalize_messages_timeline_phrase(value: &str) -> String {
+    let mut chars = value.trim().chars();
+    let Some(first) = chars.next() else {
+        return value.to_string();
+    };
+    format!("{}{}", first.to_uppercase(), chars.collect::<String>())
+}
+
 pub fn derive_terminal_assistant_message_ids(messages: &[ChatMessage]) -> BTreeSet<String> {
     let mut last_assistant_message_id_by_response_key = BTreeMap::new();
     let mut null_turn_response_index = 0usize;
@@ -41249,6 +41493,125 @@ mod tests {
         let reordered =
             compute_stable_messages_timeline_rows(vec![rows[1].clone(), rows[0].clone()], &initial);
         assert_ne!(reordered.result, initial.result);
+    }
+
+    #[test]
+    fn messages_timeline_component_contracts_match_upstream_rendering() {
+        let long_user_message = (0..9)
+            .map(|index| {
+                if index == 8 {
+                    "deep hidden detail only after expand".to_string()
+                } else {
+                    format!(
+                        "Line {}: {}",
+                        index + 1,
+                        "verbose prompt content ".repeat(8).trim()
+                    )
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        let long_contract = build_user_message_render_contract(&long_user_message, false, true);
+        assert!(long_contract.can_collapse);
+        assert!(long_contract.is_collapsed);
+        assert_eq!(long_contract.body_collapsed_attr, "true");
+        assert_eq!(long_contract.body_fade_attr, "true");
+        assert!(long_contract.footer_visible);
+        assert_eq!(
+            long_contract.collapse_button_label,
+            Some(USER_MESSAGE_SHOW_FULL_BUTTON_LABEL)
+        );
+        assert_eq!(
+            long_contract.copy_button_aria_label,
+            Some(MESSAGE_COPY_BUTTON_ARIA_LABEL)
+        );
+
+        let short_contract = build_user_message_render_contract("Short prompt.", false, true);
+        assert!(!short_contract.can_collapse);
+        assert_eq!(short_contract.body_collapsible_attr, "false");
+        assert_eq!(short_contract.collapse_button_label, None);
+
+        let terminal_prompt = [
+            long_user_message.replace(
+                "deep hidden detail only after expand",
+                "yoo what's @terminal-1:1-5 mean",
+            ),
+            String::new(),
+            "<terminal_context>".to_string(),
+            "- Terminal 1 lines 1-5:".to_string(),
+            "  1 | julius@mac effect-http-ws-cli % bun i".to_string(),
+            "  2 | bun install v1.3.9 (cf6cdbbb)".to_string(),
+            "</terminal_context>".to_string(),
+        ]
+        .join("\n");
+        let terminal_contract = build_user_message_render_contract(&terminal_prompt, false, true);
+        assert_eq!(
+            terminal_contract.terminal_labels,
+            vec!["Terminal 1 lines 1-5"]
+        );
+        assert!(terminal_contract.has_embedded_inline_labels);
+        assert_eq!(
+            terminal_contract.terminal_chip_icon_class,
+            Some(TERMINAL_CONTEXT_INLINE_CHIP_ICON_CLASS)
+        );
+        assert!(terminal_contract.can_collapse);
+
+        let context_compaction = WorkLogEntry {
+            id: "work-1".to_string(),
+            activity_kind: "tool.completed".to_string(),
+            created_at: "2026-03-17T19:12:28.000Z".to_string(),
+            label: "Context compacted".to_string(),
+            detail: None,
+            command: None,
+            raw_command: None,
+            changed_files: Vec::new(),
+            tone: ActivityTone::Info,
+            tool_title: None,
+            item_type: None,
+            request_kind: None,
+            tool_call_id: None,
+        };
+        assert_eq!(
+            messages_timeline_work_group_header_label(&[context_compaction.clone()]),
+            Some("Work log (1)".to_string())
+        );
+        assert_eq!(
+            messages_timeline_tool_work_entry_heading(&context_compaction),
+            "Context compacted"
+        );
+
+        let changed_files = WorkLogEntry {
+            id: "work-2".to_string(),
+            activity_kind: "tool.completed".to_string(),
+            created_at: "2026-03-17T19:12:28.000Z".to_string(),
+            label: "Updated files".to_string(),
+            detail: None,
+            command: None,
+            raw_command: None,
+            changed_files: vec![
+                "C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts".to_string(),
+            ],
+            tone: ActivityTone::Tool,
+            tool_title: None,
+            item_type: None,
+            request_kind: None,
+            tool_call_id: None,
+        };
+        assert_eq!(
+            messages_timeline_format_workspace_relative_path(
+                "C:/Users/mike/dev-stuff/t3code/apps/web/src/session-logic.ts",
+                Some("C:/Users/mike/dev-stuff/t3code")
+            ),
+            "t3code/apps/web/src/session-logic.ts"
+        );
+        assert_eq!(
+            messages_timeline_work_entry_display_text(
+                &changed_files,
+                Some("C:/Users/mike/dev-stuff/t3code")
+            ),
+            "Updated files - t3code/apps/web/src/session-logic.ts"
+        );
     }
 
     #[test]

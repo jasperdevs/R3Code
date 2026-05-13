@@ -1879,6 +1879,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core messages_timeline_logic`",
             "Port browser rendering, proposed-plan UI lifecycle, exact diff/revert controls, live scroll behavior, and remaining UI wiring.",
         )
+    } else if path == "apps/web/src/components/chat/MessagesTimeline.test.tsx"
+        || path == "apps/web/src/components/chat/MessagesTimeline.tsx"
+    {
+        (
+            "MessagesTimeline rendered user-message collapse attributes, footer/copy affordances, inline terminal chip labels, context-compaction work logs, and workspace-relative changed-file previews in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace messages_timeline_component_contracts_match_upstream_rendering`; `cargo test --workspace messages_timeline_logic_helpers_match_upstream`",
+            "Wire the remaining LegendList scroll lifecycle, proposed-plan UI lifecycle, exact diff/revert controls, image expansion, live timers, and GPUI row styling.",
+        )
     } else if path == "apps/web/src/components/ProviderUpdateLaunchNotification.logic.ts"
         || path == "apps/web/src/components/ProviderUpdateLaunchNotification.logic.test.ts"
     {
