@@ -1878,6 +1878,14 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core diff_rendering_and_model_highlight`",
             "Wire helpers into live GPUI diff highlighter/cache rendering.",
         )
+    } else if path == "apps/web/src/lib/lruCache.ts" || path == "apps/web/src/lib/lruCache.test.ts"
+    {
+        (
+            "string-keyed LRU cache promotion, replacement, entry-count eviction, memory-budget eviction, and clear behavior in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core lru_cache_matches_upstream_entry_and_memory_eviction`",
+            "Wire cache into live GPUI markdown/highlighter surfaces where upstream uses lruCache.ts.",
+        )
     } else if path == "apps/web/src/components/chat/modelPickerModelHighlights.ts" {
         (
             "model picker new-model highlight key lookup in crates/r3_core/src/lib.rs",

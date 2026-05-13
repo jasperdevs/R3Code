@@ -19,7 +19,7 @@ pub mod workspace;
 
 use std::{
     cmp::Ordering,
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap, VecDeque},
 };
 
 use sha2::{Digest, Sha256};
@@ -226,6 +226,88 @@ pub fn build_patch_cache_key(patch: &str, scope: Option<&str>) -> String {
         primary,
         secondary
     )
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LruCacheEntry<T> {
+    value: T,
+    approximate_size: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LruCache<T> {
+    cache: HashMap<String, LruCacheEntry<T>>,
+    order: VecDeque<String>,
+    total_size: usize,
+    max_entries: usize,
+    max_memory_bytes: usize,
+}
+
+impl<T> LruCache<T> {
+    pub fn new(max_entries: usize, max_memory_bytes: usize) -> Self {
+        Self {
+            cache: HashMap::new(),
+            order: VecDeque::new(),
+            total_size: 0,
+            max_entries,
+            max_memory_bytes,
+        }
+    }
+
+    pub fn get(&mut self, key: &str) -> Option<&T> {
+        if !self.cache.contains_key(key) {
+            return None;
+        }
+
+        self.promote(key);
+        self.cache.get(key).map(|entry| &entry.value)
+    }
+
+    pub fn set(&mut self, key: impl Into<String>, value: T, approximate_size: usize) {
+        let key = key.into();
+        if let Some(existing) = self.cache.remove(&key) {
+            self.total_size = self.total_size.saturating_sub(existing.approximate_size);
+            self.order.retain(|existing_key| existing_key != &key);
+        }
+
+        self.evict_if_needed(approximate_size);
+        self.cache.insert(
+            key.clone(),
+            LruCacheEntry {
+                value,
+                approximate_size,
+            },
+        );
+        self.order.push_back(key);
+        self.total_size += approximate_size;
+    }
+
+    pub fn clear(&mut self) {
+        self.cache.clear();
+        self.order.clear();
+        self.total_size = 0;
+    }
+
+    fn promote(&mut self, key: &str) {
+        self.order.retain(|existing_key| existing_key != key);
+        self.order.push_back(key.to_string());
+    }
+
+    fn evict_if_needed(&mut self, incoming_size: usize) {
+        while (self.cache.len() >= self.max_entries
+            || self.total_size + incoming_size > self.max_memory_bytes)
+            && !self.cache.is_empty()
+        {
+            let Some(oldest_key) = self.order.pop_front() else {
+                break;
+            };
+            if let Some(oldest_entry) = self.cache.remove(&oldest_key) {
+                self.total_size = self
+                    .total_size
+                    .saturating_sub(oldest_entry.approximate_size);
+            }
+        }
+    }
 }
 
 pub fn is_model_picker_new_model(provider: &str, slug: &str) -> bool {
@@ -21366,6 +21448,39 @@ mod tests {
             "diff-panel:2:1kdnhdk:d1ty04"
         );
         assert!(!is_model_picker_new_model("claudeAgent", "claude-opus-4-7"));
+    }
+
+    #[test]
+    fn lru_cache_matches_upstream_entry_and_memory_eviction() {
+        let mut cache = LruCache::new(2, 100);
+        assert_eq!(cache.get("missing"), None);
+
+        cache.set("a", "A".to_string(), 10);
+        cache.set("b", "B".to_string(), 10);
+        cache.set("c", "C".to_string(), 10);
+        assert_eq!(cache.get("a"), None);
+        assert_eq!(cache.get("b").map(String::as_str), Some("B"));
+        assert_eq!(cache.get("c").map(String::as_str), Some("C"));
+
+        let mut promoted = LruCache::new(2, 1_000);
+        promoted.set("a", "A".to_string(), 10);
+        promoted.set("b", "B".to_string(), 10);
+        assert_eq!(promoted.get("a").map(String::as_str), Some("A"));
+        promoted.set("c", "C".to_string(), 10);
+        assert_eq!(promoted.get("a").map(String::as_str), Some("A"));
+        assert_eq!(promoted.get("b"), None);
+        assert_eq!(promoted.get("c").map(String::as_str), Some("C"));
+
+        let mut memory_bound = LruCache::new(10, 25);
+        memory_bound.set("a", "A".to_string(), 10);
+        memory_bound.set("b", "B".to_string(), 10);
+        memory_bound.set("c", "C".to_string(), 10);
+        assert_eq!(memory_bound.get("a"), None);
+        assert_eq!(memory_bound.get("b").map(String::as_str), Some("B"));
+        assert_eq!(memory_bound.get("c").map(String::as_str), Some("C"));
+
+        memory_bound.clear();
+        assert_eq!(memory_bound.get("b"), None);
     }
 
     #[test]
