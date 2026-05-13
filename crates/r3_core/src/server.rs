@@ -1232,6 +1232,30 @@ pub enum ProjectFaviconRouteDecision {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProjectFaviconRouteFileResponse {
+    BadRequest {
+        body: &'static str,
+        status: u16,
+    },
+    FallbackSvg {
+        body: &'static str,
+        status: u16,
+        content_type: &'static str,
+        cache_control: &'static str,
+    },
+    File {
+        path: PathBuf,
+        bytes: Vec<u8>,
+        status: u16,
+        cache_control: &'static str,
+    },
+    InternalServerError {
+        body: &'static str,
+        status: u16,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OtlpTracesProxyDecision {
     NoExportConfigured { status: u16 },
     Export { url: String },
@@ -1837,6 +1861,47 @@ pub fn project_favicon_route_decision(
         path: path.to_string(),
         status: 200,
         cache_control: PROJECT_FAVICON_CACHE_CONTROL,
+    }
+}
+
+pub fn project_favicon_route_file_response(
+    request_url: Option<&str>,
+    resolved_favicon_path: Option<&Path>,
+) -> ProjectFaviconRouteFileResponse {
+    let Some(request_url) = request_url else {
+        return ProjectFaviconRouteFileResponse::BadRequest {
+            body: "Bad Request",
+            status: 400,
+        };
+    };
+    if query_param(request_url, "cwd")
+        .filter(|value| !value.is_empty())
+        .is_none()
+    {
+        return ProjectFaviconRouteFileResponse::BadRequest {
+            body: "Missing cwd parameter",
+            status: 400,
+        };
+    }
+    let Some(path) = resolved_favicon_path else {
+        return ProjectFaviconRouteFileResponse::FallbackSvg {
+            body: FALLBACK_PROJECT_FAVICON_SVG,
+            status: 200,
+            content_type: "image/svg+xml",
+            cache_control: PROJECT_FAVICON_CACHE_CONTROL,
+        };
+    };
+    match fs::read(path) {
+        Ok(bytes) => ProjectFaviconRouteFileResponse::File {
+            path: path.to_path_buf(),
+            bytes,
+            status: 200,
+            cache_control: PROJECT_FAVICON_CACHE_CONTROL,
+        },
+        Err(_) => ProjectFaviconRouteFileResponse::InternalServerError {
+            body: "Internal Server Error",
+            status: 500,
+        },
     }
 }
 
@@ -3770,6 +3835,44 @@ mod tests {
             ProjectFaviconRouteDecision::InternalServerError {
                 body: "Internal Server Error",
                 status: 500,
+            }
+        );
+        let favicon_dir = make_static_test_dir("favicon");
+        let favicon_path = favicon_dir.join("favicon.ico");
+        std::fs::write(&favicon_path, [0_u8, 1, 2, 3]).unwrap();
+        assert_eq!(
+            project_favicon_route_file_response(
+                Some("http://localhost:3773/api/project-favicon?cwd=C:/repo"),
+                Some(&favicon_path),
+            ),
+            ProjectFaviconRouteFileResponse::File {
+                path: favicon_path.clone(),
+                bytes: vec![0, 1, 2, 3],
+                status: 200,
+                cache_control: PROJECT_FAVICON_CACHE_CONTROL,
+            }
+        );
+        assert_eq!(
+            project_favicon_route_file_response(
+                Some("http://localhost:3773/api/project-favicon?cwd=C:/repo"),
+                Some(&favicon_dir.join("missing.ico")),
+            ),
+            ProjectFaviconRouteFileResponse::InternalServerError {
+                body: "Internal Server Error",
+                status: 500,
+            }
+        );
+        let _ = std::fs::remove_dir_all(&favicon_dir);
+        assert_eq!(
+            project_favicon_route_file_response(
+                Some("http://localhost:3773/api/project-favicon?cwd=C:/repo"),
+                None,
+            ),
+            ProjectFaviconRouteFileResponse::FallbackSvg {
+                body: FALLBACK_PROJECT_FAVICON_SVG,
+                status: 200,
+                content_type: "image/svg+xml",
+                cache_control: PROJECT_FAVICON_CACHE_CONTROL,
             }
         );
         assert_eq!(OTLP_TRACES_PROXY_PATH, "/api/observability/v1/traces");

@@ -2190,10 +2190,10 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
         || path == "packages/contracts/src/rpc.ts"
     {
         (
-            "transport-agnostic HTTP route plus attachment route decisions, static/dev redirect/path-guard/fallback/content-type helpers with real static file/index read response helper, browser API CORS constants and preflight/header decision contracts, project favicon route decisions, OTLP traces proxy route decisions, and WebSocket RPC method/group/schema/handler/dispatch contracts in crates/r3_core/src/rpc.rs plus crates/r3_core/src/server.rs",
+            "transport-agnostic HTTP route plus attachment route decisions, static/dev redirect/path-guard/fallback/content-type helpers with real static file/index read response helper, browser API CORS constants and preflight/header decision contracts, project favicon route decisions plus file/fallback response helper, OTLP traces proxy route decisions, and WebSocket RPC method/group/schema/handler/dispatch contracts in crates/r3_core/src/rpc.rs plus crates/r3_core/src/server.rs",
             "partial",
             "`cargo test -p r3_core rpc`",
-            "Port live HTTP server, WebSocket upgrade/auth handling, concrete handler execution, runtime schema decoding, subscriptions, attachment filesystem response execution, live favicon file response execution, OTLP decode/record/export execution, and actual CORS middleware integration.",
+            "Port live HTTP server, WebSocket upgrade/auth handling, concrete handler execution, runtime schema decoding, subscriptions, attachment filesystem response execution, OTLP decode/record/export execution, and actual CORS middleware integration.",
         )
     } else if path.starts_with("apps/server/") {
         (
