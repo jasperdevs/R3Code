@@ -417,6 +417,13 @@ pub struct AuthSetCookiePlan {
     pub same_site: &'static str,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthSessionStateSession {
+    pub role: AuthSessionRole,
+    pub method: ServerAuthSessionMethod,
+    pub expires_at: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PairingCredentialRequestHeaders {
     pub content_length: Option<String>,
@@ -758,6 +765,62 @@ pub fn auth_revoke_others_success_response_plan(
         headers: BTreeMap::new(),
         set_cookie: None,
     }
+}
+
+pub fn auth_session_state_response_plan(
+    descriptor: &ServerAuthDescriptor,
+    session: Option<AuthSessionStateSession>,
+) -> AuthRouteSuccessResponsePlan {
+    let auth_json = server_auth_descriptor_json(descriptor);
+    let body_json = match session {
+        Some(session) => {
+            let expires_json = session
+                .expires_at
+                .as_deref()
+                .map(|expires_at| format!(",\"expiresAt\":{}", json_string(expires_at)))
+                .unwrap_or_default();
+            format!(
+                "{{\"authenticated\":true,\"auth\":{auth_json},\"role\":{},\"sessionMethod\":{}{expires_json}}}",
+                json_string(session.role.as_str()),
+                json_string(session.method.as_str()),
+            )
+        }
+        None => format!("{{\"authenticated\":false,\"auth\":{auth_json}}}"),
+    };
+    AuthRouteSuccessResponsePlan {
+        status: 200,
+        body_json,
+        headers: browser_api_cors_headers(),
+        set_cookie: None,
+    }
+}
+
+fn server_auth_descriptor_json(descriptor: &ServerAuthDescriptor) -> String {
+    format!(
+        "{{\"policy\":{},\"bootstrapMethods\":{},\"sessionMethods\":{},\"sessionCookieName\":{}}}",
+        json_string(descriptor.policy.as_str()),
+        bootstrap_methods_json(&descriptor.bootstrap_methods),
+        session_methods_json(&descriptor.session_methods),
+        json_string(&descriptor.session_cookie_name),
+    )
+}
+
+fn bootstrap_methods_json(methods: &[ServerAuthBootstrapMethod]) -> String {
+    let values = methods
+        .iter()
+        .map(|method| json_string(method.as_str()))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("[{values}]")
+}
+
+fn session_methods_json(methods: &[ServerAuthSessionMethod]) -> String {
+    let values = methods
+        .iter()
+        .map(|method| json_string(method.as_str()))
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("[{values}]")
 }
 
 fn browser_api_cors_headers() -> BTreeMap<&'static str, String> {
@@ -1992,6 +2055,51 @@ mod tests {
         assert_eq!(
             auth_revoke_others_success_response_plan(3).body_json,
             "{\"revokedCount\":3}"
+        );
+    }
+
+    #[test]
+    fn ports_auth_session_state_response_contracts() {
+        let descriptor = make_server_auth_descriptor(ServerMode::Desktop, Some("0.0.0.0"), 3773);
+        let unauthenticated = auth_session_state_response_plan(&descriptor, None);
+        assert_eq!(unauthenticated.status, 200);
+        assert_eq!(
+            unauthenticated.body_json,
+            "{\"authenticated\":false,\"auth\":{\"policy\":\"remote-reachable\",\"bootstrapMethods\":[\"desktop-bootstrap\",\"one-time-token\"],\"sessionMethods\":[\"browser-session-cookie\",\"bearer-session-token\"],\"sessionCookieName\":\"t3_session_3773\"}}"
+        );
+        assert_eq!(
+            unauthenticated
+                .headers
+                .get("access-control-allow-origin")
+                .map(String::as_str),
+            Some("*")
+        );
+        assert!(unauthenticated.set_cookie.is_none());
+
+        let authenticated = auth_session_state_response_plan(
+            &descriptor,
+            Some(AuthSessionStateSession {
+                role: AuthSessionRole::Owner,
+                method: ServerAuthSessionMethod::BrowserSessionCookie,
+                expires_at: Some("2026-03-04T12:10:00.000Z".to_string()),
+            }),
+        );
+        assert_eq!(
+            authenticated.body_json,
+            "{\"authenticated\":true,\"auth\":{\"policy\":\"remote-reachable\",\"bootstrapMethods\":[\"desktop-bootstrap\",\"one-time-token\"],\"sessionMethods\":[\"browser-session-cookie\",\"bearer-session-token\"],\"sessionCookieName\":\"t3_session_3773\"},\"role\":\"owner\",\"sessionMethod\":\"browser-session-cookie\",\"expiresAt\":\"2026-03-04T12:10:00.000Z\"}"
+        );
+
+        let session_without_expiry = auth_session_state_response_plan(
+            &descriptor,
+            Some(AuthSessionStateSession {
+                role: AuthSessionRole::Client,
+                method: ServerAuthSessionMethod::BearerSessionToken,
+                expires_at: None,
+            }),
+        );
+        assert_eq!(
+            session_without_expiry.body_json,
+            "{\"authenticated\":true,\"auth\":{\"policy\":\"remote-reachable\",\"bootstrapMethods\":[\"desktop-bootstrap\",\"one-time-token\"],\"sessionMethods\":[\"browser-session-cookie\",\"bearer-session-token\"],\"sessionCookieName\":\"t3_session_3773\"},\"role\":\"client\",\"sessionMethod\":\"bearer-session-token\"}"
         );
     }
 
