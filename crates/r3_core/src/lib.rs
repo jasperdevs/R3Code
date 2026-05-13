@@ -3757,12 +3757,155 @@ pub struct BranchToolbarState {
     pub resolved_active_branch: Option<String>,
 }
 
+pub const BRANCH_TOOLBAR_ROOT_CLASS_NAME: &str =
+    "mx-auto flex w-full max-w-208 items-center gap-2 px-2.5 pb-3 pt-1 sm:px-3";
+pub const BRANCH_TOOLBAR_DESKTOP_CONTEXT_CLASS_NAME: &str =
+    "flex min-w-0 shrink-0 items-center gap-1";
+pub const BRANCH_TOOLBAR_BRANCH_SELECTOR_CLASS_NAME: &str =
+    "min-w-0 flex-1 justify-end md:ml-auto md:flex-none";
+pub const BRANCH_TOOLBAR_MOBILE_LOCKED_CLASS_NAME: &str = "inline-flex min-w-0 max-w-[48%] flex-1 items-center justify-start gap-1 rounded-md border border-transparent px-[calc(--spacing(2)-1px)] text-sm font-medium text-muted-foreground/70 md:hidden";
+pub const BRANCH_TOOLBAR_MOBILE_TRIGGER_CLASS_NAME: &str = "min-w-0 max-w-[48%] flex-1 justify-start text-muted-foreground/70 hover:text-foreground/80 md:hidden";
+pub const BRANCH_TOOLBAR_MOBILE_MENU_CLASS_NAME: &str = "w-64";
+pub const BRANCH_TOOLBAR_RUN_ON_LABEL: &str = "Run on";
+pub const BRANCH_TOOLBAR_WORKSPACE_LABEL: &str = "Workspace";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchToolbarRenderContract {
+    pub visible: bool,
+    pub root_class_name: Option<&'static str>,
+    pub desktop_context_class_name: Option<&'static str>,
+    pub branch_selector_class_name: Option<&'static str>,
+    pub show_environment_picker: bool,
+    pub env_mode_locked: bool,
+    pub mobile_selector_class_name: &'static str,
+    pub mobile_menu_class_name: Option<&'static str>,
+    pub mobile_workspace_icon: &'static str,
+    pub mobile_environment_icon: &'static str,
+    pub mobile_label: String,
+    pub mobile_menu_group_labels: Vec<&'static str>,
+}
+
 impl DraftThreadEnvMode {
     pub fn toggled(self) -> Self {
         match self {
             Self::Local => Self::Worktree,
             Self::Worktree => Self::Local,
         }
+    }
+}
+
+pub fn should_show_branch_toolbar_environment_picker(
+    available_environment_count: usize,
+    has_environment_change_handler: bool,
+) -> bool {
+    available_environment_count > 1 && has_environment_change_handler
+}
+
+pub fn is_branch_toolbar_env_mode_locked(
+    env_locked: bool,
+    has_server_thread: bool,
+    active_worktree_path: Option<&str>,
+) -> bool {
+    env_locked || (has_server_thread && active_worktree_path.is_some())
+}
+
+pub fn branch_toolbar_mobile_workspace_icon(
+    effective_env_mode: DraftThreadEnvMode,
+    active_worktree_path: Option<&str>,
+) -> &'static str {
+    if effective_env_mode == DraftThreadEnvMode::Worktree {
+        "FolderGit2Icon"
+    } else if active_worktree_path.is_some() {
+        "FolderGitIcon"
+    } else {
+        "FolderIcon"
+    }
+}
+
+pub fn branch_toolbar_mobile_environment_icon(is_primary: bool) -> &'static str {
+    if is_primary {
+        "MonitorIcon"
+    } else {
+        "CloudIcon"
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BranchToolbarRenderInput<'a> {
+    pub has_server_thread: bool,
+    pub has_draft_thread: bool,
+    pub has_active_project: bool,
+    pub env_locked: bool,
+    pub active_worktree_path: Option<&'a str>,
+    pub effective_env_mode: DraftThreadEnvMode,
+    pub available_environment_count: usize,
+    pub has_environment_change_handler: bool,
+    pub active_environment_label: Option<&'a str>,
+    pub active_environment_is_primary: bool,
+    pub is_mobile: bool,
+}
+
+pub fn derive_branch_toolbar_render_contract(
+    input: BranchToolbarRenderInput<'_>,
+) -> BranchToolbarRenderContract {
+    let has_active_thread = input.has_server_thread || input.has_draft_thread;
+    let visible = has_active_thread && input.has_active_project;
+    let show_environment_picker = should_show_branch_toolbar_environment_picker(
+        input.available_environment_count,
+        input.has_environment_change_handler,
+    );
+    let env_mode_locked = is_branch_toolbar_env_mode_locked(
+        input.env_locked,
+        input.has_server_thread,
+        input.active_worktree_path,
+    );
+    let is_locked = input.env_locked || env_mode_locked;
+    let workspace_label = if env_mode_locked {
+        resolve_locked_workspace_label(input.active_worktree_path)
+    } else if input.effective_env_mode == DraftThreadEnvMode::Worktree {
+        resolve_env_mode_label(DraftThreadEnvMode::Worktree)
+    } else {
+        resolve_current_workspace_label(input.active_worktree_path)
+    };
+    let mobile_label = if show_environment_picker {
+        input
+            .active_environment_label
+            .unwrap_or(BRANCH_TOOLBAR_RUN_ON_LABEL)
+    } else {
+        workspace_label
+    };
+    let mut mobile_menu_group_labels = Vec::new();
+    if input.is_mobile && visible && !is_locked {
+        if show_environment_picker {
+            mobile_menu_group_labels.push(BRANCH_TOOLBAR_RUN_ON_LABEL);
+        }
+        mobile_menu_group_labels.push(BRANCH_TOOLBAR_WORKSPACE_LABEL);
+    }
+
+    BranchToolbarRenderContract {
+        visible,
+        root_class_name: visible.then_some(BRANCH_TOOLBAR_ROOT_CLASS_NAME),
+        desktop_context_class_name: (visible && !input.is_mobile)
+            .then_some(BRANCH_TOOLBAR_DESKTOP_CONTEXT_CLASS_NAME),
+        branch_selector_class_name: visible.then_some(BRANCH_TOOLBAR_BRANCH_SELECTOR_CLASS_NAME),
+        show_environment_picker,
+        env_mode_locked,
+        mobile_selector_class_name: if is_locked {
+            BRANCH_TOOLBAR_MOBILE_LOCKED_CLASS_NAME
+        } else {
+            BRANCH_TOOLBAR_MOBILE_TRIGGER_CLASS_NAME
+        },
+        mobile_menu_class_name: (input.is_mobile && visible && !is_locked)
+            .then_some(BRANCH_TOOLBAR_MOBILE_MENU_CLASS_NAME),
+        mobile_workspace_icon: branch_toolbar_mobile_workspace_icon(
+            input.effective_env_mode,
+            input.active_worktree_path,
+        ),
+        mobile_environment_icon: branch_toolbar_mobile_environment_icon(
+            input.active_environment_is_primary,
+        ),
+        mobile_label: mobile_label.to_string(),
+        mobile_menu_group_labels,
     }
 }
 
@@ -35454,6 +35597,107 @@ mod tests {
             branch_toolbar_trigger_label(None, DraftThreadEnvMode::Worktree, Some("main")),
             "From main"
         );
+    }
+
+    #[test]
+    fn branch_toolbar_render_contract_matches_upstream_component() {
+        let hidden = derive_branch_toolbar_render_contract(BranchToolbarRenderInput {
+            has_server_thread: false,
+            has_draft_thread: false,
+            has_active_project: true,
+            env_locked: false,
+            active_worktree_path: None,
+            effective_env_mode: DraftThreadEnvMode::Local,
+            available_environment_count: 2,
+            has_environment_change_handler: true,
+            active_environment_label: Some("This device"),
+            active_environment_is_primary: true,
+            is_mobile: false,
+        });
+        assert!(!hidden.visible);
+        assert_eq!(hidden.root_class_name, None);
+
+        let desktop = derive_branch_toolbar_render_contract(BranchToolbarRenderInput {
+            has_server_thread: true,
+            has_draft_thread: false,
+            has_active_project: true,
+            env_locked: false,
+            active_worktree_path: None,
+            effective_env_mode: DraftThreadEnvMode::Local,
+            available_environment_count: 2,
+            has_environment_change_handler: true,
+            active_environment_label: Some("This device"),
+            active_environment_is_primary: true,
+            is_mobile: false,
+        });
+        assert!(desktop.visible);
+        assert_eq!(
+            desktop.root_class_name,
+            Some(BRANCH_TOOLBAR_ROOT_CLASS_NAME)
+        );
+        assert_eq!(
+            desktop.desktop_context_class_name,
+            Some(BRANCH_TOOLBAR_DESKTOP_CONTEXT_CLASS_NAME)
+        );
+        assert_eq!(
+            desktop.branch_selector_class_name,
+            Some(BRANCH_TOOLBAR_BRANCH_SELECTOR_CLASS_NAME)
+        );
+        assert!(desktop.show_environment_picker);
+        assert!(!desktop.env_mode_locked);
+
+        let mobile = derive_branch_toolbar_render_contract(BranchToolbarRenderInput {
+            has_server_thread: false,
+            has_draft_thread: true,
+            has_active_project: true,
+            env_locked: false,
+            active_worktree_path: None,
+            effective_env_mode: DraftThreadEnvMode::Worktree,
+            available_environment_count: 2,
+            has_environment_change_handler: true,
+            active_environment_label: Some("Remote box"),
+            active_environment_is_primary: false,
+            is_mobile: true,
+        });
+        assert_eq!(
+            mobile.mobile_selector_class_name,
+            BRANCH_TOOLBAR_MOBILE_TRIGGER_CLASS_NAME
+        );
+        assert_eq!(
+            mobile.mobile_menu_class_name,
+            Some(BRANCH_TOOLBAR_MOBILE_MENU_CLASS_NAME)
+        );
+        assert_eq!(mobile.mobile_workspace_icon, "FolderGit2Icon");
+        assert_eq!(mobile.mobile_environment_icon, "CloudIcon");
+        assert_eq!(mobile.mobile_label, "Remote box");
+        assert_eq!(
+            mobile.mobile_menu_group_labels,
+            vec![BRANCH_TOOLBAR_RUN_ON_LABEL, BRANCH_TOOLBAR_WORKSPACE_LABEL]
+        );
+
+        let locked_worktree = derive_branch_toolbar_render_contract(BranchToolbarRenderInput {
+            has_server_thread: true,
+            has_draft_thread: false,
+            has_active_project: true,
+            env_locked: false,
+            active_worktree_path: Some("/repo/.t3/worktrees/feature-a"),
+            effective_env_mode: DraftThreadEnvMode::Worktree,
+            available_environment_count: 1,
+            has_environment_change_handler: true,
+            active_environment_label: Some("This device"),
+            active_environment_is_primary: true,
+            is_mobile: true,
+        });
+        assert!(locked_worktree.env_mode_locked);
+        assert_eq!(
+            locked_worktree.mobile_selector_class_name,
+            BRANCH_TOOLBAR_MOBILE_LOCKED_CLASS_NAME
+        );
+        assert_eq!(locked_worktree.mobile_menu_class_name, None);
+        assert_eq!(locked_worktree.mobile_workspace_icon, "FolderGit2Icon");
+        assert_eq!(locked_worktree.mobile_environment_icon, "MonitorIcon");
+        assert_eq!(locked_worktree.mobile_label, "Worktree");
+        assert!(locked_worktree.mobile_menu_group_labels.is_empty());
     }
 
     #[test]

@@ -2482,6 +2482,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace branch_toolbar_env_mode_and_value_match_upstream_logic`; `cargo test --workspace branch_toolbar_labels_match_upstream_logic`",
             "Wire the remaining branch popover rendering, live checkout actions, saved draft mutation, and exact GPUI branch toolbar layout.",
         )
+    } else if path == "apps/web/src/components/BranchToolbar.tsx" {
+        (
+            "BranchToolbar top-level render gate, root/desktop/mobile class contracts, environment picker visibility, env-mode lock rule, mobile icon/label decisions, and menu group labels in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace branch_toolbar_render_contract_matches_upstream_component`; `cargo test --workspace branch_toolbar_env_mode_and_value_match_upstream_logic`; `cargo test --workspace branch_toolbar_labels_match_upstream_logic`",
+            "Wire exact GPUI desktop/mobile branch toolbar rendering plus live selector callbacks and responsive media state.",
+        )
     } else if path == "apps/web/src/components/CommandPalette.logic.test.ts"
         || path == "apps/web/src/components/CommandPalette.logic.ts"
     {
