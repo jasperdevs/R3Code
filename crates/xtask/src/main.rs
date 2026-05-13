@@ -1788,6 +1788,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core provider_skill_presentation_and_search_match_upstream_contract`",
             "Wire helpers into live GPUI skill picker/menu surfaces, install-source labels, and provider skill search UI.",
         )
+    } else if path == "apps/web/src/projectScripts.ts"
+        || path == "apps/web/src/projectScripts.test.ts"
+    {
+        (
+            "project script run command construction/parsing, 24-character script-id slugification/truncation/dedupe, primary/setup script selection, runtime env override semantics, and worktree-preferred cwd resolution in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core project_scripts_helpers_match_upstream_logic`; `cargo test -p r3_core project_script_runtime_context_matches_upstream_logic`",
+            "Wire helpers into live GPUI project script creation, settings persistence, terminal launch, and worktree setup flows.",
+        )
     } else if path == "apps/web/src/shortcutModifierState.ts"
         || path == "apps/web/src/shortcutModifierState.test.ts"
     {

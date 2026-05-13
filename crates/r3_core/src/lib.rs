@@ -7258,7 +7258,7 @@ pub fn resolve_model_picker_state(
     }
 }
 
-const MAX_SCRIPT_ID_LENGTH: usize = 64;
+const MAX_SCRIPT_ID_LENGTH: usize = 24;
 
 pub fn command_for_project_script(script_id: &str) -> String {
     format!("script.{script_id}.run")
@@ -7281,7 +7281,6 @@ pub fn project_script_id_from_command(command: &str) -> Option<String> {
 
 pub const PROJECT_SCRIPT_KEYBINDING_INVALID_MESSAGE: &str = "Invalid keybinding.";
 pub const MAX_KEYBINDING_VALUE_LENGTH: usize = 64;
-const MAX_KEYBINDING_SCRIPT_ID_LENGTH: usize = 24;
 
 fn normalize_project_script_keybinding_input(keybinding: Option<&str>) -> Option<String> {
     let trimmed = keybinding.unwrap_or("").trim();
@@ -7292,7 +7291,7 @@ fn is_valid_script_keybinding_command(command: &str) -> bool {
     let Some(script_id) = project_script_id_from_command(command) else {
         return false;
     };
-    script_id.len() <= MAX_KEYBINDING_SCRIPT_ID_LENGTH
+    script_id.len() <= MAX_SCRIPT_ID_LENGTH
         && script_id
             .chars()
             .next()
@@ -25348,6 +25347,20 @@ mod tests {
             "run-tests-2"
         );
         assert_eq!(next_project_script_id("!!!", [] as [&str; 0]), "script");
+        assert_eq!(
+            next_project_script_id(
+                "This Script Name Is Longer Than The Contract Allows",
+                [] as [&str; 0]
+            ),
+            "this-script-name-is-long"
+        );
+        assert_eq!(
+            next_project_script_id(
+                "This Script Name Is Longer Than The Contract Allows",
+                ["this-script-name-is-long"]
+            ),
+            "this-script-name-is-lo-2"
+        );
 
         let scripts = vec![
             ProjectScript {
