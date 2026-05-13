@@ -3217,6 +3217,149 @@ pub fn is_arm64_host_running_intel_desktop_build(runtime_info: &DesktopRuntimeIn
         && runtime_info.app_arch == DesktopRuntimeArch::X64
 }
 
+pub fn resolve_desktop_update_button_action(
+    state: &DesktopUpdateState,
+) -> Option<DesktopUpdateAction> {
+    if state.downloaded_version.is_some() {
+        return Some(DesktopUpdateAction::Install);
+    }
+    if state.status == DesktopUpdateStatus::Available {
+        return Some(DesktopUpdateAction::Download);
+    }
+    if state.status == DesktopUpdateStatus::Error
+        && state.error_context == Some(DesktopUpdateAction::Download)
+        && state.available_version.is_some()
+    {
+        return Some(DesktopUpdateAction::Download);
+    }
+    None
+}
+
+pub fn should_show_desktop_update_button(state: Option<&DesktopUpdateState>) -> bool {
+    let Some(state) = state else {
+        return false;
+    };
+    if !state.enabled {
+        return false;
+    }
+    state.status == DesktopUpdateStatus::Downloading
+        || resolve_desktop_update_button_action(state).is_some()
+}
+
+pub fn should_show_arm64_intel_build_warning(state: Option<&DesktopUpdateState>) -> bool {
+    state.is_some_and(|state| {
+        state.host_arch == DesktopRuntimeArch::Arm64 && state.app_arch == DesktopRuntimeArch::X64
+    })
+}
+
+pub fn is_desktop_update_button_disabled(state: Option<&DesktopUpdateState>) -> bool {
+    state.is_some_and(|state| state.status == DesktopUpdateStatus::Downloading)
+}
+
+pub fn get_arm64_intel_build_warning_description(state: &DesktopUpdateState) -> String {
+    if !should_show_arm64_intel_build_warning(Some(state)) {
+        return "This install is using the correct architecture.".to_string();
+    }
+
+    match resolve_desktop_update_button_action(state) {
+        Some(DesktopUpdateAction::Download) => "This Mac has Apple Silicon, but R3Code is still running the Intel build under Rosetta. Download the available update to switch to the native Apple Silicon build.".to_string(),
+        Some(DesktopUpdateAction::Install) => "This Mac has Apple Silicon, but R3Code is still running the Intel build under Rosetta. Restart to install the downloaded Apple Silicon build.".to_string(),
+        _ => "This Mac has Apple Silicon, but R3Code is still running the Intel build under Rosetta. The next app update will replace it with the native Apple Silicon build.".to_string(),
+    }
+}
+
+pub fn get_desktop_update_button_tooltip(state: &DesktopUpdateState) -> String {
+    if state.error_context == Some(DesktopUpdateAction::Download)
+        && state.available_version.is_some()
+        && state.message.is_some()
+    {
+        return format!(
+            "Download failed for {}. Click to retry.",
+            state.available_version.as_deref().unwrap()
+        );
+    }
+    if state.error_context == Some(DesktopUpdateAction::Install)
+        && state.downloaded_version.is_some()
+        && state.message.is_some()
+    {
+        return format!(
+            "Install failed for {}. Click to retry.",
+            state.downloaded_version.as_deref().unwrap()
+        );
+    }
+
+    match state.status {
+        DesktopUpdateStatus::Available => format!(
+            "Update {} ready to download",
+            state.available_version.as_deref().unwrap_or("available")
+        ),
+        DesktopUpdateStatus::Downloading => {
+            let progress = state
+                .download_percent
+                .map(|percent| format!(" ({}%)", percent.floor() as i64))
+                .unwrap_or_default();
+            format!("Downloading update{progress}")
+        }
+        DesktopUpdateStatus::Downloaded => format!(
+            "Update {} downloaded. Click to restart and install.",
+            state
+                .downloaded_version
+                .as_deref()
+                .or(state.available_version.as_deref())
+                .unwrap_or("ready")
+        ),
+        DesktopUpdateStatus::Error => state
+            .message
+            .clone()
+            .unwrap_or_else(|| "Update failed".to_string()),
+        _ => "Up to date".to_string(),
+    }
+}
+
+pub fn get_desktop_update_install_confirmation_message(
+    available_version: Option<&str>,
+    downloaded_version: Option<&str>,
+) -> String {
+    let version = downloaded_version.or(available_version);
+    format!(
+        "Install update{} and restart R3Code?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing.",
+        version
+            .map(|version| format!(" {version}"))
+            .unwrap_or_default()
+    )
+}
+
+pub fn get_desktop_update_action_error(
+    accepted: bool,
+    completed: bool,
+    state: &DesktopUpdateState,
+) -> Option<String> {
+    if !accepted || completed {
+        return None;
+    }
+    let message = state.message.as_deref()?.trim();
+    (!message.is_empty()).then(|| message.to_string())
+}
+
+pub fn should_toast_desktop_update_action_result(
+    accepted: bool,
+    completed: bool,
+    state: &DesktopUpdateState,
+) -> bool {
+    get_desktop_update_action_error(accepted, completed, state).is_some()
+}
+
+pub fn can_check_for_desktop_update(state: Option<&DesktopUpdateState>) -> bool {
+    let Some(state) = state else {
+        return false;
+    };
+    state.enabled
+        && state.status != DesktopUpdateStatus::Checking
+        && state.status != DesktopUpdateStatus::Downloading
+        && state.status != DesktopUpdateStatus::Downloaded
+        && state.status != DesktopUpdateStatus::Disabled
+}
+
 pub fn should_broadcast_desktop_update_download_progress(
     state: &DesktopUpdateState,
     next_percent: f64,
@@ -5919,10 +6062,28 @@ mod tests {
             reduce_desktop_update_state_on_update_available(&checking, "1.1.0", checked_at);
         assert_eq!(available.status, DesktopUpdateStatus::Available);
         assert_eq!(available.available_version.as_deref(), Some("1.1.0"));
+        assert!(should_show_desktop_update_button(Some(&available)));
+        assert_eq!(
+            resolve_desktop_update_button_action(&available),
+            Some(DesktopUpdateAction::Download)
+        );
+        assert_eq!(
+            get_desktop_update_button_tooltip(&available),
+            "Update 1.1.0 ready to download"
+        );
+        assert!(can_check_for_desktop_update(Some(&available)));
+
         let downloading = reduce_desktop_update_state_on_download_start(&available);
         assert_eq!(downloading.download_percent, Some(0.0));
         let progress = reduce_desktop_update_state_on_download_progress(&downloading, 55.5);
         assert_eq!(progress.download_percent, Some(55.5));
+        assert!(should_show_desktop_update_button(Some(&progress)));
+        assert!(is_desktop_update_button_disabled(Some(&progress)));
+        assert_eq!(
+            get_desktop_update_button_tooltip(&progress),
+            "Downloading update (55%)"
+        );
+        assert!(!can_check_for_desktop_update(Some(&progress)));
         assert!(
             !should_broadcast_desktop_update_download_progress(&progress, 59.9),
             "same 10% bucket should not rebroadcast"
@@ -5942,10 +6103,45 @@ mod tests {
             Some(DesktopUpdateAction::Download)
         );
         assert!(download_failed.can_retry);
+        assert!(should_show_desktop_update_button(Some(&download_failed)));
+        assert_eq!(
+            resolve_desktop_update_button_action(&download_failed),
+            Some(DesktopUpdateAction::Download)
+        );
+        assert_eq!(
+            get_desktop_update_button_tooltip(&download_failed),
+            "Download failed for 1.1.0. Click to retry."
+        );
+        assert_eq!(
+            get_desktop_update_action_error(true, false, &download_failed).as_deref(),
+            Some("checksum mismatch")
+        );
+        assert!(should_toast_desktop_update_action_result(
+            true,
+            false,
+            &download_failed
+        ));
+        assert!(!should_toast_desktop_update_action_result(
+            false,
+            false,
+            &download_failed
+        ));
 
         let downloaded = reduce_desktop_update_state_on_download_complete(&progress, "1.1.0");
         assert_eq!(downloaded.status, DesktopUpdateStatus::Downloaded);
         assert_eq!(downloaded.downloaded_version.as_deref(), Some("1.1.0"));
+        assert_eq!(
+            resolve_desktop_update_button_action(&downloaded),
+            Some(DesktopUpdateAction::Install)
+        );
+        assert_eq!(
+            get_desktop_update_install_confirmation_message(
+                downloaded.available_version.as_deref(),
+                Some("1.1.1")
+            ),
+            "Install update 1.1.1 and restart R3Code?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing."
+        );
+        assert!(!can_check_for_desktop_update(Some(&downloaded)));
         let install_failed = reduce_desktop_update_state_on_install_failure(
             &downloaded,
             "backend shutdown timed out",
@@ -5955,10 +6151,29 @@ mod tests {
             install_failed.error_context,
             Some(DesktopUpdateAction::Install)
         );
+        assert!(should_show_desktop_update_button(Some(&install_failed)));
+        assert_eq!(
+            resolve_desktop_update_button_action(&install_failed),
+            Some(DesktopUpdateAction::Install)
+        );
+        assert_eq!(
+            get_desktop_update_button_tooltip(&install_failed),
+            "Install failed for 1.1.0. Click to retry."
+        );
         let up_to_date = reduce_desktop_update_state_on_no_update(&install_failed, checked_at);
         assert_eq!(up_to_date.status, DesktopUpdateStatus::UpToDate);
         assert_eq!(up_to_date.available_version, None);
         assert_eq!(up_to_date.downloaded_version, None);
+        assert!(!should_show_desktop_update_button(Some(&up_to_date)));
+        assert_eq!(resolve_desktop_update_button_action(&up_to_date), None);
+        assert_eq!(get_desktop_update_button_tooltip(&up_to_date), "Up to date");
+        assert!(can_check_for_desktop_update(Some(&up_to_date)));
+        assert!(!can_check_for_desktop_update(None));
+        assert!(!can_check_for_desktop_update(Some(&DesktopUpdateState {
+            enabled: false,
+            status: DesktopUpdateStatus::Disabled,
+            ..enabled.clone()
+        })));
 
         assert_eq!(
             parse_desktop_app_update_yml(
@@ -6015,6 +6230,23 @@ mod tests {
             running_under_arm64_translation: false,
         };
         assert!(is_arm64_host_running_intel_desktop_build(&arm_runtime));
+        let arm_update_state = DesktopUpdateState {
+            host_arch: DesktopRuntimeArch::Arm64,
+            app_arch: DesktopRuntimeArch::X64,
+            running_under_arm64_translation: true,
+            ..available.clone()
+        };
+        assert!(should_show_arm64_intel_build_warning(Some(
+            &arm_update_state
+        )));
+        assert!(
+            get_arm64_intel_build_warning_description(&arm_update_state)
+                .contains("Download the available update")
+        );
+        assert_eq!(
+            get_desktop_update_install_confirmation_message(None, None),
+            "Install update and restart R3Code?\n\nAny running tasks will be interrupted. Make sure you're ready before continuing."
+        );
         let mut environment_input = base_input(DesktopConfig {
             mock_updates: true,
             ..DesktopConfig::default()

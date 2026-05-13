@@ -2308,6 +2308,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core desktop_updates_runtime_contracts`",
             "Wire live query cache updates and desktopBridge update-state subscription into GPUI settings state.",
         )
+    } else if path == "apps/web/src/components/desktopUpdate.logic.ts"
+        || path == "apps/web/src/components/desktopUpdate.logic.test.ts"
+    {
+        (
+            "desktop update button visibility/action/disabled/tooltip predicates, update action error/toast decisions, Apple Silicon Intel-build warning copy, install confirmation copy with R3Code naming, and check-eligibility rules in crates/r3_core/src/desktop.rs",
+            "partial",
+            "`cargo test -p r3_core desktop_updates_runtime_contracts`",
+            "Wire helpers into live GPUI desktop update controls, confirmation dialogs, retry toasts, and desktopBridge action dispatch.",
+        )
     } else if path == "apps/web/src/lib/gitReactQuery.ts"
         || path == "apps/web/src/lib/gitReactQuery.test.ts"
     {
