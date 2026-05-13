@@ -1982,6 +1982,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core context_window_snapshot_and_token_format`",
             "Wire snapshot derivation into live GPUI ContextWindowMeter state.",
         )
+    } else if path == "apps/web/src/lib/desktopUpdateReactQuery.ts"
+        || path == "apps/web/src/lib/desktopUpdateReactQuery.test.ts"
+    {
+        (
+            "desktop update React Query cache keys and state query stale/refetch options in crates/r3_core/src/desktop.rs",
+            "partial",
+            "`cargo test -p r3_core desktop_updates_runtime_contracts`",
+            "Wire live query cache updates and desktopBridge update-state subscription into GPUI settings state.",
+        )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
             "logical project path normalization, physical/grouping/order keys, repository-scoped keys, settings override resolution, ref fallback, and group-label helpers in crates/r3_core/src/lib.rs",

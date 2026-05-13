@@ -870,6 +870,13 @@ pub struct DesktopUpdateActionResultPlan {
     pub quit_and_install: Option<ElectronUpdaterQuitAndInstallOptions>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct DesktopUpdateStateQueryOptions {
+    pub query_key: Vec<&'static str>,
+    pub stale_time: f64,
+    pub refetch_on_mount: &'static str,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ElectronWindowState {
     pub id: u32,
@@ -2962,6 +2969,22 @@ pub fn parse_desktop_app_update_yml(raw: &str) -> Option<BTreeMap<String, String
         entries.insert(key.to_string(), value.to_string());
     }
     entries.contains_key("provider").then_some(entries)
+}
+
+pub fn desktop_update_query_key_all() -> Vec<&'static str> {
+    vec!["desktop", "update"]
+}
+
+pub fn desktop_update_query_key_state() -> Vec<&'static str> {
+    vec!["desktop", "update", "state"]
+}
+
+pub fn desktop_update_state_query_options() -> DesktopUpdateStateQueryOptions {
+    DesktopUpdateStateQueryOptions {
+        query_key: desktop_update_query_key_state(),
+        stale_time: f64::INFINITY,
+        refetch_on_mount: "always",
+    }
 }
 
 pub fn create_initial_desktop_update_state(
@@ -5840,6 +5863,20 @@ mod tests {
 
     #[test]
     fn ports_desktop_updates_runtime_contracts() {
+        assert_eq!(desktop_update_query_key_all(), vec!["desktop", "update"]);
+        assert_eq!(
+            desktop_update_query_key_state(),
+            vec!["desktop", "update", "state"]
+        );
+        assert_eq!(
+            desktop_update_state_query_options(),
+            DesktopUpdateStateQueryOptions {
+                query_key: vec!["desktop", "update", "state"],
+                stale_time: f64::INFINITY,
+                refetch_on_mount: "always",
+            }
+        );
+
         let runtime = DesktopRuntimeInfo {
             host_arch: DesktopRuntimeArch::X64,
             app_arch: DesktopRuntimeArch::X64,
