@@ -1813,6 +1813,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core orchestration_batch_effects_match_upstream_lifecycle_rules`",
             "Wire effects into live GPUI store updates, provider query invalidation, draft promotion, deleted-thread cleanup, and terminal state cleanup after websocket replay batches.",
         )
+    } else if path == "apps/web/src/rpc/protocol.ts" {
+        (
+            "websocket RPC protocol URL resolution, Effect layer contract constants, reconnect retry policy, active lifecycle gating, request hook tracking/ack behavior, heartbeat timeout cleanup, protocol error cleanup, and R3-branded connection error copy in crates/r3_core/src/rpc.rs",
+            "partial",
+            "`cargo test -p r3_core ws_rpc_protocol`",
+            "Wire the pure protocol state transitions into the live GPUI websocket transport, request hooks, heartbeat hooks, and backend websocket constructor lifecycle.",
+        )
     } else if path == "apps/web/src/markdown-links.ts"
         || path == "apps/web/src/markdown-links.test.ts"
     {

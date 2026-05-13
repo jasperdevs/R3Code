@@ -1,3 +1,10 @@
+use crate::{
+    RpcAckLatencyState, WS_RECONNECT_MAX_RETRIES, WsConnectionMetadata, WsConnectionStatus,
+    acknowledge_rpc_request, clear_all_tracked_rpc_requests, get_ws_reconnect_delay_ms_for_retry,
+    initial_rpc_ack_latency_state, initial_ws_connection_status, record_ws_connection_attempt,
+    record_ws_connection_closed_at, record_ws_connection_errored_at,
+    record_ws_connection_opened_at, track_rpc_request_sent_at,
+};
 use serde_json::{Value, json};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -983,6 +990,375 @@ pub fn build_ws_rpc_failure(method: WsRpcMethod, id: Option<&str>, message: &str
     })
 }
 
+pub const WS_RPC_PROTOCOL_SOCKET_PATH: &str = "/ws";
+pub const WS_RPC_PROTOCOL_SERIALIZATION_LAYER: &str = "RpcSerialization.layerJson";
+pub const WS_RPC_PROTOCOL_RETRY_TRANSIENT_ERRORS: bool = true;
+pub const WS_RPC_PROTOCOL_CONNECT_ERROR_MESSAGE: &str =
+    "Unable to connect to the R3 server WebSocket.";
+pub const WS_RPC_PROTOCOL_HEARTBEAT_TIMEOUT_MESSAGE: &str = "WebSocket heartbeat timed out.";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WsRpcSocketUrlError {
+    MissingProtocol,
+    MissingAuthority,
+    UnsupportedProtocol(String),
+}
+
+pub fn format_socket_error_message(message: Option<&str>, fallback: &str) -> String {
+    if let Some(message) = message {
+        if !message.trim().is_empty() {
+            return message.to_string();
+        }
+    }
+    fallback.to_string()
+}
+
+pub fn resolve_ws_rpc_socket_url(raw_url: &str) -> Result<String, WsRpcSocketUrlError> {
+    let Some(protocol_end) = raw_url.find("://") else {
+        return Err(WsRpcSocketUrlError::MissingProtocol);
+    };
+    let protocol = &raw_url[..protocol_end];
+    if protocol != "ws" && protocol != "wss" {
+        return Err(WsRpcSocketUrlError::UnsupportedProtocol(format!(
+            "{protocol}:"
+        )));
+    }
+
+    let rest = &raw_url[protocol_end + 3..];
+    let authority_end = rest
+        .find(|ch| ch == '/' || ch == '?' || ch == '#')
+        .unwrap_or(rest.len());
+    let authority = &rest[..authority_end];
+    if authority.is_empty() {
+        return Err(WsRpcSocketUrlError::MissingAuthority);
+    }
+
+    let suffix = &rest[authority_end..];
+    let query_or_hash = if suffix.starts_with('/') {
+        suffix
+            .find(|ch| ch == '?' || ch == '#')
+            .map(|index| &suffix[index..])
+            .unwrap_or("")
+    } else {
+        suffix
+    };
+
+    Ok(format!(
+        "{protocol}://{authority}{WS_RPC_PROTOCOL_SOCKET_PATH}{query_or_hash}"
+    ))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WsRpcProtocolLayerContract {
+    pub socket_path: &'static str,
+    pub serialization_layer: &'static str,
+    pub retry_transient_errors: bool,
+    pub max_retries: usize,
+    pub retry_delays_ms: Vec<u64>,
+}
+
+pub fn ws_rpc_protocol_layer_contract() -> WsRpcProtocolLayerContract {
+    WsRpcProtocolLayerContract {
+        socket_path: WS_RPC_PROTOCOL_SOCKET_PATH,
+        serialization_layer: WS_RPC_PROTOCOL_SERIALIZATION_LAYER,
+        retry_transient_errors: WS_RPC_PROTOCOL_RETRY_TRANSIENT_ERRORS,
+        max_retries: WS_RECONNECT_MAX_RETRIES,
+        retry_delays_ms: (0..WS_RECONNECT_MAX_RETRIES)
+            .filter_map(|index| get_ws_reconnect_delay_ms_for_retry(index as i64))
+            .collect(),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WsRpcProtocolState {
+    pub connection_status: WsConnectionStatus,
+    pub latency_state: RpcAckLatencyState,
+}
+
+impl WsRpcProtocolState {
+    pub fn initial(online: bool) -> Self {
+        Self {
+            connection_status: initial_ws_connection_status(online),
+            latency_state: initial_rpc_ack_latency_state(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WsRpcProtocolCallback {
+    Attempt {
+        socket_url: String,
+    },
+    Open,
+    Error {
+        message: String,
+    },
+    Close {
+        code: i32,
+        reason: String,
+        intentional: bool,
+    },
+    HeartbeatPing,
+    HeartbeatPong,
+    HeartbeatTimeout,
+    RequestStart {
+        id: String,
+        tag: String,
+        stream: bool,
+    },
+    RequestChunk {
+        id: String,
+        tag: String,
+        chunk_count: usize,
+    },
+    RequestExit {
+        id: String,
+        tag: String,
+        stream: bool,
+    },
+    RequestInterrupt {
+        id: String,
+        tag: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WsRpcProtocolResponseTag {
+    ClientProtocolError,
+    Defect,
+    Other(String),
+}
+
+impl WsRpcProtocolResponseTag {
+    pub fn from_tag(tag: &str) -> Self {
+        match tag {
+            "ClientProtocolError" => Self::ClientProtocolError,
+            "Defect" => Self::Defect,
+            other => Self::Other(other.to_string()),
+        }
+    }
+
+    pub fn clears_tracked_requests(&self) -> bool {
+        matches!(self, Self::ClientProtocolError | Self::Defect)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WsRpcProtocolEvent {
+    Attempt {
+        socket_url: String,
+        metadata: Option<WsConnectionMetadata>,
+    },
+    Open {
+        metadata: Option<WsConnectionMetadata>,
+        now_iso: String,
+    },
+    Error {
+        message: String,
+        metadata: Option<WsConnectionMetadata>,
+        now_iso: String,
+    },
+    Close {
+        code: i32,
+        reason: String,
+        intentional: bool,
+        metadata: Option<WsConnectionMetadata>,
+        now_iso: String,
+    },
+    HeartbeatPing,
+    HeartbeatPong,
+    HeartbeatTimeout {
+        metadata: Option<WsConnectionMetadata>,
+        now_iso: String,
+    },
+    RequestStart {
+        id: String,
+        tag: String,
+        stream: bool,
+        started_at_ms: i64,
+        started_at: String,
+    },
+    RequestChunk {
+        id: String,
+        tag: String,
+        chunk_count: usize,
+    },
+    RequestExit {
+        id: String,
+        tag: String,
+        stream: bool,
+    },
+    RequestInterrupt {
+        id: String,
+        tag: Option<String>,
+    },
+    ProtocolResponse {
+        tag: WsRpcProtocolResponseTag,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WsRpcProtocolEventOutcome {
+    pub state: WsRpcProtocolState,
+    pub callbacks: Vec<WsRpcProtocolCallback>,
+    pub cleared_tracked_requests: bool,
+}
+
+pub fn apply_ws_rpc_protocol_event(
+    current: &WsRpcProtocolState,
+    event: WsRpcProtocolEvent,
+    active: bool,
+) -> WsRpcProtocolEventOutcome {
+    if !active {
+        return WsRpcProtocolEventOutcome {
+            state: current.clone(),
+            callbacks: Vec::new(),
+            cleared_tracked_requests: false,
+        };
+    }
+
+    let mut state = current.clone();
+    let mut callbacks = Vec::new();
+    let mut cleared_tracked_requests = false;
+
+    match event {
+        WsRpcProtocolEvent::Attempt {
+            socket_url,
+            metadata,
+        } => {
+            state.connection_status = record_ws_connection_attempt(
+                &state.connection_status,
+                &socket_url,
+                metadata.as_ref(),
+            );
+            callbacks.push(WsRpcProtocolCallback::Attempt { socket_url });
+        }
+        WsRpcProtocolEvent::Open { metadata, now_iso } => {
+            state.connection_status = record_ws_connection_opened_at(
+                &state.connection_status,
+                metadata.as_ref(),
+                &now_iso,
+            );
+            callbacks.push(WsRpcProtocolCallback::Open);
+        }
+        WsRpcProtocolEvent::Error {
+            message,
+            metadata,
+            now_iso,
+        } => {
+            state.latency_state = clear_all_tracked_rpc_requests(&state.latency_state);
+            cleared_tracked_requests = true;
+            state.connection_status = record_ws_connection_errored_at(
+                &state.connection_status,
+                Some(&message),
+                metadata.as_ref(),
+                &now_iso,
+            );
+            callbacks.push(WsRpcProtocolCallback::Error { message });
+        }
+        WsRpcProtocolEvent::Close {
+            code,
+            reason,
+            intentional,
+            metadata,
+            now_iso,
+        } => {
+            state.latency_state = clear_all_tracked_rpc_requests(&state.latency_state);
+            cleared_tracked_requests = true;
+            if !intentional {
+                state.connection_status = record_ws_connection_closed_at(
+                    &state.connection_status,
+                    Some(code),
+                    Some(&reason),
+                    metadata.as_ref(),
+                    &now_iso,
+                );
+            }
+            callbacks.push(WsRpcProtocolCallback::Close {
+                code,
+                reason,
+                intentional,
+            });
+        }
+        WsRpcProtocolEvent::HeartbeatPing => {
+            callbacks.push(WsRpcProtocolCallback::HeartbeatPing);
+        }
+        WsRpcProtocolEvent::HeartbeatPong => {
+            callbacks.push(WsRpcProtocolCallback::HeartbeatPong);
+        }
+        WsRpcProtocolEvent::HeartbeatTimeout { metadata, now_iso } => {
+            state.latency_state = clear_all_tracked_rpc_requests(&state.latency_state);
+            cleared_tracked_requests = true;
+            state.connection_status = record_ws_connection_errored_at(
+                &state.connection_status,
+                Some(WS_RPC_PROTOCOL_HEARTBEAT_TIMEOUT_MESSAGE),
+                metadata.as_ref(),
+                &now_iso,
+            );
+            callbacks.push(WsRpcProtocolCallback::HeartbeatTimeout);
+        }
+        WsRpcProtocolEvent::RequestStart {
+            id,
+            tag,
+            stream,
+            started_at_ms,
+            started_at,
+        } => {
+            callbacks.push(WsRpcProtocolCallback::RequestStart {
+                id: id.clone(),
+                tag: tag.clone(),
+                stream,
+            });
+            state.latency_state = track_rpc_request_sent_at(
+                &state.latency_state,
+                &id,
+                &tag,
+                started_at_ms,
+                &started_at,
+            );
+        }
+        WsRpcProtocolEvent::RequestChunk {
+            id,
+            tag,
+            chunk_count,
+        } => {
+            callbacks.push(WsRpcProtocolCallback::RequestChunk {
+                id: id.clone(),
+                tag,
+                chunk_count,
+            });
+            state.latency_state = acknowledge_rpc_request(&state.latency_state, &id);
+        }
+        WsRpcProtocolEvent::RequestExit { id, tag, stream } => {
+            callbacks.push(WsRpcProtocolCallback::RequestExit {
+                id: id.clone(),
+                tag,
+                stream,
+            });
+            state.latency_state = acknowledge_rpc_request(&state.latency_state, &id);
+        }
+        WsRpcProtocolEvent::RequestInterrupt { id, tag } => {
+            callbacks.push(WsRpcProtocolCallback::RequestInterrupt {
+                id: id.clone(),
+                tag,
+            });
+            state.latency_state = acknowledge_rpc_request(&state.latency_state, &id);
+        }
+        WsRpcProtocolEvent::ProtocolResponse { tag } => {
+            if tag.clears_tracked_requests() {
+                state.latency_state = clear_all_tracked_rpc_requests(&state.latency_state);
+                cleared_tracked_requests = true;
+            }
+        }
+    }
+
+    WsRpcProtocolEventOutcome {
+        state,
+        callbacks,
+        cleared_tracked_requests,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WsRpcDispatchKind {
     Unary,
@@ -1533,6 +1909,316 @@ pub fn normalize_attachment_relative_path(raw_relative_path: &str) -> Option<Str
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn ports_ws_rpc_protocol_url_and_layer_contracts() {
+        assert_eq!(
+            resolve_ws_rpc_socket_url("ws://localhost:3020").unwrap(),
+            "ws://localhost:3020/ws"
+        );
+        assert_eq!(
+            resolve_ws_rpc_socket_url("wss://example.test/api/socket?token=1#frag").unwrap(),
+            "wss://example.test/ws?token=1#frag"
+        );
+        assert_eq!(
+            resolve_ws_rpc_socket_url("http://localhost:3020"),
+            Err(WsRpcSocketUrlError::UnsupportedProtocol(
+                "http:".to_string()
+            ))
+        );
+        assert_eq!(
+            resolve_ws_rpc_socket_url("ws:///missing-host"),
+            Err(WsRpcSocketUrlError::MissingAuthority)
+        );
+
+        assert_eq!(
+            format_socket_error_message(Some("  connect failed  "), "fallback"),
+            "  connect failed  "
+        );
+        assert_eq!(
+            format_socket_error_message(Some("   "), "fallback"),
+            "fallback"
+        );
+
+        assert_eq!(
+            ws_rpc_protocol_layer_contract(),
+            WsRpcProtocolLayerContract {
+                socket_path: "/ws",
+                serialization_layer: "RpcSerialization.layerJson",
+                retry_transient_errors: true,
+                max_retries: 7,
+                retry_delays_ms: vec![1_000, 2_000, 4_000, 8_000, 16_000, 32_000, 64_000],
+            }
+        );
+    }
+
+    #[test]
+    fn ws_rpc_protocol_lifecycle_effects_match_upstream_hooks() {
+        let metadata = WsConnectionMetadata {
+            connection_label: Some(" Remote ".to_string()),
+            version_mismatch_hint: Some(" upgrade client ".to_string()),
+        };
+        let mut state = WsRpcProtocolState::initial(true);
+
+        let attempted = apply_ws_rpc_protocol_event(
+            &state,
+            WsRpcProtocolEvent::Attempt {
+                socket_url: "ws://localhost:3020/ws".to_string(),
+                metadata: Some(metadata.clone()),
+            },
+            true,
+        );
+        assert_eq!(
+            attempted.callbacks,
+            vec![WsRpcProtocolCallback::Attempt {
+                socket_url: "ws://localhost:3020/ws".to_string(),
+            }]
+        );
+        assert_eq!(
+            attempted.state.connection_status.socket_url.as_deref(),
+            Some("ws://localhost:3020/ws")
+        );
+        assert_eq!(
+            attempted
+                .state
+                .connection_status
+                .connection_label
+                .as_deref(),
+            Some("Remote")
+        );
+        assert_eq!(attempted.state.connection_status.reconnect_attempt_count, 1);
+        state = attempted.state;
+
+        let opened = apply_ws_rpc_protocol_event(
+            &state,
+            WsRpcProtocolEvent::Open {
+                metadata: Some(metadata.clone()),
+                now_iso: "2026-05-13T07:00:00.000Z".to_string(),
+            },
+            true,
+        );
+        assert_eq!(opened.callbacks, vec![WsRpcProtocolCallback::Open]);
+        assert!(opened.state.connection_status.has_connected);
+        assert_eq!(
+            opened.state.connection_status.connected_at.as_deref(),
+            Some("2026-05-13T07:00:00.000Z")
+        );
+        state = opened.state;
+
+        let request_started = apply_ws_rpc_protocol_event(
+            &state,
+            WsRpcProtocolEvent::RequestStart {
+                id: "rpc-1".to_string(),
+                tag: "server.getConfig".to_string(),
+                stream: false,
+                started_at_ms: 100,
+                started_at: "2026-05-13T07:00:01.000Z".to_string(),
+            },
+            true,
+        );
+        assert_eq!(
+            request_started.callbacks,
+            vec![WsRpcProtocolCallback::RequestStart {
+                id: "rpc-1".to_string(),
+                tag: "server.getConfig".to_string(),
+                stream: false,
+            }]
+        );
+        assert_eq!(
+            request_started.state.latency_state.pending_requests.len(),
+            1
+        );
+        state = request_started.state;
+
+        let chunk = apply_ws_rpc_protocol_event(
+            &state,
+            WsRpcProtocolEvent::RequestChunk {
+                id: "rpc-1".to_string(),
+                tag: "server.getConfig".to_string(),
+                chunk_count: 1,
+            },
+            true,
+        );
+        assert_eq!(chunk.state.latency_state.pending_requests, Vec::new());
+        state = chunk.state;
+
+        let request_started = apply_ws_rpc_protocol_event(
+            &state,
+            WsRpcProtocolEvent::RequestStart {
+                id: "rpc-2".to_string(),
+                tag: "server.getSettings".to_string(),
+                stream: false,
+                started_at_ms: 200,
+                started_at: "2026-05-13T07:00:02.000Z".to_string(),
+            },
+            true,
+        );
+        assert_eq!(
+            request_started.state.latency_state.pending_requests.len(),
+            1
+        );
+        state = request_started.state;
+
+        let errored = apply_ws_rpc_protocol_event(
+            &state,
+            WsRpcProtocolEvent::Error {
+                message: "connect failed".to_string(),
+                metadata: Some(metadata),
+                now_iso: "2026-05-13T07:00:03.000Z".to_string(),
+            },
+            true,
+        );
+        assert!(errored.cleared_tracked_requests);
+        assert_eq!(errored.state.latency_state.pending_requests, Vec::new());
+        assert_eq!(
+            errored.state.connection_status.last_error.as_deref(),
+            Some("connect failed Hint: upgrade client")
+        );
+        assert_eq!(
+            errored.callbacks,
+            vec![WsRpcProtocolCallback::Error {
+                message: "connect failed".to_string(),
+            }]
+        );
+
+        let inactive = apply_ws_rpc_protocol_event(
+            &errored.state,
+            WsRpcProtocolEvent::RequestStart {
+                id: "rpc-inactive".to_string(),
+                tag: "server.getConfig".to_string(),
+                stream: false,
+                started_at_ms: 300,
+                started_at: "2026-05-13T07:00:04.000Z".to_string(),
+            },
+            false,
+        );
+        assert_eq!(inactive.state, errored.state);
+        assert_eq!(inactive.callbacks, Vec::new());
+    }
+
+    #[test]
+    fn ws_rpc_protocol_cleanup_matches_upstream_error_and_heartbeat_paths() {
+        let mut state = WsRpcProtocolState::initial(true);
+        state = apply_ws_rpc_protocol_event(
+            &state,
+            WsRpcProtocolEvent::RequestStart {
+                id: "rpc-1".to_string(),
+                tag: "subscribeServerConfig".to_string(),
+                stream: true,
+                started_at_ms: 100,
+                started_at: "2026-05-13T07:00:01.000Z".to_string(),
+            },
+            true,
+        )
+        .state;
+        assert_eq!(state.latency_state.pending_requests, Vec::new());
+
+        state = apply_ws_rpc_protocol_event(
+            &state,
+            WsRpcProtocolEvent::RequestStart {
+                id: "rpc-2".to_string(),
+                tag: "server.getConfig".to_string(),
+                stream: false,
+                started_at_ms: 200,
+                started_at: "2026-05-13T07:00:02.000Z".to_string(),
+            },
+            true,
+        )
+        .state;
+        assert_eq!(state.latency_state.pending_requests.len(), 1);
+
+        let ignored_response = apply_ws_rpc_protocol_event(
+            &state,
+            WsRpcProtocolEvent::ProtocolResponse {
+                tag: WsRpcProtocolResponseTag::from_tag("Chunk"),
+            },
+            true,
+        );
+        assert!(!ignored_response.cleared_tracked_requests);
+        assert_eq!(
+            ignored_response.state.latency_state.pending_requests.len(),
+            1
+        );
+
+        let defect = apply_ws_rpc_protocol_event(
+            &ignored_response.state,
+            WsRpcProtocolEvent::ProtocolResponse {
+                tag: WsRpcProtocolResponseTag::from_tag("Defect"),
+            },
+            true,
+        );
+        assert!(defect.cleared_tracked_requests);
+        assert_eq!(defect.state.latency_state.pending_requests, Vec::new());
+        state = defect.state;
+
+        state = apply_ws_rpc_protocol_event(
+            &state,
+            WsRpcProtocolEvent::RequestStart {
+                id: "rpc-3".to_string(),
+                tag: "server.getSettings".to_string(),
+                stream: false,
+                started_at_ms: 300,
+                started_at: "2026-05-13T07:00:03.000Z".to_string(),
+            },
+            true,
+        )
+        .state;
+
+        let timeout = apply_ws_rpc_protocol_event(
+            &state,
+            WsRpcProtocolEvent::HeartbeatTimeout {
+                metadata: None,
+                now_iso: "2026-05-13T07:00:04.000Z".to_string(),
+            },
+            true,
+        );
+        assert!(timeout.cleared_tracked_requests);
+        assert_eq!(
+            timeout.state.connection_status.last_error.as_deref(),
+            Some("WebSocket heartbeat timed out.")
+        );
+        assert_eq!(
+            timeout.callbacks,
+            vec![WsRpcProtocolCallback::HeartbeatTimeout]
+        );
+
+        state = apply_ws_rpc_protocol_event(
+            &timeout.state,
+            WsRpcProtocolEvent::RequestStart {
+                id: "rpc-4".to_string(),
+                tag: "server.getConfig".to_string(),
+                stream: false,
+                started_at_ms: 400,
+                started_at: "2026-05-13T07:00:05.000Z".to_string(),
+            },
+            true,
+        )
+        .state;
+        let intentional_close = apply_ws_rpc_protocol_event(
+            &state,
+            WsRpcProtocolEvent::Close {
+                code: 1000,
+                reason: "done".to_string(),
+                intentional: true,
+                metadata: None,
+                now_iso: "2026-05-13T07:00:06.000Z".to_string(),
+            },
+            true,
+        );
+        assert!(intentional_close.cleared_tracked_requests);
+        assert_eq!(
+            intentional_close.state.connection_status.close_code,
+            timeout.state.connection_status.close_code
+        );
+        assert_eq!(
+            intentional_close.callbacks,
+            vec![WsRpcProtocolCallback::Close {
+                code: 1000,
+                reason: "done".to_string(),
+                intentional: true,
+            }]
+        );
+    }
 
     #[test]
     fn ports_upstream_ws_rpc_method_names_exactly() {
