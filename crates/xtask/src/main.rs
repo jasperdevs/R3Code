@@ -1760,6 +1760,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core web_env_electron_detection_matches_upstream_bridge_contract`",
             "Wire helper into live GPUI/web runtime initialization wherever desktop/browser behavior branches.",
         )
+    } else if path == "apps/web/src/keybindings.ts" || path == "apps/web/src/keybindings.test.ts" {
+        (
+            "client shortcut matching, when-clause evaluation, physical key aliases, effective-label conflict resolution, thread/model picker jump hints, command wrappers, terminal clear/delete/navigation control bytes, and platform modifier mapping in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core keybindings_client_shortcut_helpers_match_upstream_contract`",
+            "Wire helpers into live GPUI keyboard event dispatch, terminal focus/open state, model picker state, and terminal input passthrough.",
+        )
     } else if path == "apps/web/src/observability/clientTracing.ts" {
         (
             "client tracing OTLP path, default/min export interval, resource attributes, config key, active-delegate reuse, stale-generation disposal, warning formatting, and reset-state contracts in crates/r3_core/src/observability.rs",

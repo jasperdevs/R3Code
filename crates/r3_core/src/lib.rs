@@ -6101,6 +6101,32 @@ pub struct KeybindingKeyboardEvent<'a> {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShortcutEventLike {
+    pub event_type: Option<String>,
+    pub code: Option<String>,
+    pub key: String,
+    pub meta_key: bool,
+    pub ctrl_key: bool,
+    pub shift_key: bool,
+    pub alt_key: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ShortcutModifierStateLike {
+    pub meta_key: bool,
+    pub ctrl_key: bool,
+    pub shift_key: bool,
+    pub alt_key: bool,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ShortcutMatchContext {
+    pub terminal_focus: bool,
+    pub terminal_open: bool,
+    pub flags: BTreeMap<String, bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeybindingWhenNode {
     Identifier {
         name: String,
@@ -6239,6 +6265,12 @@ pub struct KeybindingSettingsRow {
     pub key: &'static str,
     pub when: &'static str,
 }
+
+const TERMINAL_WORD_BACKWARD: &str = "\u{001b}b";
+const TERMINAL_WORD_FORWARD: &str = "\u{001b}f";
+const TERMINAL_LINE_START: &str = "\u{0001}";
+const TERMINAL_LINE_END: &str = "\u{0005}";
+const TERMINAL_DELETE_TO_LINE_START: &str = "\u{0015}";
 
 pub const MAX_KEYBINDINGS_COUNT: usize = 256;
 
@@ -6582,6 +6614,504 @@ pub fn default_resolved_keybindings() -> Vec<ResolvedKeybindingRule> {
         .iter()
         .filter_map(compile_resolved_keybinding_rule)
         .collect()
+}
+
+fn normalize_event_key(key: &str) -> String {
+    let normalized = key.to_ascii_lowercase();
+    if normalized == "esc" {
+        "escape".to_string()
+    } else {
+        normalized
+    }
+}
+
+pub fn resolve_event_keys(event: &ShortcutEventLike) -> BTreeSet<String> {
+    let mut keys = BTreeSet::from([normalize_event_key(&event.key)]);
+    let aliases: &[&str] = match event.code.as_deref() {
+        Some("BracketLeft") => &["["],
+        Some("BracketRight") => &["]"],
+        Some("Digit0") => &["0"],
+        Some("Digit1") => &["1"],
+        Some("Digit2") => &["2"],
+        Some("Digit3") => &["3"],
+        Some("Digit4") => &["4"],
+        Some("Digit5") => &["5"],
+        Some("Digit6") => &["6"],
+        Some("Digit7") => &["7"],
+        Some("Digit8") => &["8"],
+        Some("Digit9") => &["9"],
+        _ => &[],
+    };
+    keys.extend(aliases.iter().map(|alias| (*alias).to_string()));
+    keys
+}
+
+fn shortcut_modifier_state(event: &ShortcutEventLike) -> ShortcutModifierStateLike {
+    ShortcutModifierStateLike {
+        meta_key: event.meta_key,
+        ctrl_key: event.ctrl_key,
+        shift_key: event.shift_key,
+        alt_key: event.alt_key,
+    }
+}
+
+pub fn matches_shortcut_modifiers(
+    event: ShortcutModifierStateLike,
+    shortcut: &KeybindingShortcut,
+    platform: &str,
+) -> bool {
+    let use_meta_for_mod = is_mac_platform(platform);
+    let expected_meta = shortcut.meta_key || (shortcut.mod_key && use_meta_for_mod);
+    let expected_ctrl = shortcut.ctrl_key || (shortcut.mod_key && !use_meta_for_mod);
+    event.meta_key == expected_meta
+        && event.ctrl_key == expected_ctrl
+        && event.shift_key == shortcut.shift_key
+        && event.alt_key == shortcut.alt_key
+}
+
+pub fn matches_shortcut(
+    event: &ShortcutEventLike,
+    shortcut: &KeybindingShortcut,
+    platform: &str,
+) -> bool {
+    matches_shortcut_modifiers(shortcut_modifier_state(event), shortcut, platform)
+        && resolve_event_keys(event).contains(&shortcut.key)
+}
+
+fn shortcut_context_value(context: &ShortcutMatchContext, name: &str) -> bool {
+    match name {
+        "terminalFocus" => context.terminal_focus,
+        "terminalOpen" => context.terminal_open,
+        _ => context.flags.get(name).copied().unwrap_or(false),
+    }
+}
+
+pub fn evaluate_when_node(node: &KeybindingWhenNode, context: &ShortcutMatchContext) -> bool {
+    match node {
+        KeybindingWhenNode::Identifier { name } => match name.as_str() {
+            "true" => true,
+            "false" => false,
+            _ => shortcut_context_value(context, name),
+        },
+        KeybindingWhenNode::Not { node } => !evaluate_when_node(node, context),
+        KeybindingWhenNode::And { left, right } => {
+            evaluate_when_node(left, context) && evaluate_when_node(right, context)
+        }
+        KeybindingWhenNode::Or { left, right } => {
+            evaluate_when_node(left, context) || evaluate_when_node(right, context)
+        }
+    }
+}
+
+pub fn matches_when_clause(
+    when_ast: Option<&KeybindingWhenNode>,
+    context: &ShortcutMatchContext,
+) -> bool {
+    when_ast.is_none_or(|node| evaluate_when_node(node, context))
+}
+
+fn shortcut_conflict_key(shortcut: &KeybindingShortcut, platform: &str) -> String {
+    let use_meta_for_mod = is_mac_platform(platform);
+    let meta_key = shortcut.meta_key || (shortcut.mod_key && use_meta_for_mod);
+    let ctrl_key = shortcut.ctrl_key || (shortcut.mod_key && !use_meta_for_mod);
+
+    [
+        shortcut.key.as_str(),
+        if meta_key { "meta" } else { "" },
+        if ctrl_key { "ctrl" } else { "" },
+        if shortcut.shift_key { "shift" } else { "" },
+        if shortcut.alt_key { "alt" } else { "" },
+    ]
+    .join("|")
+}
+
+pub fn find_effective_shortcut_for_command(
+    keybindings: &[ResolvedKeybindingRule],
+    command: &str,
+    platform: &str,
+    context: &ShortcutMatchContext,
+) -> Option<KeybindingShortcut> {
+    let mut claimed_shortcuts = BTreeSet::new();
+
+    for binding in keybindings.iter().rev() {
+        if !matches_when_clause(binding.when_ast.as_ref(), context) {
+            continue;
+        }
+
+        let conflict_key = shortcut_conflict_key(&binding.shortcut, platform);
+        if claimed_shortcuts.contains(&conflict_key) {
+            continue;
+        }
+
+        claimed_shortcuts.insert(conflict_key);
+        if binding.command == command {
+            return Some(binding.shortcut.clone());
+        }
+    }
+
+    None
+}
+
+pub fn resolve_shortcut_command(
+    event: &ShortcutEventLike,
+    keybindings: &[ResolvedKeybindingRule],
+    platform: &str,
+    context: &ShortcutMatchContext,
+) -> Option<String> {
+    for binding in keybindings.iter().rev() {
+        if !matches_when_clause(binding.when_ast.as_ref(), context) {
+            continue;
+        }
+        if !matches_shortcut(event, &binding.shortcut, platform) {
+            continue;
+        }
+        return Some(binding.command.clone());
+    }
+    None
+}
+
+pub fn matches_command_shortcut(
+    event: &ShortcutEventLike,
+    keybindings: &[ResolvedKeybindingRule],
+    command: &str,
+    platform: &str,
+    context: &ShortcutMatchContext,
+) -> bool {
+    resolve_shortcut_command(event, keybindings, platform, context).as_deref() == Some(command)
+}
+
+fn format_shortcut_key_label(key: &str) -> String {
+    match key {
+        " " => "Space".to_string(),
+        "escape" => "Esc".to_string(),
+        "arrowup" => "Up".to_string(),
+        "arrowdown" => "Down".to_string(),
+        "arrowleft" => "Left".to_string(),
+        "arrowright" => "Right".to_string(),
+        value if value.chars().count() == 1 => value.to_ascii_uppercase(),
+        value => {
+            let mut chars = value.chars();
+            match chars.next() {
+                Some(first) => format!("{}{}", first.to_ascii_uppercase(), chars.as_str()),
+                None => String::new(),
+            }
+        }
+    }
+}
+
+pub fn format_shortcut_label(shortcut: &KeybindingShortcut, platform: &str) -> String {
+    let key_label = format_shortcut_key_label(&shortcut.key);
+    let use_meta_for_mod = is_mac_platform(platform);
+    let show_meta = shortcut.meta_key || (shortcut.mod_key && use_meta_for_mod);
+    let show_ctrl = shortcut.ctrl_key || (shortcut.mod_key && !use_meta_for_mod);
+    let show_alt = shortcut.alt_key;
+    let show_shift = shortcut.shift_key;
+
+    if use_meta_for_mod {
+        return format!(
+            "{}{}{}{}{}",
+            if show_ctrl { "\u{2303}" } else { "" },
+            if show_alt { "\u{2325}" } else { "" },
+            if show_shift { "\u{21e7}" } else { "" },
+            if show_meta { "\u{2318}" } else { "" },
+            key_label
+        );
+    }
+
+    let mut parts = Vec::new();
+    if show_ctrl {
+        parts.push("Ctrl");
+    }
+    if show_alt {
+        parts.push("Alt");
+    }
+    if show_shift {
+        parts.push("Shift");
+    }
+    if show_meta {
+        parts.push("Meta");
+    }
+    parts.push(&key_label);
+    parts.join("+")
+}
+
+pub fn shortcut_label_for_command(
+    keybindings: &[ResolvedKeybindingRule],
+    command: &str,
+    platform: &str,
+    context: &ShortcutMatchContext,
+) -> Option<String> {
+    find_effective_shortcut_for_command(keybindings, command, platform, context)
+        .map(|shortcut| format_shortcut_label(&shortcut, platform))
+}
+
+const THREAD_JUMP_KEYBINDING_COMMANDS: &[&str] = &[
+    "thread.jump.1",
+    "thread.jump.2",
+    "thread.jump.3",
+    "thread.jump.4",
+    "thread.jump.5",
+    "thread.jump.6",
+    "thread.jump.7",
+    "thread.jump.8",
+    "thread.jump.9",
+];
+
+const MODEL_PICKER_JUMP_KEYBINDING_COMMANDS: &[&str] = &[
+    "modelPicker.jump.1",
+    "modelPicker.jump.2",
+    "modelPicker.jump.3",
+    "modelPicker.jump.4",
+    "modelPicker.jump.5",
+    "modelPicker.jump.6",
+    "modelPicker.jump.7",
+    "modelPicker.jump.8",
+    "modelPicker.jump.9",
+];
+
+pub fn thread_jump_command_for_index(index: usize) -> Option<&'static str> {
+    THREAD_JUMP_KEYBINDING_COMMANDS.get(index).copied()
+}
+
+pub fn thread_jump_index_from_command(command: &str) -> Option<usize> {
+    THREAD_JUMP_KEYBINDING_COMMANDS
+        .iter()
+        .position(|candidate| *candidate == command)
+}
+
+pub fn thread_traversal_direction_from_command(command: Option<&str>) -> Option<&'static str> {
+    match command {
+        Some("thread.previous") => Some("previous"),
+        Some("thread.next") => Some("next"),
+        _ => None,
+    }
+}
+
+pub fn should_show_thread_jump_hints_for_modifiers(
+    modifiers: ShortcutModifierStateLike,
+    keybindings: &[ResolvedKeybindingRule],
+    platform: &str,
+    context: &ShortcutMatchContext,
+) -> bool {
+    THREAD_JUMP_KEYBINDING_COMMANDS.iter().any(|command| {
+        find_effective_shortcut_for_command(keybindings, command, platform, context)
+            .is_some_and(|shortcut| matches_shortcut_modifiers(modifiers, &shortcut, platform))
+    })
+}
+
+pub fn should_show_thread_jump_hints(
+    event: &ShortcutEventLike,
+    keybindings: &[ResolvedKeybindingRule],
+    platform: &str,
+    context: &ShortcutMatchContext,
+) -> bool {
+    should_show_thread_jump_hints_for_modifiers(
+        shortcut_modifier_state(event),
+        keybindings,
+        platform,
+        context,
+    )
+}
+
+pub fn model_picker_jump_command_for_index(index: usize) -> Option<&'static str> {
+    MODEL_PICKER_JUMP_KEYBINDING_COMMANDS.get(index).copied()
+}
+
+pub fn model_picker_jump_index_from_command(command: &str) -> Option<usize> {
+    MODEL_PICKER_JUMP_KEYBINDING_COMMANDS
+        .iter()
+        .position(|candidate| *candidate == command)
+}
+
+pub fn should_show_model_picker_jump_hints_for_modifiers(
+    modifiers: ShortcutModifierStateLike,
+    keybindings: &[ResolvedKeybindingRule],
+    platform: &str,
+    context: &ShortcutMatchContext,
+) -> bool {
+    MODEL_PICKER_JUMP_KEYBINDING_COMMANDS.iter().any(|command| {
+        find_effective_shortcut_for_command(keybindings, command, platform, context)
+            .is_some_and(|shortcut| matches_shortcut_modifiers(modifiers, &shortcut, platform))
+    })
+}
+
+pub fn should_show_model_picker_jump_hints(
+    event: &ShortcutEventLike,
+    keybindings: &[ResolvedKeybindingRule],
+    platform: &str,
+    context: &ShortcutMatchContext,
+) -> bool {
+    should_show_model_picker_jump_hints_for_modifiers(
+        shortcut_modifier_state(event),
+        keybindings,
+        platform,
+        context,
+    )
+}
+
+pub fn is_terminal_toggle_shortcut(
+    event: &ShortcutEventLike,
+    keybindings: &[ResolvedKeybindingRule],
+    platform: &str,
+    context: &ShortcutMatchContext,
+) -> bool {
+    matches_command_shortcut(event, keybindings, "terminal.toggle", platform, context)
+}
+
+pub fn is_terminal_split_shortcut(
+    event: &ShortcutEventLike,
+    keybindings: &[ResolvedKeybindingRule],
+    platform: &str,
+    context: &ShortcutMatchContext,
+) -> bool {
+    matches_command_shortcut(event, keybindings, "terminal.split", platform, context)
+}
+
+pub fn is_terminal_new_shortcut(
+    event: &ShortcutEventLike,
+    keybindings: &[ResolvedKeybindingRule],
+    platform: &str,
+    context: &ShortcutMatchContext,
+) -> bool {
+    matches_command_shortcut(event, keybindings, "terminal.new", platform, context)
+}
+
+pub fn is_terminal_close_shortcut(
+    event: &ShortcutEventLike,
+    keybindings: &[ResolvedKeybindingRule],
+    platform: &str,
+    context: &ShortcutMatchContext,
+) -> bool {
+    matches_command_shortcut(event, keybindings, "terminal.close", platform, context)
+}
+
+pub fn is_diff_toggle_shortcut(
+    event: &ShortcutEventLike,
+    keybindings: &[ResolvedKeybindingRule],
+    platform: &str,
+    context: &ShortcutMatchContext,
+) -> bool {
+    matches_command_shortcut(event, keybindings, "diff.toggle", platform, context)
+}
+
+pub fn is_chat_new_shortcut(
+    event: &ShortcutEventLike,
+    keybindings: &[ResolvedKeybindingRule],
+    platform: &str,
+    context: &ShortcutMatchContext,
+) -> bool {
+    matches_command_shortcut(event, keybindings, "chat.new", platform, context)
+}
+
+pub fn is_chat_new_local_shortcut(
+    event: &ShortcutEventLike,
+    keybindings: &[ResolvedKeybindingRule],
+    platform: &str,
+    context: &ShortcutMatchContext,
+) -> bool {
+    matches_command_shortcut(event, keybindings, "chat.newLocal", platform, context)
+}
+
+pub fn is_open_favorite_editor_shortcut(
+    event: &ShortcutEventLike,
+    keybindings: &[ResolvedKeybindingRule],
+    platform: &str,
+    context: &ShortcutMatchContext,
+) -> bool {
+    matches_command_shortcut(event, keybindings, "editor.openFavorite", platform, context)
+}
+
+pub fn is_terminal_clear_shortcut(event: &ShortcutEventLike, platform: &str) -> bool {
+    if event
+        .event_type
+        .as_deref()
+        .is_some_and(|event_type| event_type != "keydown")
+    {
+        return false;
+    }
+
+    let key = event.key.to_ascii_lowercase();
+    if key == "l" && event.ctrl_key && !event.meta_key && !event.alt_key && !event.shift_key {
+        return true;
+    }
+
+    is_mac_platform(platform)
+        && key == "k"
+        && event.meta_key
+        && !event.ctrl_key
+        && !event.alt_key
+        && !event.shift_key
+}
+
+pub fn terminal_delete_shortcut_data(
+    event: &ShortcutEventLike,
+    platform: &str,
+) -> Option<&'static str> {
+    if event
+        .event_type
+        .as_deref()
+        .is_some_and(|event_type| event_type != "keydown")
+    {
+        return None;
+    }
+    if !is_mac_platform(platform) {
+        return None;
+    }
+    if normalize_event_key(&event.key) != "backspace" {
+        return None;
+    }
+
+    (event.meta_key && !event.ctrl_key && !event.alt_key && !event.shift_key)
+        .then_some(TERMINAL_DELETE_TO_LINE_START)
+}
+
+pub fn terminal_navigation_shortcut_data(
+    event: &ShortcutEventLike,
+    platform: &str,
+) -> Option<&'static str> {
+    if event
+        .event_type
+        .as_deref()
+        .is_some_and(|event_type| event_type != "keydown")
+    {
+        return None;
+    }
+    if event.shift_key {
+        return None;
+    }
+
+    let key = normalize_event_key(&event.key);
+    if key != "arrowleft" && key != "arrowright" {
+        return None;
+    }
+    let move_word = if key == "arrowleft" {
+        TERMINAL_WORD_BACKWARD
+    } else {
+        TERMINAL_WORD_FORWARD
+    };
+    let move_line = if key == "arrowleft" {
+        TERMINAL_LINE_START
+    } else {
+        TERMINAL_LINE_END
+    };
+
+    if is_mac_platform(platform) {
+        if event.alt_key && !event.meta_key && !event.ctrl_key {
+            return Some(move_word);
+        }
+        if event.meta_key && !event.alt_key && !event.ctrl_key {
+            return Some(move_line);
+        }
+        return None;
+    }
+
+    if event.ctrl_key && !event.meta_key && !event.alt_key {
+        return Some(move_word);
+    }
+    if event.alt_key && !event.meta_key && !event.ctrl_key {
+        return Some(move_word);
+    }
+    None
 }
 
 pub fn default_server_keybinding_rules() -> Vec<ServerKeybindingRule> {
@@ -29912,6 +30442,221 @@ mod tests {
                     .as_ref()
             ),
             "!(terminalFocus || modelPickerOpen)"
+        );
+    }
+
+    #[test]
+    fn keybindings_client_shortcut_helpers_match_upstream_contract() {
+        fn event(key: &str) -> ShortcutEventLike {
+            ShortcutEventLike {
+                event_type: None,
+                code: None,
+                key: key.to_string(),
+                meta_key: false,
+                ctrl_key: false,
+                shift_key: false,
+                alt_key: false,
+            }
+        }
+
+        fn mod_shortcut(key: &str) -> KeybindingShortcut {
+            KeybindingShortcut {
+                key: key.to_string(),
+                meta_key: false,
+                ctrl_key: false,
+                shift_key: false,
+                alt_key: false,
+                mod_key: true,
+            }
+        }
+
+        fn binding(command: &str, key: &str, when: Option<&str>) -> ResolvedKeybindingRule {
+            ResolvedKeybindingRule {
+                command: command.to_string(),
+                shortcut: parse_keybinding_shortcut(key).unwrap(),
+                when_ast: when
+                    .map(|expression| parse_keybinding_when_expression(expression).unwrap()),
+            }
+        }
+
+        let default_bindings = vec![
+            binding("terminal.toggle", "mod+j", None),
+            binding("terminal.split", "mod+d", Some("terminalFocus")),
+            binding("terminal.new", "mod+shift+d", Some("terminalFocus")),
+            binding("terminal.close", "mod+w", Some("terminalFocus")),
+            binding("diff.toggle", "mod+d", Some("!terminalFocus")),
+            binding("commandPalette.toggle", "mod+k", Some("!terminalFocus")),
+            binding("modelPicker.toggle", "mod+shift+m", Some("!terminalFocus")),
+            binding("chat.new", "mod+shift+o", None),
+            binding("chat.newLocal", "mod+shift+n", None),
+            binding("editor.openFavorite", "mod+o", None),
+            binding("thread.previous", "mod+shift+[", None),
+            binding("thread.next", "mod+shift+]", None),
+            binding("thread.jump.1", "mod+1", None),
+            binding("thread.jump.2", "mod+2", None),
+            binding("thread.jump.3", "mod+3", None),
+            binding("modelPicker.jump.1", "mod+1", Some("modelPickerOpen")),
+            binding("modelPicker.jump.2", "mod+2", Some("modelPickerOpen")),
+            binding("modelPicker.jump.3", "mod+3", Some("modelPickerOpen")),
+        ];
+        let base_context = ShortcutMatchContext::default();
+
+        let mut mac_toggle = event("j");
+        mac_toggle.meta_key = true;
+        assert!(is_terminal_toggle_shortcut(
+            &mac_toggle,
+            &default_bindings,
+            "MacIntel",
+            &base_context
+        ));
+
+        let mut linux_toggle = event("j");
+        linux_toggle.ctrl_key = true;
+        assert!(is_terminal_toggle_shortcut(
+            &linux_toggle,
+            &default_bindings,
+            "Linux",
+            &base_context
+        ));
+
+        let mut split = event("d");
+        split.meta_key = true;
+        assert!(!is_terminal_split_shortcut(
+            &split,
+            &default_bindings,
+            "MacIntel",
+            &base_context
+        ));
+        let focused_context = ShortcutMatchContext {
+            terminal_focus: true,
+            ..ShortcutMatchContext::default()
+        };
+        assert!(is_terminal_split_shortcut(
+            &split,
+            &default_bindings,
+            "MacIntel",
+            &focused_context
+        ));
+
+        let bool_bindings = vec![
+            binding("terminal.new", "mod+n", Some("true")),
+            binding("terminal.close", "mod+m", Some("false")),
+        ];
+        let mut linux_new = event("n");
+        linux_new.ctrl_key = true;
+        assert!(is_terminal_new_shortcut(
+            &linux_new,
+            &bool_bindings,
+            "Linux",
+            &base_context
+        ));
+
+        assert_eq!(
+            shortcut_label_for_command(&default_bindings, "chat.new", "MacIntel", &base_context)
+                .as_deref(),
+            Some("\u{21e7}\u{2318}O")
+        );
+        assert_eq!(
+            shortcut_label_for_command(&default_bindings, "diff.toggle", "Linux", &base_context)
+                .as_deref(),
+            Some("Ctrl+D")
+        );
+        assert_eq!(format_shortcut_label(&mod_shortcut("+"), "Linux"), "Ctrl++");
+
+        let shadowed = vec![
+            binding("thread.jump.1", "mod+shift+1", None),
+            binding("thread.jump.7", "mod+shift+1", None),
+        ];
+        assert_eq!(
+            shortcut_label_for_command(&shadowed, "thread.jump.1", "MacIntel", &base_context),
+            None
+        );
+        assert_eq!(
+            shortcut_label_for_command(&shadowed, "thread.jump.7", "MacIntel", &base_context)
+                .as_deref(),
+            Some("\u{21e7}\u{2318}1")
+        );
+
+        assert_eq!(thread_jump_command_for_index(0), Some("thread.jump.1"));
+        assert_eq!(thread_jump_index_from_command("thread.jump.3"), Some(2));
+        assert_eq!(
+            thread_traversal_direction_from_command(Some("thread.previous")),
+            Some("previous")
+        );
+        assert_eq!(
+            model_picker_jump_command_for_index(2),
+            Some("modelPicker.jump.3")
+        );
+        assert_eq!(
+            model_picker_jump_index_from_command("modelPicker.jump.2"),
+            Some(1)
+        );
+
+        assert!(should_show_thread_jump_hints(
+            &mac_toggle,
+            &default_bindings,
+            "MacIntel",
+            &base_context
+        ));
+        let mut model_context = ShortcutMatchContext::default();
+        model_context
+            .flags
+            .insert("modelPickerOpen".to_string(), true);
+        assert!(should_show_model_picker_jump_hints(
+            &mac_toggle,
+            &default_bindings,
+            "MacIntel",
+            &model_context
+        ));
+        assert!(!should_show_model_picker_jump_hints(
+            &mac_toggle,
+            &default_bindings,
+            "MacIntel",
+            &base_context
+        ));
+
+        let mut bracket = event("{");
+        bracket.code = Some("BracketLeft".to_string());
+        bracket.meta_key = true;
+        bracket.shift_key = true;
+        assert_eq!(
+            resolve_shortcut_command(&bracket, &default_bindings, "MacIntel", &base_context)
+                .as_deref(),
+            Some("thread.previous")
+        );
+
+        let mut clear = event("l");
+        clear.ctrl_key = true;
+        assert!(is_terminal_clear_shortcut(&clear, "Linux"));
+        clear.event_type = Some("keyup".to_string());
+        assert!(!is_terminal_clear_shortcut(&clear, "Linux"));
+
+        let mut delete = event("Backspace");
+        delete.meta_key = true;
+        assert_eq!(
+            terminal_delete_shortcut_data(&delete, "MacIntel"),
+            Some(TERMINAL_DELETE_TO_LINE_START)
+        );
+        assert_eq!(terminal_delete_shortcut_data(&delete, "Linux"), None);
+
+        let mut mac_word = event("ArrowLeft");
+        mac_word.alt_key = true;
+        assert_eq!(
+            terminal_navigation_shortcut_data(&mac_word, "MacIntel"),
+            Some(TERMINAL_WORD_BACKWARD)
+        );
+        let mut linux_word = event("ArrowRight");
+        linux_word.ctrl_key = true;
+        assert_eq!(
+            terminal_navigation_shortcut_data(&linux_word, "Linux"),
+            Some(TERMINAL_WORD_FORWARD)
+        );
+        let mut shifted = event("ArrowLeft");
+        shifted.shift_key = true;
+        shifted.alt_key = true;
+        assert_eq!(
+            terminal_navigation_shortcut_data(&shifted, "MacIntel"),
+            None
         );
     }
 
