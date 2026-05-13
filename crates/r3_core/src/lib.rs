@@ -3932,6 +3932,11 @@ pub struct ModelPickerItem {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelSlugOrderItem {
+    pub slug: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelPickerState {
     pub active_entry: Option<ProviderInstanceEntry>,
     pub trigger_title: String,
@@ -5213,6 +5218,14 @@ fn favorite_model_key_set(favorites: &[ProviderModelFavorite]) -> Vec<String> {
 fn is_favorite_model_key(favorites: &[String], instance_id: &str, slug: &str) -> bool {
     let key = provider_model_key(instance_id, slug);
     favorites.iter().any(|favorite| favorite == &key)
+}
+
+fn rank_by_value(values: &[String]) -> BTreeMap<String, usize> {
+    values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| (value.clone(), index))
+        .collect()
 }
 
 pub fn normalize_search_query(input: &str) -> String {
@@ -6901,6 +6914,55 @@ pub fn sort_provider_model_items(
         })
     });
     indexed
+}
+
+pub fn sort_models_for_provider_instance(
+    models: &[ModelSlugOrderItem],
+    model_order: &[String],
+    favorite_models: &[String],
+    group_favorites: bool,
+) -> Vec<ModelSlugOrderItem> {
+    let order_by_slug = rank_by_value(model_order);
+    let original_order = rank_by_value(
+        &models
+            .iter()
+            .map(|model| model.slug.clone())
+            .collect::<Vec<_>>(),
+    );
+    let mut sorted = models.to_vec();
+    sorted.sort_by(|left, right| {
+        if group_favorites {
+            let left_favorite = favorite_models.iter().any(|slug| slug == &left.slug);
+            let right_favorite = favorite_models.iter().any(|slug| slug == &right.slug);
+            if left_favorite != right_favorite {
+                return right_favorite.cmp(&left_favorite);
+            }
+        }
+
+        order_by_slug
+            .get(&left.slug)
+            .copied()
+            .unwrap_or(usize::MAX)
+            .cmp(
+                &order_by_slug
+                    .get(&right.slug)
+                    .copied()
+                    .unwrap_or(usize::MAX),
+            )
+            .then_with(|| {
+                original_order
+                    .get(&left.slug)
+                    .copied()
+                    .unwrap_or(usize::MAX)
+                    .cmp(
+                        &original_order
+                            .get(&right.slug)
+                            .copied()
+                            .unwrap_or(usize::MAX),
+                    )
+            })
+    });
+    sorted
 }
 
 pub fn normalize_model_slug(model: Option<&str>, provider: &str) -> Option<String> {
@@ -29196,6 +29258,75 @@ mod tests {
     }
 
     #[test]
+    fn model_ordering_groups_favorites_and_preserves_provider_order() {
+        let models = vec![
+            ModelSlugOrderItem {
+                slug: "gpt-5.5".to_string(),
+            },
+            ModelSlugOrderItem {
+                slug: "gpt-5.4-mini".to_string(),
+            },
+            ModelSlugOrderItem {
+                slug: "crest-alpha".to_string(),
+            },
+            ModelSlugOrderItem {
+                slug: "gpt-5.3-codex".to_string(),
+            },
+        ];
+
+        assert_eq!(
+            sort_models_for_provider_instance(
+                &models,
+                &[
+                    "gpt-5.4-mini".to_string(),
+                    "gpt-5.5".to_string(),
+                    "crest-alpha".to_string(),
+                    "gpt-5.3-codex".to_string(),
+                ],
+                &[
+                    "gpt-5.5".to_string(),
+                    "gpt-5.4-mini".to_string(),
+                    "crest-alpha".to_string(),
+                ],
+                true,
+            )
+            .into_iter()
+            .map(|model| model.slug)
+            .collect::<Vec<_>>(),
+            vec!["gpt-5.4-mini", "gpt-5.5", "crest-alpha", "gpt-5.3-codex"]
+        );
+    }
+
+    #[test]
+    fn provider_model_ordering_uses_instance_order_then_original_model_order() {
+        let items = vec![
+            model_picker_item("codex_work", "gpt-5.4-mini"),
+            model_picker_item("codex_work", "gpt-5.5"),
+            model_picker_item("codex_work", "crest-alpha"),
+            model_picker_item("claudeAgent", "claude-opus-4-6"),
+        ];
+        let favorite_keys = vec![
+            provider_model_key("codex_work", "gpt-5.5"),
+            provider_model_key("claudeAgent", "claude-opus-4-6"),
+            provider_model_key("codex_work", "gpt-5.4-mini"),
+            provider_model_key("codex_work", "crest-alpha"),
+        ];
+
+        assert_eq!(
+            sort_provider_model_items(
+                &items,
+                &favorite_keys,
+                false,
+                &["codex_work".to_string(), "claudeAgent".to_string()],
+            )
+            .into_iter()
+            .map(|item| item.slug)
+            .collect::<Vec<_>>(),
+            vec!["gpt-5.4-mini", "gpt-5.5", "crest-alpha", "claude-opus-4-6"]
+        );
+    }
+
+    #[test]
     fn provider_model_picker_reference_state_matches_upstream_capture_contract() {
         let snapshot = AppSnapshot::provider_model_picker_reference_state();
         assert_eq!(snapshot.selected_provider_instance_id, "codex");
@@ -32617,6 +32748,21 @@ mod tests {
             kind: Some("modified".to_string()),
             additions,
             deletions,
+        }
+    }
+
+    fn model_picker_item(instance_id: &str, slug: &str) -> ModelPickerItem {
+        ModelPickerItem {
+            slug: slug.to_string(),
+            name: slug.to_string(),
+            short_name: None,
+            sub_provider: None,
+            instance_id: instance_id.to_string(),
+            driver_kind: instance_id.to_string(),
+            instance_display_name: instance_id.to_string(),
+            instance_accent_color: None,
+            continuation_group_key: None,
+            is_favorite: false,
         }
     }
 

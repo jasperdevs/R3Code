@@ -1768,6 +1768,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core pending_user_input`",
             "Wire helpers into live GPUI pending-user-input panel state, answer submission, and multi-question navigation.",
         )
+    } else if path == "apps/web/src/modelOrdering.ts"
+        || path == "apps/web/src/modelOrdering.test.ts"
+    {
+        (
+            "provider model key construction, provider-instance model ordering by favorites/modelOrder/original order, and cross-provider item ordering by favorite group, instance order, and original provider-model order in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core model_ordering`",
+            "Wire ordering helpers into all live GPUI model picker lists, favorites views, and provider instance sections.",
+        )
     } else if path == "apps/web/src/shortcutModifierState.ts"
         || path == "apps/web/src/shortcutModifierState.test.ts"
     {
