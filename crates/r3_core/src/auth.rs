@@ -399,6 +399,24 @@ pub struct AuthRouteErrorResponsePlan {
     pub should_log_error: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthRouteSuccessResponsePlan {
+    pub status: u16,
+    pub body_json: String,
+    pub headers: BTreeMap<&'static str, String>,
+    pub set_cookie: Option<AuthSetCookiePlan>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuthSetCookiePlan {
+    pub name: String,
+    pub value: String,
+    pub expires_at: String,
+    pub http_only: bool,
+    pub path: &'static str,
+    pub same_site: &'static str,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PairingCredentialRequestHeaders {
     pub content_length: Option<String>,
@@ -639,6 +657,107 @@ pub fn pairing_credential_request_has_body(headers: &PairingCredentialRequestHea
         }
     }
     headers.transfer_encoding.is_some()
+}
+
+pub fn auth_browser_bootstrap_success_response_plan(
+    cookie_name: &str,
+    session_token: &str,
+    role: AuthSessionRole,
+    expires_at: &str,
+) -> AuthRouteSuccessResponsePlan {
+    AuthRouteSuccessResponsePlan {
+        status: 200,
+        body_json: format!(
+            "{{\"authenticated\":true,\"role\":{},\"sessionMethod\":\"browser-session-cookie\",\"expiresAt\":{}}}",
+            json_string(role.as_str()),
+            json_string(expires_at),
+        ),
+        headers: browser_api_cors_headers(),
+        set_cookie: Some(AuthSetCookiePlan {
+            name: cookie_name.to_string(),
+            value: session_token.to_string(),
+            expires_at: expires_at.to_string(),
+            http_only: true,
+            path: "/",
+            same_site: "lax",
+        }),
+    }
+}
+
+pub fn auth_bearer_bootstrap_success_response_plan(
+    session_token: &str,
+    role: AuthSessionRole,
+    expires_at: &str,
+) -> AuthRouteSuccessResponsePlan {
+    AuthRouteSuccessResponsePlan {
+        status: 200,
+        body_json: format!(
+            "{{\"authenticated\":true,\"role\":{},\"sessionMethod\":\"bearer-session-token\",\"expiresAt\":{},\"sessionToken\":{}}}",
+            json_string(role.as_str()),
+            json_string(expires_at),
+            json_string(session_token),
+        ),
+        headers: browser_api_cors_headers(),
+        set_cookie: None,
+    }
+}
+
+pub fn auth_websocket_token_success_response_plan(
+    token: &str,
+    expires_at: &str,
+) -> AuthRouteSuccessResponsePlan {
+    AuthRouteSuccessResponsePlan {
+        status: 200,
+        body_json: format!(
+            "{{\"token\":{},\"expiresAt\":{}}}",
+            json_string(token),
+            json_string(expires_at),
+        ),
+        headers: browser_api_cors_headers(),
+        set_cookie: None,
+    }
+}
+
+pub fn auth_pairing_credential_success_response_plan(
+    id: &str,
+    credential: &str,
+    label: Option<&str>,
+    expires_at: &str,
+) -> AuthRouteSuccessResponsePlan {
+    let label_json = label
+        .map(|value| format!(",\"label\":{}", json_string(value)))
+        .unwrap_or_default();
+    AuthRouteSuccessResponsePlan {
+        status: 200,
+        body_json: format!(
+            "{{\"id\":{},\"credential\":{}{label_json},\"expiresAt\":{}}}",
+            json_string(id),
+            json_string(credential),
+            json_string(expires_at),
+        ),
+        headers: BTreeMap::new(),
+        set_cookie: None,
+    }
+}
+
+pub fn auth_revoke_success_response_plan(revoked: bool) -> AuthRouteSuccessResponsePlan {
+    AuthRouteSuccessResponsePlan {
+        status: 200,
+        body_json: format!("{{\"revoked\":{revoked}}}"),
+        headers: BTreeMap::new(),
+        set_cookie: None,
+    }
+}
+
+pub fn auth_revoke_others_success_response_plan(
+    revoked_count: u64,
+) -> AuthRouteSuccessResponsePlan {
+    AuthRouteSuccessResponsePlan {
+        status: 200,
+        body_json: format!("{{\"revokedCount\":{revoked_count}}}"),
+        headers: BTreeMap::new(),
+        set_cookie: None,
+    }
 }
 
 fn browser_api_cors_headers() -> BTreeMap<&'static str, String> {
@@ -1774,6 +1893,106 @@ mod tests {
                 ..PairingCredentialRequestHeaders::default()
             }
         ));
+    }
+
+    #[test]
+    fn ports_auth_http_success_response_contracts() {
+        let browser_bootstrap = auth_browser_bootstrap_success_response_plan(
+            "t3_session_3773",
+            "session-token",
+            AuthSessionRole::Owner,
+            "2026-03-04T12:10:00.000Z",
+        );
+        assert_eq!(browser_bootstrap.status, 200);
+        assert_eq!(
+            browser_bootstrap.body_json,
+            "{\"authenticated\":true,\"role\":\"owner\",\"sessionMethod\":\"browser-session-cookie\",\"expiresAt\":\"2026-03-04T12:10:00.000Z\"}"
+        );
+        assert_eq!(
+            browser_bootstrap
+                .headers
+                .get("access-control-allow-origin")
+                .map(String::as_str),
+            Some("*")
+        );
+        assert_eq!(
+            browser_bootstrap.set_cookie,
+            Some(AuthSetCookiePlan {
+                name: "t3_session_3773".to_string(),
+                value: "session-token".to_string(),
+                expires_at: "2026-03-04T12:10:00.000Z".to_string(),
+                http_only: true,
+                path: "/",
+                same_site: "lax",
+            })
+        );
+
+        let bearer = auth_bearer_bootstrap_success_response_plan(
+            "bearer-token",
+            AuthSessionRole::Client,
+            "2026-03-04T12:10:00.000Z",
+        );
+        assert_eq!(
+            bearer.body_json,
+            "{\"authenticated\":true,\"role\":\"client\",\"sessionMethod\":\"bearer-session-token\",\"expiresAt\":\"2026-03-04T12:10:00.000Z\",\"sessionToken\":\"bearer-token\"}"
+        );
+        assert!(bearer.set_cookie.is_none());
+        assert_eq!(
+            bearer
+                .headers
+                .get("access-control-allow-methods")
+                .map(String::as_str),
+            Some("GET, POST, OPTIONS")
+        );
+
+        let websocket =
+            auth_websocket_token_success_response_plan("ws-token", "2026-03-04T12:15:00.000Z");
+        assert_eq!(
+            websocket.body_json,
+            "{\"token\":\"ws-token\",\"expiresAt\":\"2026-03-04T12:15:00.000Z\"}"
+        );
+        assert_eq!(
+            websocket
+                .headers
+                .get("access-control-allow-headers")
+                .map(String::as_str),
+            Some("authorization, b3, traceparent, content-type")
+        );
+
+        let pairing = auth_pairing_credential_success_response_plan(
+            "pair-1",
+            "PAIRTOKEN",
+            Some("Phone"),
+            "2026-03-04T12:20:00.000Z",
+        );
+        assert_eq!(
+            pairing.body_json,
+            "{\"id\":\"pair-1\",\"credential\":\"PAIRTOKEN\",\"label\":\"Phone\",\"expiresAt\":\"2026-03-04T12:20:00.000Z\"}"
+        );
+        assert!(pairing.headers.is_empty());
+
+        assert_eq!(
+            auth_pairing_credential_success_response_plan(
+                "pair-1",
+                "PAIRTOKEN",
+                None,
+                "2026-03-04T12:20:00.000Z"
+            )
+            .body_json,
+            "{\"id\":\"pair-1\",\"credential\":\"PAIRTOKEN\",\"expiresAt\":\"2026-03-04T12:20:00.000Z\"}"
+        );
+        assert_eq!(
+            auth_revoke_success_response_plan(true).body_json,
+            "{\"revoked\":true}"
+        );
+        assert_eq!(
+            auth_revoke_success_response_plan(false).body_json,
+            "{\"revoked\":false}"
+        );
+        assert_eq!(
+            auth_revoke_others_success_response_plan(3).body_json,
+            "{\"revokedCount\":3}"
+        );
     }
 
     #[test]
