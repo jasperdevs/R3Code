@@ -3762,6 +3762,32 @@ pub struct LogicalProject {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnvironmentPresence {
+    LocalOnly,
+    RemoteOnly,
+    Mixed,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SidebarProjectGroupMember {
+    pub project: LogicalProject,
+    pub physical_project_key: String,
+    pub environment_label: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SidebarProjectSnapshot {
+    pub project: LogicalProject,
+    pub project_key: String,
+    pub display_name: String,
+    pub grouped_project_count: usize,
+    pub environment_presence: EnvironmentPresence,
+    pub member_projects: Vec<SidebarProjectGroupMember>,
+    pub member_project_refs: Vec<ScopedProjectRef>,
+    pub remote_environment_labels: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProjectScriptIcon {
     Play,
     Test,
@@ -16215,6 +16241,114 @@ pub fn derive_logical_project_key_from_ref(
         .unwrap_or_else(|| scoped_project_key(project_ref))
 }
 
+pub fn build_physical_to_logical_project_key_map(
+    projects: &[LogicalProject],
+    settings: &ProjectGroupingSettings,
+) -> BTreeMap<String, String> {
+    projects
+        .iter()
+        .map(|project| {
+            (
+                derive_physical_project_key(project),
+                derive_logical_project_key_from_settings(project, settings),
+            )
+        })
+        .collect()
+}
+
+pub fn build_sidebar_project_snapshots(
+    projects: &[LogicalProject],
+    settings: &ProjectGroupingSettings,
+    primary_environment_id: Option<&str>,
+    mut resolve_environment_label: impl FnMut(&str) -> Option<String>,
+) -> Vec<SidebarProjectSnapshot> {
+    let mut grouped_members = BTreeMap::<String, Vec<SidebarProjectGroupMember>>::new();
+    let mut logical_key_order = Vec::<String>::new();
+    for project in projects {
+        let logical_key = derive_logical_project_key_from_settings(project, settings);
+        if !grouped_members.contains_key(&logical_key) {
+            logical_key_order.push(logical_key.clone());
+        }
+        grouped_members
+            .entry(logical_key)
+            .or_default()
+            .push(SidebarProjectGroupMember {
+                project: project.clone(),
+                physical_project_key: derive_physical_project_key(project),
+                environment_label: resolve_environment_label(&project.environment_id),
+            });
+    }
+
+    let mut snapshots = Vec::new();
+    for logical_key in logical_key_order {
+        let Some(members) = grouped_members.get(&logical_key) else {
+            continue;
+        };
+        let representative = primary_environment_id
+            .and_then(|primary_environment_id| {
+                members
+                    .iter()
+                    .find(|member| member.project.environment_id == primary_environment_id)
+            })
+            .or_else(|| members.first());
+        let Some(representative) = representative else {
+            continue;
+        };
+
+        let has_local = primary_environment_id.is_some_and(|primary_environment_id| {
+            members
+                .iter()
+                .any(|member| member.project.environment_id == primary_environment_id)
+        });
+        let has_remote = primary_environment_id.is_some_and(|primary_environment_id| {
+            members
+                .iter()
+                .any(|member| member.project.environment_id != primary_environment_id)
+        });
+        let mut remote_environment_labels = Vec::<String>::new();
+        for member in members {
+            if primary_environment_id.is_some_and(|primary_environment_id| {
+                member.project.environment_id != primary_environment_id
+            }) {
+                if let Some(label) = member.environment_label.as_ref() {
+                    if !remote_environment_labels.contains(label) {
+                        remote_environment_labels.push(label.clone());
+                    }
+                }
+            }
+        }
+        let member_logical_projects = members
+            .iter()
+            .map(|member| member.project.clone())
+            .collect::<Vec<_>>();
+
+        snapshots.push(SidebarProjectSnapshot {
+            project: representative.project.clone(),
+            project_key: logical_key,
+            display_name: if members.len() > 1 {
+                derive_project_group_label(&representative.project, &member_logical_projects)
+            } else {
+                representative.project.name.clone()
+            },
+            grouped_project_count: members.len(),
+            environment_presence: if has_local && has_remote {
+                EnvironmentPresence::Mixed
+            } else if has_remote {
+                EnvironmentPresence::RemoteOnly
+            } else {
+                EnvironmentPresence::LocalOnly
+            },
+            member_projects: members.clone(),
+            member_project_refs: members
+                .iter()
+                .map(|member| scope_project_ref(&member.project.environment_id, &member.project.id))
+                .collect(),
+            remote_environment_labels,
+        });
+    }
+    snapshots
+}
+
 pub fn derive_project_group_label(
     representative: &LogicalProject,
     members: &[LogicalProject],
@@ -23448,6 +23582,126 @@ mod tests {
         assert_eq!(
             derive_project_group_label(&project, &[project.clone(), conflicting]),
             "web"
+        );
+    }
+
+    #[test]
+    fn sidebar_project_grouping_matches_upstream_contract() {
+        let local = LogicalProject {
+            id: "project-local".to_string(),
+            environment_id: "local".to_string(),
+            cwd: "/repo/apps/web".to_string(),
+            name: "web".to_string(),
+            repository_identity: Some(LogicalProjectRepositoryIdentity {
+                canonical_key: Some("git:/repo".to_string()),
+                root_path: Some("/repo".to_string()),
+                display_name: Some("T3Code".to_string()),
+                name: Some("t3code".to_string()),
+            }),
+        };
+        let remote = LogicalProject {
+            id: "project-remote".to_string(),
+            environment_id: "remote".to_string(),
+            cwd: "/repo/apps/server".to_string(),
+            name: "server".to_string(),
+            repository_identity: local.repository_identity.clone(),
+        };
+        let remote_duplicate_label = LogicalProject {
+            id: "project-remote-2".to_string(),
+            environment_id: "remote-2".to_string(),
+            cwd: "/repo/apps/worker".to_string(),
+            name: "worker".to_string(),
+            repository_identity: local.repository_identity.clone(),
+        };
+        let separate = LogicalProject {
+            id: "project-docs".to_string(),
+            environment_id: "local".to_string(),
+            cwd: "/docs".to_string(),
+            name: "docs".to_string(),
+            repository_identity: None,
+        };
+        let projects = vec![
+            remote.clone(),
+            local.clone(),
+            remote_duplicate_label.clone(),
+            separate.clone(),
+        ];
+        let settings = ProjectGroupingSettings {
+            sidebar_project_grouping_mode: SidebarProjectGroupingMode::Repository,
+            sidebar_project_grouping_overrides: BTreeMap::new(),
+        };
+
+        let key_map = build_physical_to_logical_project_key_map(&projects, &settings);
+        assert_eq!(
+            key_map
+                .get(&derive_physical_project_key(&local))
+                .map(String::as_str),
+            Some("git:/repo")
+        );
+        assert_eq!(
+            key_map
+                .get(&derive_physical_project_key(&separate))
+                .map(String::as_str),
+            Some("local:/docs")
+        );
+
+        let snapshots = build_sidebar_project_snapshots(
+            &projects,
+            &settings,
+            Some("local"),
+            |environment_id| match environment_id {
+                "remote" | "remote-2" => Some("Remote".to_string()),
+                "local" => Some("Local".to_string()),
+                _ => None,
+            },
+        );
+        assert_eq!(snapshots.len(), 2);
+
+        let grouped = snapshots
+            .iter()
+            .find(|snapshot| snapshot.project_key == "git:/repo")
+            .unwrap();
+        assert_eq!(grouped.project.id, "project-local");
+        assert_eq!(grouped.display_name, "T3Code");
+        assert_eq!(grouped.grouped_project_count, 3);
+        assert_eq!(grouped.environment_presence, EnvironmentPresence::Mixed);
+        assert_eq!(grouped.remote_environment_labels, vec!["Remote"]);
+        assert_eq!(
+            grouped
+                .member_projects
+                .iter()
+                .map(|member| member.physical_project_key.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "remote:/repo/apps/server",
+                "local:/repo/apps/web",
+                "remote-2:/repo/apps/worker"
+            ]
+        );
+        assert_eq!(
+            grouped.member_project_refs,
+            vec![
+                scope_project_ref("remote", "project-remote"),
+                scope_project_ref("local", "project-local"),
+                scope_project_ref("remote-2", "project-remote-2"),
+            ]
+        );
+
+        let docs = snapshots
+            .iter()
+            .find(|snapshot| snapshot.project_key == "local:/docs")
+            .unwrap();
+        assert_eq!(docs.display_name, "docs");
+        assert_eq!(docs.grouped_project_count, 1);
+        assert_eq!(docs.environment_presence, EnvironmentPresence::LocalOnly);
+
+        let remote_only =
+            build_sidebar_project_snapshots(&[remote], &settings, Some("local"), |_| {
+                Some("Remote".to_string())
+            });
+        assert_eq!(
+            remote_only[0].environment_presence,
+            EnvironmentPresence::RemoteOnly
         );
     }
 

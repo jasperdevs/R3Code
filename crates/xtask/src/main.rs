@@ -1856,6 +1856,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core thread_selection_store_matches_upstream_contract`",
             "Wire state helper into the live GPUI sidebar thread multi-select interactions and bulk actions.",
         )
+    } else if path == "apps/web/src/sidebarProjectGrouping.ts" {
+        (
+            "sidebar project physical-to-logical key mapping and grouped project snapshots with primary-environment representative selection, grouped labels, local/remote/mixed presence, member refs, and deduped remote labels in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core sidebar_project_grouping_matches_upstream_contract`; `cargo test -p r3_core logical_project_helpers_match_upstream_grouping_rules`",
+            "Wire snapshot projection into the live GPUI sidebar project list, grouping settings, drag ordering, and environment badges.",
+        )
     } else if path == "apps/web/src/versionSkew.ts" || path == "apps/web/src/versionSkew.test.ts" {
         (
             "version mismatch normalization, R3Code-branded mismatch hint, environment/client/server dismissal keys, duplicate-safe dismissal insertion, dismissed checks, and error-message hint append behavior in crates/r3_core/src/lib.rs",
