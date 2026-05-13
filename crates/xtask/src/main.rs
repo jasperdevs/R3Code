@@ -2471,6 +2471,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace primary_environment_target_and_auth_helpers_match_upstream_contract`",
             "Wire primary target/auth helpers into live desktop bridge bootstrap, browser history URL mutation, fetch credentials, in-flight auth bootstrap promise caching, and GPUI auth gate state.",
         )
+    } else if path == "apps/web/src/environmentApi.ts" {
+        (
+            "environment API facade method surface, readEnvironmentApi window/environment-id/override/connection decision order, and ensureEnvironmentApi error message in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace environment_api_facade_matches_upstream_contract`",
+            "Wire the facade into live WsRpcClient instances, runtime connection lookup, and test override storage in GPUI runtime.",
+        )
     } else if path.starts_with("apps/web/src/environments/")
         || path.starts_with("apps/web/src/environment")
         || path.starts_with("apps/web/src/auth")

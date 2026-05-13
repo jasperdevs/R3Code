@@ -19271,6 +19271,85 @@ pub fn bootstrap_server_auth_gate_plan(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EnvironmentApiSurface {
+    pub terminal_methods: Vec<&'static str>,
+    pub project_methods: Vec<&'static str>,
+    pub filesystem_methods: Vec<&'static str>,
+    pub source_control_methods: Vec<&'static str>,
+    pub vcs_methods: Vec<&'static str>,
+    pub git_methods: Vec<&'static str>,
+    pub orchestration_methods: Vec<&'static str>,
+}
+
+pub fn environment_api_surface() -> EnvironmentApiSurface {
+    EnvironmentApiSurface {
+        terminal_methods: vec![
+            "open", "write", "resize", "clear", "restart", "close", "onEvent",
+        ],
+        project_methods: vec!["searchEntries", "writeFile"],
+        filesystem_methods: vec!["browse"],
+        source_control_methods: vec!["lookupRepository", "cloneRepository", "publishRepository"],
+        vcs_methods: vec![
+            "pull",
+            "refreshStatus",
+            "onStatus",
+            "listRefs",
+            "createWorktree",
+            "removeWorktree",
+            "createRef",
+            "switchRef",
+            "init",
+        ],
+        git_methods: vec!["resolvePullRequest", "preparePullRequestThread"],
+        orchestration_methods: vec![
+            "dispatchCommand",
+            "getTurnDiff",
+            "getFullThreadDiff",
+            "getArchivedShellSnapshot",
+            "subscribeShell",
+            "subscribeThread",
+        ],
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReadEnvironmentApiPlan {
+    UndefinedNoWindow,
+    UndefinedMissingEnvironmentId,
+    ReturnOverride,
+    CreateFromEnvironmentConnection,
+    UndefinedMissingConnection,
+}
+
+pub fn read_environment_api_plan(
+    has_window: bool,
+    environment_id: Option<&str>,
+    has_override: bool,
+    has_connection: bool,
+) -> ReadEnvironmentApiPlan {
+    if !has_window {
+        return ReadEnvironmentApiPlan::UndefinedNoWindow;
+    }
+    if environment_id
+        .map(|environment_id| environment_id.is_empty())
+        .unwrap_or(true)
+    {
+        return ReadEnvironmentApiPlan::UndefinedMissingEnvironmentId;
+    }
+    if has_override {
+        return ReadEnvironmentApiPlan::ReturnOverride;
+    }
+    if has_connection {
+        return ReadEnvironmentApiPlan::CreateFromEnvironmentConnection;
+    }
+    ReadEnvironmentApiPlan::UndefinedMissingConnection
+}
+
+pub fn format_environment_api_not_found_error(environment_id: &str) -> String {
+    format!("Environment API not found for environment {environment_id}")
+}
+
 fn json_escape_string(value: &str) -> String {
     let encoded = serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_string());
     encoded
@@ -28937,6 +29016,73 @@ mod tests {
                 auth: "pairing".to_string(),
                 error_message: Some("Authentication failed.".to_string()),
             }
+        );
+    }
+
+    #[test]
+    fn environment_api_facade_matches_upstream_contract() {
+        assert_eq!(
+            environment_api_surface(),
+            EnvironmentApiSurface {
+                terminal_methods: vec![
+                    "open", "write", "resize", "clear", "restart", "close", "onEvent",
+                ],
+                project_methods: vec!["searchEntries", "writeFile"],
+                filesystem_methods: vec!["browse"],
+                source_control_methods: vec![
+                    "lookupRepository",
+                    "cloneRepository",
+                    "publishRepository"
+                ],
+                vcs_methods: vec![
+                    "pull",
+                    "refreshStatus",
+                    "onStatus",
+                    "listRefs",
+                    "createWorktree",
+                    "removeWorktree",
+                    "createRef",
+                    "switchRef",
+                    "init",
+                ],
+                git_methods: vec!["resolvePullRequest", "preparePullRequestThread"],
+                orchestration_methods: vec![
+                    "dispatchCommand",
+                    "getTurnDiff",
+                    "getFullThreadDiff",
+                    "getArchivedShellSnapshot",
+                    "subscribeShell",
+                    "subscribeThread",
+                ],
+            }
+        );
+        assert_eq!(
+            read_environment_api_plan(false, Some("environment-a"), true, true),
+            ReadEnvironmentApiPlan::UndefinedNoWindow
+        );
+        assert_eq!(
+            read_environment_api_plan(true, None, true, true),
+            ReadEnvironmentApiPlan::UndefinedMissingEnvironmentId
+        );
+        assert_eq!(
+            read_environment_api_plan(true, Some(""), true, true),
+            ReadEnvironmentApiPlan::UndefinedMissingEnvironmentId
+        );
+        assert_eq!(
+            read_environment_api_plan(true, Some("environment-a"), true, false),
+            ReadEnvironmentApiPlan::ReturnOverride
+        );
+        assert_eq!(
+            read_environment_api_plan(true, Some("environment-a"), false, true),
+            ReadEnvironmentApiPlan::CreateFromEnvironmentConnection
+        );
+        assert_eq!(
+            read_environment_api_plan(true, Some("environment-a"), false, false),
+            ReadEnvironmentApiPlan::UndefinedMissingConnection
+        );
+        assert_eq!(
+            format_environment_api_not_found_error("environment-a"),
+            "Environment API not found for environment environment-a"
         );
     }
 
