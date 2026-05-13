@@ -15,6 +15,7 @@ pub const DEFAULT_SESSION_TTL_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 pub const DEFAULT_WEBSOCKET_TOKEN_TTL_MS: i64 = 5 * 60 * 1000;
 pub const AUTHORIZATION_PREFIX: &str = "Bearer ";
 pub const WEBSOCKET_TOKEN_QUERY_PARAM: &str = "wsToken";
+pub const DEFAULT_AUTH_CONTROL_PLANE_SESSION_SUBJECT: &str = "cli-issued-session";
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -793,6 +794,80 @@ pub fn auth_session_state_response_plan(
         headers: browser_api_cors_headers(),
         set_cookie: None,
     }
+}
+
+pub fn auth_control_plane_cli_session_issue_input(
+    session_id: &str,
+    issued_at_ms: i64,
+    ttl_ms: Option<i64>,
+    subject: Option<&str>,
+    role: Option<AuthSessionRole>,
+    label: Option<&str>,
+) -> SessionCredentialIssueInput {
+    SessionCredentialIssueInput {
+        session_id: session_id.to_string(),
+        issued_at_ms,
+        ttl_ms,
+        subject: Some(
+            subject
+                .unwrap_or(DEFAULT_AUTH_CONTROL_PLANE_SESSION_SUBJECT)
+                .to_string(),
+        ),
+        method: Some(ServerAuthSessionMethod::BearerSessionToken),
+        role: Some(role.unwrap_or(AuthSessionRole::Owner)),
+        client: Some(AuthClientMetadata {
+            label: normalize_non_empty_string(label),
+            ip_address: None,
+            user_agent: None,
+            device_type: AuthClientMetadataDeviceType::Bot,
+            os: None,
+            browser: None,
+        }),
+    }
+}
+
+pub fn auth_control_plane_list_pairing_links(
+    pairing_links: &[AuthPairingLink],
+    role: Option<AuthSessionRole>,
+    exclude_subjects: &[&str],
+) -> Vec<AuthPairingLink> {
+    let mut filtered = pairing_links
+        .iter()
+        .filter(|pairing_link| role.map_or(true, |role| pairing_link.role == role))
+        .filter(|pairing_link| {
+            !exclude_subjects
+                .iter()
+                .any(|subject| pairing_link.subject == *subject)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    filtered.sort_by(|left, right| right.created_at.cmp(&left.created_at));
+    filtered
+}
+
+pub fn auth_control_plane_list_sessions(sessions: &[AuthClientSession]) -> Vec<AuthClientSession> {
+    let mut sorted = sessions.to_vec();
+    sorted.sort_by(|left, right| {
+        auth_session_role_priority(left.role)
+            .cmp(&auth_session_role_priority(right.role))
+            .then_with(|| {
+                auth_connected_priority(left.connected)
+                    .cmp(&auth_connected_priority(right.connected))
+            })
+            .then_with(|| right.issued_at.cmp(&left.issued_at))
+    });
+    sorted
+}
+
+fn auth_session_role_priority(role: AuthSessionRole) -> u8 {
+    match role {
+        AuthSessionRole::Owner => 0,
+        AuthSessionRole::Client => 1,
+    }
+}
+
+fn auth_connected_priority(connected: bool) -> u8 {
+    if connected { 0 } else { 1 }
 }
 
 fn server_auth_descriptor_json(descriptor: &ServerAuthDescriptor) -> String {
@@ -2100,6 +2175,133 @@ mod tests {
         assert_eq!(
             session_without_expiry.body_json,
             "{\"authenticated\":true,\"auth\":{\"policy\":\"remote-reachable\",\"bootstrapMethods\":[\"desktop-bootstrap\",\"one-time-token\"],\"sessionMethods\":[\"browser-session-cookie\",\"bearer-session-token\"],\"sessionCookieName\":\"t3_session_3773\"},\"role\":\"client\",\"sessionMethod\":\"bearer-session-token\"}"
+        );
+    }
+
+    #[test]
+    fn ports_auth_control_plane_defaults_and_listing_contracts() {
+        let issue_input = auth_control_plane_cli_session_issue_input(
+            "session-cli",
+            1_000,
+            Some(60_000),
+            None,
+            None,
+            Some("deploy-bot"),
+        );
+        assert_eq!(issue_input.session_id, "session-cli");
+        assert_eq!(issue_input.issued_at_ms, 1_000);
+        assert_eq!(issue_input.ttl_ms, Some(60_000));
+        assert_eq!(
+            issue_input.subject.as_deref(),
+            Some(DEFAULT_AUTH_CONTROL_PLANE_SESSION_SUBJECT)
+        );
+        assert_eq!(
+            issue_input.method,
+            Some(ServerAuthSessionMethod::BearerSessionToken)
+        );
+        assert_eq!(issue_input.role, Some(AuthSessionRole::Owner));
+        assert_eq!(
+            issue_input.client,
+            Some(AuthClientMetadata {
+                label: Some("deploy-bot".to_string()),
+                ip_address: None,
+                user_agent: None,
+                device_type: AuthClientMetadataDeviceType::Bot,
+                os: None,
+                browser: None,
+            })
+        );
+
+        let pairing_links = vec![
+            AuthPairingLink {
+                id: "old-client".to_string(),
+                credential: "OLD".to_string(),
+                role: AuthSessionRole::Client,
+                subject: "one-time-token".to_string(),
+                label: Some("Old phone".to_string()),
+                created_at: "2026-03-04T12:00:00.000Z".to_string(),
+                expires_at: "2026-03-04T12:10:00.000Z".to_string(),
+            },
+            AuthPairingLink {
+                id: "owner-bootstrap".to_string(),
+                credential: "OWNER".to_string(),
+                role: AuthSessionRole::Owner,
+                subject: "owner-bootstrap".to_string(),
+                label: None,
+                created_at: "2026-03-04T12:02:00.000Z".to_string(),
+                expires_at: "2026-03-04T12:12:00.000Z".to_string(),
+            },
+            AuthPairingLink {
+                id: "new-client".to_string(),
+                credential: "NEW".to_string(),
+                role: AuthSessionRole::Client,
+                subject: "one-time-token".to_string(),
+                label: Some("New phone".to_string()),
+                created_at: "2026-03-04T12:05:00.000Z".to_string(),
+                expires_at: "2026-03-04T12:15:00.000Z".to_string(),
+            },
+        ];
+        assert_eq!(
+            auth_control_plane_list_pairing_links(
+                &pairing_links,
+                Some(AuthSessionRole::Client),
+                &["owner-bootstrap"]
+            )
+            .iter()
+            .map(|pairing_link| pairing_link.id.as_str())
+            .collect::<Vec<_>>(),
+            vec!["new-client", "old-client"]
+        );
+
+        let client = default_auth_client_metadata();
+        let sessions = vec![
+            AuthClientSession {
+                session_id: "client-connected".to_string(),
+                subject: "browser".to_string(),
+                role: AuthSessionRole::Client,
+                method: ServerAuthSessionMethod::BrowserSessionCookie,
+                client: client.clone(),
+                issued_at: "2026-03-04T12:05:00.000Z".to_string(),
+                expires_at: "2026-04-03T12:05:00.000Z".to_string(),
+                last_connected_at: Some("2026-03-04T12:06:00.000Z".to_string()),
+                connected: true,
+                current: false,
+            },
+            AuthClientSession {
+                session_id: "owner-disconnected-newer".to_string(),
+                subject: "cli-issued-session".to_string(),
+                role: AuthSessionRole::Owner,
+                method: ServerAuthSessionMethod::BearerSessionToken,
+                client: client.clone(),
+                issued_at: "2026-03-04T12:10:00.000Z".to_string(),
+                expires_at: "2026-04-03T12:10:00.000Z".to_string(),
+                last_connected_at: None,
+                connected: false,
+                current: false,
+            },
+            AuthClientSession {
+                session_id: "owner-connected-older".to_string(),
+                subject: "cli-issued-session".to_string(),
+                role: AuthSessionRole::Owner,
+                method: ServerAuthSessionMethod::BearerSessionToken,
+                client,
+                issued_at: "2026-03-04T12:00:00.000Z".to_string(),
+                expires_at: "2026-04-03T12:00:00.000Z".to_string(),
+                last_connected_at: Some("2026-03-04T12:01:00.000Z".to_string()),
+                connected: true,
+                current: true,
+            },
+        ];
+        assert_eq!(
+            auth_control_plane_list_sessions(&sessions)
+                .iter()
+                .map(|session| session.session_id.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "owner-connected-older",
+                "owner-disconnected-newer",
+                "client-connected"
+            ]
         );
     }
 
