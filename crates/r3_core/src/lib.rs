@@ -434,6 +434,48 @@ pub struct GitInvalidateQueriesPlan {
     pub query_key: ReactQueryKey,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderReactQueryKeyPart {
+    Null,
+    String(String),
+    Number(u32),
+    Boolean(bool),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderCheckpointDiffRequestPlan {
+    FullThreadDiff {
+        thread_id: String,
+        to_turn_count: u32,
+        ignore_whitespace: bool,
+    },
+    TurnDiff {
+        thread_id: String,
+        from_turn_count: u32,
+        to_turn_count: u32,
+        ignore_whitespace: bool,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderCheckpointDiffQueryInput {
+    pub environment_id: Option<String>,
+    pub thread_id: Option<String>,
+    pub from_turn_count: Option<u32>,
+    pub to_turn_count: Option<u32>,
+    pub ignore_whitespace: bool,
+    pub cache_scope: Option<String>,
+    pub enabled: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderCheckpointDiffQueryOptionsPlan {
+    pub query_key: Vec<ProviderReactQueryKeyPart>,
+    pub decoded_request: Option<ProviderCheckpointDiffRequestPlan>,
+    pub enabled: bool,
+    pub stale_time_infinite: bool,
+}
+
 pub const INLINE_TERMINAL_CONTEXT_PLACEHOLDER: char = '\u{FFFC}';
 pub const RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY: &str = "(max-width: 980px)";
 pub const WINDOW_CONTROLS_OVERLAY_CLASS_NAME: &str = "wco";
@@ -14694,6 +14736,138 @@ pub fn invalidate_git_queries_plan(
     }
 }
 
+fn provider_query_key_string(value: &str) -> ProviderReactQueryKeyPart {
+    ProviderReactQueryKeyPart::String(value.to_string())
+}
+
+fn provider_query_key_nullable_string(value: Option<&str>) -> ProviderReactQueryKeyPart {
+    value
+        .map(|value| ProviderReactQueryKeyPart::String(value.to_string()))
+        .unwrap_or(ProviderReactQueryKeyPart::Null)
+}
+
+fn provider_query_key_nullable_number(value: Option<u32>) -> ProviderReactQueryKeyPart {
+    value
+        .map(ProviderReactQueryKeyPart::Number)
+        .unwrap_or(ProviderReactQueryKeyPart::Null)
+}
+
+pub fn provider_query_key_all() -> Vec<ProviderReactQueryKeyPart> {
+    vec![provider_query_key_string("providers")]
+}
+
+pub fn provider_query_key_checkpoint_diff(
+    input: &ProviderCheckpointDiffQueryInput,
+) -> Vec<ProviderReactQueryKeyPart> {
+    vec![
+        provider_query_key_string("providers"),
+        provider_query_key_string("checkpointDiff"),
+        provider_query_key_nullable_string(input.environment_id.as_deref()),
+        provider_query_key_nullable_string(input.thread_id.as_deref()),
+        provider_query_key_nullable_number(input.from_turn_count),
+        provider_query_key_nullable_number(input.to_turn_count),
+        ProviderReactQueryKeyPart::Boolean(input.ignore_whitespace),
+        provider_query_key_nullable_string(input.cache_scope.as_deref()),
+    ]
+}
+
+fn decode_provider_thread_id(thread_id: Option<&str>) -> Option<String> {
+    let thread_id = thread_id?.trim();
+    (!thread_id.is_empty()).then(|| thread_id.to_string())
+}
+
+pub fn decode_provider_checkpoint_diff_request(
+    input: &ProviderCheckpointDiffQueryInput,
+) -> Option<ProviderCheckpointDiffRequestPlan> {
+    let thread_id = decode_provider_thread_id(input.thread_id.as_deref())?;
+    let to_turn_count = input.to_turn_count?;
+
+    if input.from_turn_count == Some(0) {
+        return Some(ProviderCheckpointDiffRequestPlan::FullThreadDiff {
+            thread_id,
+            to_turn_count,
+            ignore_whitespace: input.ignore_whitespace,
+        });
+    }
+
+    let from_turn_count = input.from_turn_count?;
+    if from_turn_count > to_turn_count {
+        return None;
+    }
+
+    Some(ProviderCheckpointDiffRequestPlan::TurnDiff {
+        thread_id,
+        from_turn_count,
+        to_turn_count,
+        ignore_whitespace: input.ignore_whitespace,
+    })
+}
+
+pub fn normalize_provider_checkpoint_error_message(message: &str) -> String {
+    let message = message.trim();
+    if message.is_empty() {
+        return "Failed to load checkpoint diff.".to_string();
+    }
+
+    let lower = message.to_lowercase();
+    if lower.contains("not a git repository") {
+        return "Turn diffs are unavailable because this project is not a git repository."
+            .to_string();
+    }
+
+    if lower.contains("checkpoint unavailable for thread")
+        || lower.contains("checkpoint invariant violation")
+    {
+        if let Some((_, detail)) = message.split_once(':') {
+            let detail = detail.trim();
+            if !detail.is_empty() {
+                return detail.to_string();
+            }
+        }
+    }
+
+    message.to_string()
+}
+
+pub fn is_provider_checkpoint_temporarily_unavailable(message: &str) -> bool {
+    let message = message.to_lowercase();
+    message.contains("exceeds current turn count")
+        || message.contains("checkpoint is unavailable for turn")
+        || message.contains("filesystem checkpoint is unavailable")
+}
+
+pub fn provider_checkpoint_diff_retry(failure_count: u32, error_message: &str) -> bool {
+    if is_provider_checkpoint_temporarily_unavailable(error_message) {
+        failure_count < 12
+    } else {
+        failure_count < 3
+    }
+}
+
+pub fn provider_checkpoint_diff_retry_delay_ms(attempt: u32, error_message: &str) -> u32 {
+    let exponent = attempt.saturating_sub(1).min(31);
+    if is_provider_checkpoint_temporarily_unavailable(error_message) {
+        5_000.min(250u32.saturating_mul(2u32.saturating_pow(exponent)))
+    } else {
+        1_000.min(100u32.saturating_mul(2u32.saturating_pow(exponent)))
+    }
+}
+
+pub fn provider_checkpoint_diff_query_options_plan(
+    input: &ProviderCheckpointDiffQueryInput,
+) -> ProviderCheckpointDiffQueryOptionsPlan {
+    let decoded_request = decode_provider_checkpoint_diff_request(input);
+    ProviderCheckpointDiffQueryOptionsPlan {
+        query_key: provider_query_key_checkpoint_diff(input),
+        enabled: input.enabled.unwrap_or(true)
+            && input.environment_id.is_some()
+            && input.thread_id.is_some()
+            && decoded_request.is_some(),
+        decoded_request,
+        stale_time_infinite: true,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ProjectAbsolutePathParts {
     root: String,
@@ -21894,6 +22068,146 @@ mod tests {
         assert_eq!(
             invalidate_git_queries_plan(env_b, None).query_key,
             git_query_key_all()
+        );
+    }
+
+    #[test]
+    fn provider_react_query_checkpoint_diff_matches_upstream_contract() {
+        let base_input = ProviderCheckpointDiffQueryInput {
+            environment_id: Some("environment-local".to_string()),
+            thread_id: Some("thread-id".to_string()),
+            from_turn_count: Some(1),
+            to_turn_count: Some(2),
+            ignore_whitespace: false,
+            cache_scope: Some("turn:abc".to_string()),
+            enabled: None,
+        };
+
+        assert_eq!(
+            provider_query_key_checkpoint_diff(&ProviderCheckpointDiffQueryInput {
+                cache_scope: Some("turn:old-turn".to_string()),
+                ..base_input.clone()
+            }),
+            vec![
+                ProviderReactQueryKeyPart::String("providers".to_string()),
+                ProviderReactQueryKeyPart::String("checkpointDiff".to_string()),
+                ProviderReactQueryKeyPart::String("environment-local".to_string()),
+                ProviderReactQueryKeyPart::String("thread-id".to_string()),
+                ProviderReactQueryKeyPart::Number(1),
+                ProviderReactQueryKeyPart::Number(2),
+                ProviderReactQueryKeyPart::Boolean(false),
+                ProviderReactQueryKeyPart::String("turn:old-turn".to_string()),
+            ]
+        );
+        assert_ne!(
+            provider_query_key_checkpoint_diff(&ProviderCheckpointDiffQueryInput {
+                cache_scope: Some("turn:old-turn".to_string()),
+                ..base_input.clone()
+            }),
+            provider_query_key_checkpoint_diff(&ProviderCheckpointDiffQueryInput {
+                cache_scope: Some("turn:new-turn".to_string()),
+                ..base_input.clone()
+            })
+        );
+        assert_ne!(
+            provider_query_key_checkpoint_diff(&ProviderCheckpointDiffQueryInput {
+                ignore_whitespace: false,
+                ..base_input.clone()
+            }),
+            provider_query_key_checkpoint_diff(&ProviderCheckpointDiffQueryInput {
+                ignore_whitespace: true,
+                ..base_input.clone()
+            })
+        );
+
+        let turn_options =
+            provider_checkpoint_diff_query_options_plan(&ProviderCheckpointDiffQueryInput {
+                from_turn_count: Some(3),
+                to_turn_count: Some(4),
+                ignore_whitespace: true,
+                ..base_input.clone()
+            });
+        assert!(turn_options.enabled);
+        assert!(turn_options.stale_time_infinite);
+        assert_eq!(
+            turn_options.decoded_request,
+            Some(ProviderCheckpointDiffRequestPlan::TurnDiff {
+                thread_id: "thread-id".to_string(),
+                from_turn_count: 3,
+                to_turn_count: 4,
+                ignore_whitespace: true,
+            })
+        );
+
+        let full_thread_options =
+            provider_checkpoint_diff_query_options_plan(&ProviderCheckpointDiffQueryInput {
+                from_turn_count: Some(0),
+                to_turn_count: Some(2),
+                ignore_whitespace: true,
+                cache_scope: Some("thread:all".to_string()),
+                ..base_input.clone()
+            });
+        assert_eq!(
+            full_thread_options.decoded_request,
+            Some(ProviderCheckpointDiffRequestPlan::FullThreadDiff {
+                thread_id: "thread-id".to_string(),
+                to_turn_count: 2,
+                ignore_whitespace: true,
+            })
+        );
+
+        assert!(
+            !provider_checkpoint_diff_query_options_plan(&ProviderCheckpointDiffQueryInput {
+                from_turn_count: Some(4),
+                to_turn_count: Some(3),
+                ..base_input.clone()
+            })
+            .enabled
+        );
+        assert!(
+            !provider_checkpoint_diff_query_options_plan(&ProviderCheckpointDiffQueryInput {
+                environment_id: None,
+                ..base_input.clone()
+            })
+            .enabled
+        );
+        assert!(
+            !provider_checkpoint_diff_query_options_plan(&ProviderCheckpointDiffQueryInput {
+                enabled: Some(false),
+                ..base_input.clone()
+            })
+            .enabled
+        );
+
+        assert_eq!(
+            normalize_provider_checkpoint_error_message(""),
+            "Failed to load checkpoint diff."
+        );
+        assert_eq!(
+            normalize_provider_checkpoint_error_message("fatal: not a git repository"),
+            "Turn diffs are unavailable because this project is not a git repository."
+        );
+        assert_eq!(
+            normalize_provider_checkpoint_error_message(
+                "Checkpoint invariant violation in CheckpointDiffQuery.getTurnDiff: Thread missing."
+            ),
+            "Thread missing."
+        );
+        assert!(provider_checkpoint_diff_retry(
+            11,
+            "Filesystem checkpoint is unavailable for turn 2 in thread thread-1."
+        ));
+        assert!(!provider_checkpoint_diff_retry(
+            12,
+            "Filesystem checkpoint is unavailable for turn 2 in thread thread-1."
+        ));
+        assert!(provider_checkpoint_diff_retry(2, "Something else failed."));
+        assert!(!provider_checkpoint_diff_retry(3, "Something else failed."));
+        assert!(
+            provider_checkpoint_diff_retry_delay_ms(
+                4,
+                "Checkpoint turn count 2 exceeds current turn count 1."
+            ) > provider_checkpoint_diff_retry_delay_ms(4, "Network failure")
         );
     }
 

@@ -2000,6 +2000,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core git_react_query_keys_match_upstream_scoping`",
             "Wire live environment API query/mutation execution, progress callbacks, and query-client invalidation into GPUI git flows.",
         )
+    } else if path == "apps/web/src/lib/providerReactQuery.ts"
+        || path == "apps/web/src/lib/providerReactQuery.test.ts"
+    {
+        (
+            "provider checkpoint-diff query keys, full-thread vs turn-diff request decode, enabled/stale metadata, error normalization, and retry/backoff helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core provider_react_query_checkpoint_diff_matches_upstream_contract`",
+            "Wire live environment API query execution and query-client retry behavior into GPUI diff panel state.",
+        )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
             "logical project path normalization, physical/grouping/order keys, repository-scoped keys, settings override resolution, ref fallback, and group-label helpers in crates/r3_core/src/lib.rs",
