@@ -6016,7 +6016,25 @@ pub struct SshChildEnvironmentPlan {
     pub askpass: Option<SshAskpassHelperDescriptor>,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemoteLaunchOutput {
+    pub remote_port: f64,
+    pub server_kind: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemotePairingOutput {
+    pub credential: String,
+}
+
 pub const DEFAULT_SSH_COMMAND_TIMEOUT_MS: u64 = 60_000;
+pub const DEFAULT_REMOTE_PORT: u16 = 3773;
+pub const REMOTE_PORT_SCAN_WINDOW: u16 = 200;
+pub const SSH_READY_TIMEOUT_MS: u64 = 20_000;
+pub const SSH_READY_PROBE_TIMEOUT_MS: u64 = 1_000;
+pub const TUNNEL_SHUTDOWN_TIMEOUT_MS: u64 = 2_000;
+pub const REMOTE_READY_TIMEOUT_MS: u64 = 15_000;
+pub const REMOTE_REUSE_READY_TIMEOUT_MS: u64 = 2_000;
 pub const SSH_ASKPASS_DIR_NAME: &str = "t3code-ssh-askpass";
 pub const ASKPASS_POSIX_SCRIPT: &str = r#"#!/bin/sh
 # Invoked by ssh via SSH_ASKPASS when R3Code re-runs ssh with a cached password
@@ -6085,6 +6103,73 @@ pub fn parse_ssh_resolve_output(alias: &str, stdout: &str) -> DesktopSshEnvironm
         username,
         port,
     }
+}
+
+pub fn normalize_ssh_error_message(stderr: &str, fallback_message: &str) -> String {
+    let cleaned = stderr.trim();
+    if cleaned.is_empty() {
+        fallback_message.to_string()
+    } else {
+        cleaned.to_string()
+    }
+}
+
+pub fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+pub fn apply_script_placeholders(
+    template: &str,
+    replacements: &BTreeMap<String, String>,
+) -> String {
+    let mut result = template.to_string();
+    for (token, value) in replacements {
+        result = result.replace(&format!("@@{token}@@"), value);
+    }
+    result
+}
+
+fn decode_remote_json_output(stdout: &str) -> Result<serde_json::Value, String> {
+    crate::shared::parse_lenient_json(stdout)
+        .or_else(|first_error| {
+            let extracted = crate::shared::extract_json_object(stdout);
+            if extracted == stdout.trim() {
+                Err(first_error)
+            } else {
+                crate::shared::parse_lenient_json(&extracted)
+            }
+        })
+        .map_err(|error| error.to_string())
+}
+
+pub fn decode_remote_launch_output(stdout: &str) -> Result<RemoteLaunchOutput, String> {
+    let value = decode_remote_json_output(stdout)?;
+    let remote_port = value
+        .get("remotePort")
+        .and_then(serde_json::Value::as_f64)
+        .ok_or_else(|| "SSH launch did not return a remote port.".to_string())?;
+    let server_kind = match value.get("serverKind").and_then(serde_json::Value::as_str) {
+        Some("external" | "managed") => value
+            .get("serverKind")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_string),
+        Some(other) => return Err(format!("Invalid remote server kind: {other}")),
+        None => None,
+    };
+    Ok(RemoteLaunchOutput {
+        remote_port,
+        server_kind,
+    })
+}
+
+pub fn decode_remote_pairing_output(stdout: &str) -> Result<RemotePairingOutput, String> {
+    let value = decode_remote_json_output(stdout)?;
+    let credential = value
+        .get("credential")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "SSH pairing did not return a credential.".to_string())?
+        .to_string();
+    Ok(RemotePairingOutput { credential })
 }
 
 pub fn target_connection_key(target: &DesktopSshEnvironmentTarget) -> String {
@@ -11780,6 +11865,52 @@ mod tests {
                 "-p",
                 "2222"
             ]
+        );
+        assert_eq!(DEFAULT_REMOTE_PORT, 3773);
+        assert_eq!(REMOTE_PORT_SCAN_WINDOW, 200);
+        assert_eq!(SSH_READY_TIMEOUT_MS, 20_000);
+        assert_eq!(SSH_READY_PROBE_TIMEOUT_MS, 1_000);
+        assert_eq!(TUNNEL_SHUTDOWN_TIMEOUT_MS, 2_000);
+        assert_eq!(REMOTE_READY_TIMEOUT_MS, 15_000);
+        assert_eq!(REMOTE_REUSE_READY_TIMEOUT_MS, 2_000);
+        assert_eq!(
+            normalize_ssh_error_message("  denied\n", "fallback"),
+            "denied"
+        );
+        assert_eq!(normalize_ssh_error_message("   ", "fallback"), "fallback");
+        assert_eq!(
+            shell_single_quote("t3@nightly; echo 'owned'"),
+            "'t3@nightly; echo '\\''owned'\\'''"
+        );
+        assert_eq!(
+            apply_script_placeholders(
+                "@@ONE@@ @@TWO@@ @@ONE@@",
+                &BTreeMap::from([
+                    ("ONE".to_string(), "1".to_string()),
+                    ("TWO".to_string(), "2".to_string()),
+                ])
+            ),
+            "1 2 1"
+        );
+        assert_eq!(
+            decode_remote_launch_output("loaded nvm default\n{\"remotePort\":3774}\n").unwrap(),
+            RemoteLaunchOutput {
+                remote_port: 3774.0,
+                server_kind: None,
+            }
+        );
+        assert_eq!(
+            decode_remote_launch_output("{\"remotePort\":3775,\"serverKind\":\"external\"}")
+                .unwrap()
+                .server_kind
+                .as_deref(),
+            Some("external")
+        );
+        assert_eq!(
+            decode_remote_pairing_output("noise\n{\"credential\":\"pairing-token\"}\n")
+                .unwrap()
+                .credential,
+            "pairing-token"
         );
         assert_eq!(
             get_last_non_empty_output_line(
