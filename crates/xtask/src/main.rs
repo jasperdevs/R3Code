@@ -1690,6 +1690,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core client_persistence_storage_preserves_saved_environment_secrets`",
             "Wire transforms into live GPUI browser/local persistence and schema-backed client settings decode/encode.",
         )
+    } else if path == "apps/web/src/hooks/useMediaQuery.ts" {
+        (
+            "media-query breakpoint table, min/max query resolution, colon query parsing, raw parenthesized query passthrough, structured min/max/pointer query construction, unknown query fallback, and server snapshot false behavior in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core media_query_helpers_match_upstream_contract`",
+            "Wire helpers into live GPUI responsive layout subscriptions and viewport-driven shell rendering.",
+        )
     } else if path == "apps/web/src/markdown-links.ts"
         || path == "apps/web/src/markdown-links.test.ts"
     {

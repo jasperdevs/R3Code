@@ -4262,6 +4262,19 @@ pub struct ContextMenuFallbackPosition {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum MediaQueryValue {
+    Breakpoint(String),
+    Pixels(u32),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct MediaQueryStructuredInput {
+    pub min: Option<MediaQueryValue>,
+    pub max: Option<MediaQueryValue>,
+    pub pointer: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelPickerState {
     pub active_entry: Option<ProviderInstanceEntry>,
     pub trigger_title: String,
@@ -7880,6 +7893,85 @@ pub fn context_menu_fallback_submenu_preferred_position(
         left = parent_button.left - child_menu.width - 4.0;
     }
     ContextMenuFallbackPosition { left, top }
+}
+
+pub fn media_query_breakpoint_px(breakpoint: &str) -> Option<u32> {
+    match breakpoint {
+        "2xl" => Some(1536),
+        "3xl" => Some(1600),
+        "4xl" => Some(2000),
+        "lg" => Some(1024),
+        "md" => Some(768),
+        "sm" => Some(640),
+        "xl" => Some(1280),
+        _ => None,
+    }
+}
+
+pub fn resolve_media_query_min(value: &MediaQueryValue) -> Option<String> {
+    let px = match value {
+        MediaQueryValue::Breakpoint(breakpoint) => media_query_breakpoint_px(breakpoint)?,
+        MediaQueryValue::Pixels(px) => *px,
+    };
+    Some(format!("(min-width: {px}px)"))
+}
+
+pub fn resolve_media_query_max(value: &MediaQueryValue) -> Option<String> {
+    let px = match value {
+        MediaQueryValue::Breakpoint(breakpoint) => media_query_breakpoint_px(breakpoint)?,
+        MediaQueryValue::Pixels(px) => *px,
+    };
+    Some(format!("(max-width: {}px)", px.saturating_sub(1)))
+}
+
+pub fn parse_media_query_string(query: &str) -> String {
+    if query.starts_with('(') {
+        return query.to_string();
+    }
+
+    let mut parts = Vec::<String>::new();
+    for segment in query.split(':') {
+        if let Some(breakpoint) = segment.strip_prefix("max-") {
+            if let Some(max) =
+                resolve_media_query_max(&MediaQueryValue::Breakpoint(breakpoint.to_string()))
+            {
+                parts.push(max);
+            }
+        } else if media_query_breakpoint_px(segment).is_some() {
+            if let Some(min) =
+                resolve_media_query_min(&MediaQueryValue::Breakpoint(segment.to_string()))
+            {
+                parts.push(min);
+            }
+        }
+    }
+
+    if parts.is_empty() {
+        query.to_string()
+    } else {
+        parts.join(" and ")
+    }
+}
+
+pub fn parse_structured_media_query(input: &MediaQueryStructuredInput) -> String {
+    let mut parts = Vec::<String>::new();
+    if let Some(min) = input.min.as_ref().and_then(resolve_media_query_min) {
+        parts.push(min);
+    }
+    if let Some(max) = input.max.as_ref().and_then(resolve_media_query_max) {
+        parts.push(max);
+    }
+    match input.pointer.as_deref() {
+        Some("coarse") => parts.push("(pointer: coarse)".to_string()),
+        Some("fine") => parts.push("(pointer: fine)".to_string()),
+        _ => {}
+    }
+
+    if parts.is_empty() {
+        "(min-width: 0px)".to_string()
+    } else {
+        parts.join(" and ")
+    }
 }
 
 fn matches_locked_provider(
@@ -31897,6 +31989,34 @@ mod tests {
                 left: 976.0,
                 top: 20.0,
             }
+        );
+    }
+
+    #[test]
+    fn media_query_helpers_match_upstream_contract() {
+        assert_eq!(media_query_breakpoint_px("sm"), Some(640));
+        assert_eq!(media_query_breakpoint_px("2xl"), Some(1536));
+        assert_eq!(
+            parse_media_query_string("(orientation: portrait)"),
+            "(orientation: portrait)"
+        );
+        assert_eq!(parse_media_query_string("max-md"), "(max-width: 767px)");
+        assert_eq!(
+            parse_media_query_string("md:max-xl"),
+            "(min-width: 768px) and (max-width: 1279px)"
+        );
+        assert_eq!(parse_media_query_string("unknown"), "unknown");
+        assert_eq!(
+            parse_structured_media_query(&MediaQueryStructuredInput {
+                min: Some(MediaQueryValue::Breakpoint("lg".to_string())),
+                max: Some(MediaQueryValue::Pixels(1440)),
+                pointer: Some("coarse".to_string()),
+            }),
+            "(min-width: 1024px) and (max-width: 1439px) and (pointer: coarse)"
+        );
+        assert_eq!(
+            parse_structured_media_query(&MediaQueryStructuredInput::default()),
+            "(min-width: 0px)"
         );
     }
 
