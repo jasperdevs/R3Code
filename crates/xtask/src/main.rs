@@ -2180,10 +2180,10 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
         || path.starts_with("apps/server/src/imageMime")
     {
         (
-            "attachment path/store, HTTP route response decision, and image MIME contracts in crates/r3_core/src/attachments.rs",
+            "attachment path/store, HTTP route response decision plus filesystem response helper, and image MIME contracts in crates/r3_core/src/attachments.rs",
             "partial",
             "`cargo test -p r3_core attachments`",
-            "Port live upload/write/read integration, HTTP attachment route filesystem response wiring, and persisted attachment side effects.",
+            "Port live upload/write integration, HTTP transport wiring, and persisted attachment side effects.",
         )
     } else if path.starts_with("apps/server/src/http")
         || path.starts_with("apps/server/src/ws")

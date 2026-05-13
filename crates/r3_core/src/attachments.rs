@@ -43,6 +43,28 @@ pub enum AttachmentRouteDecision {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AttachmentRouteFileResponse {
+    Invalid {
+        body: &'static str,
+        status: u16,
+    },
+    NotFound {
+        body: &'static str,
+        status: u16,
+    },
+    File {
+        path: PathBuf,
+        bytes: Vec<u8>,
+        status: u16,
+        cache_control: &'static str,
+    },
+    InternalServerError {
+        body: &'static str,
+        status: u16,
+    },
+}
+
 pub fn normalize_attachment_relative_path(raw_relative_path: &str) -> Option<String> {
     let normalized = normalize_attachment_path_segments(raw_relative_path);
     let stripped = normalized
@@ -98,6 +120,62 @@ pub fn attachment_route_decision(
         path: path.to_path_buf(),
         status: 200,
         cache_control: ATTACHMENTS_ROUTE_CACHE_CONTROL,
+    }
+}
+
+pub fn attachment_route_file_response(
+    attachments_dir: &Path,
+    raw_relative_path: &str,
+) -> AttachmentRouteFileResponse {
+    let Some(normalized_relative_path) = normalize_attachment_relative_path(raw_relative_path)
+    else {
+        return AttachmentRouteFileResponse::Invalid {
+            body: "Invalid attachment path",
+            status: 400,
+        };
+    };
+    let is_id_lookup =
+        !normalized_relative_path.contains('/') && !normalized_relative_path.contains('.');
+    let file_path = if is_id_lookup {
+        let Some(path) = resolve_attachment_path_by_id(attachments_dir, &normalized_relative_path)
+        else {
+            return AttachmentRouteFileResponse::NotFound {
+                body: "Not Found",
+                status: 404,
+            };
+        };
+        path
+    } else {
+        let Some(path) =
+            resolve_attachment_relative_path(attachments_dir, &normalized_relative_path)
+        else {
+            return AttachmentRouteFileResponse::Invalid {
+                body: "Invalid attachment path",
+                status: 400,
+            };
+        };
+        path
+    };
+    if !std::fs::metadata(&file_path)
+        .map(|metadata| metadata.is_file())
+        .unwrap_or(false)
+    {
+        return AttachmentRouteFileResponse::NotFound {
+            body: "Not Found",
+            status: 404,
+        };
+    }
+    match std::fs::read(&file_path) {
+        Ok(bytes) => AttachmentRouteFileResponse::File {
+            path: file_path,
+            bytes,
+            status: 200,
+            cache_control: ATTACHMENTS_ROUTE_CACHE_CONTROL,
+        },
+        Err(_) => AttachmentRouteFileResponse::InternalServerError {
+            body: "Internal Server Error",
+            status: 500,
+        },
     }
 }
 
@@ -509,6 +587,61 @@ mod tests {
                 status: 500,
             }
         );
+
+        let root = temp_dir();
+        let png_path = root.join("thread-1-attachment.png");
+        fs::write(&png_path, [9_u8, 8, 7]).unwrap();
+        assert_eq!(
+            attachment_route_file_response(&root, "thread-1-attachment"),
+            AttachmentRouteFileResponse::File {
+                path: png_path.clone(),
+                bytes: vec![9, 8, 7],
+                status: 200,
+                cache_control: ATTACHMENTS_ROUTE_CACHE_CONTROL,
+            }
+        );
+        fs::create_dir_all(root.join("nested")).unwrap();
+        let nested_path = root.join("nested/screen.webp");
+        fs::write(&nested_path, [1_u8, 2]).unwrap();
+        assert_eq!(
+            attachment_route_file_response(&root, "nested/screen.webp"),
+            AttachmentRouteFileResponse::File {
+                path: nested_path,
+                bytes: vec![1, 2],
+                status: 200,
+                cache_control: ATTACHMENTS_ROUTE_CACHE_CONTROL,
+            }
+        );
+        assert_eq!(
+            attachment_route_file_response(&root, "../secret.png"),
+            AttachmentRouteFileResponse::Invalid {
+                body: "Invalid attachment path",
+                status: 400,
+            }
+        );
+        assert_eq!(
+            attachment_route_file_response(&root, "missing-id"),
+            AttachmentRouteFileResponse::NotFound {
+                body: "Not Found",
+                status: 404,
+            }
+        );
+        assert_eq!(
+            attachment_route_file_response(&root, "missing.png"),
+            AttachmentRouteFileResponse::NotFound {
+                body: "Not Found",
+                status: 404,
+            }
+        );
+        fs::create_dir_all(root.join("directory.png")).unwrap();
+        assert_eq!(
+            attachment_route_file_response(&root, "directory.png"),
+            AttachmentRouteFileResponse::NotFound {
+                body: "Not Found",
+                status: 404,
+            }
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
