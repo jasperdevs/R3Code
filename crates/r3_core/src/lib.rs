@@ -77,6 +77,84 @@ pub struct WebAppBranding {
     pub app_version: String,
 }
 
+pub const VERSION_MISMATCH_DISMISSALS_STORAGE_KEY: &str = "t3code:version-mismatch-dismissals:v1";
+pub const VERSION_MISMATCH_HINT: &str =
+    "Version mismatch. Try syncing the client and server to the same R3Code version.";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionMismatch {
+    pub client_version: String,
+    pub server_version: String,
+    pub hint: &'static str,
+}
+
+fn normalize_version(value: Option<&str>) -> Option<String> {
+    let trimmed = value?.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
+}
+
+pub fn resolve_version_mismatch(
+    client_version: Option<&str>,
+    server_version: Option<&str>,
+) -> Option<VersionMismatch> {
+    let client_version = normalize_version(client_version)?;
+    let server_version = normalize_version(server_version)?;
+    if client_version == server_version {
+        return None;
+    }
+
+    Some(VersionMismatch {
+        client_version,
+        server_version,
+        hint: VERSION_MISMATCH_HINT,
+    })
+}
+
+pub fn build_version_mismatch_dismissal_key(
+    environment_id: &str,
+    mismatch: &VersionMismatch,
+) -> String {
+    format!(
+        "{}:{}:{}",
+        environment_id, mismatch.client_version, mismatch.server_version
+    )
+}
+
+pub fn is_version_mismatch_dismissed(
+    dismissal_keys: &[String],
+    dismissal_key: Option<&str>,
+) -> bool {
+    dismissal_key.is_some_and(|key| dismissal_keys.iter().any(|entry| entry == key))
+}
+
+pub fn dismiss_version_mismatch(
+    dismissal_keys: &[String],
+    dismissal_key: Option<&str>,
+) -> Vec<String> {
+    let Some(dismissal_key) = dismissal_key.filter(|key| !key.is_empty()) else {
+        return dismissal_keys.to_vec();
+    };
+    if dismissal_keys.iter().any(|entry| entry == dismissal_key) {
+        return dismissal_keys.to_vec();
+    }
+    let mut next = dismissal_keys.to_vec();
+    next.push(dismissal_key.to_string());
+    next
+}
+
+pub fn append_version_mismatch_hint(
+    message: Option<&str>,
+    mismatch: Option<&VersionMismatch>,
+) -> Option<String> {
+    let normalized_message = normalize_version(message);
+    match (normalized_message, mismatch) {
+        (None, None) => None,
+        (None, Some(mismatch)) => Some(mismatch.hint.to_string()),
+        (Some(message), None) => Some(message),
+        (Some(message), Some(mismatch)) => Some(format!("{message} Hint: {}", mismatch.hint)),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ScopedThreadRef {
     pub environment_id: String,
@@ -24315,6 +24393,55 @@ mod tests {
         assert_eq!(ignored.hosted_app_channel_label, None);
         assert_eq!(ignored.app_stage_label, "Dev");
         assert_eq!(ignored.app_display_name, "R3Code (Dev)");
+    }
+
+    #[test]
+    fn version_skew_helpers_match_upstream_contract_with_r3_hint() {
+        assert_eq!(resolve_version_mismatch(Some("0.1.0"), Some("0.1.0")), None);
+        assert_eq!(resolve_version_mismatch(Some("  "), Some("9.9.9")), None);
+
+        let mismatch = resolve_version_mismatch(Some("0.1.0"), Some(" 9.9.9 ")).unwrap();
+        assert_eq!(
+            mismatch,
+            VersionMismatch {
+                client_version: "0.1.0".to_string(),
+                server_version: "9.9.9".to_string(),
+                hint: VERSION_MISMATCH_HINT,
+            }
+        );
+        assert_eq!(
+            mismatch.hint,
+            "Version mismatch. Try syncing the client and server to the same R3Code version."
+        );
+
+        let key = build_version_mismatch_dismissal_key("environment-dismissal", &mismatch);
+        assert_eq!(key, "environment-dismissal:0.1.0:9.9.9");
+        assert!(!is_version_mismatch_dismissed(&[], Some(&key)));
+        let dismissals = dismiss_version_mismatch(&[], Some(&key));
+        assert!(is_version_mismatch_dismissed(&dismissals, Some(&key)));
+        assert_eq!(
+            dismiss_version_mismatch(&dismissals, Some(&key)),
+            dismissals
+        );
+        assert!(!is_version_mismatch_dismissed(
+            &dismissals,
+            Some("environment-dismissal:0.1.0:9.9.10")
+        ));
+
+        assert_eq!(
+            append_version_mismatch_hint(Some("Socket closed."), Some(&mismatch)).as_deref(),
+            Some(
+                "Socket closed. Hint: Version mismatch. Try syncing the client and server to the same R3Code version."
+            )
+        );
+        assert_eq!(
+            append_version_mismatch_hint(Some("  "), Some(&mismatch)).as_deref(),
+            Some(VERSION_MISMATCH_HINT)
+        );
+        assert_eq!(
+            append_version_mismatch_hint(Some("Socket closed."), None).as_deref(),
+            Some("Socket closed.")
+        );
     }
 
     #[test]

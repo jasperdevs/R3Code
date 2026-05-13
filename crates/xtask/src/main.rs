@@ -1806,6 +1806,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core timestamp_format_helpers_match_upstream_contract`",
             "Wire helpers into all live GPUI timestamp labels, expiry countdowns, and user-configured time-format rendering.",
         )
+    } else if path == "apps/web/src/versionSkew.ts" || path == "apps/web/src/versionSkew.test.ts" {
+        (
+            "version mismatch normalization, R3Code-branded mismatch hint, environment/client/server dismissal keys, duplicate-safe dismissal insertion, dismissed checks, and error-message hint append behavior in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core version_skew_helpers_match_upstream_contract_with_r3_hint`",
+            "Wire helpers into live GPUI server-config mismatch banner, local dismissal persistence, and connection error hint rendering.",
+        )
     } else if path == "apps/web/src/shortcutModifierState.ts"
         || path == "apps/web/src/shortcutModifierState.test.ts"
     {
