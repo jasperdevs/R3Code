@@ -2180,20 +2180,20 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
         || path.starts_with("apps/server/src/imageMime")
     {
         (
-            "attachment path/store and image MIME contracts in crates/r3_core/src/attachments.rs",
+            "attachment path/store, HTTP route response decision, and image MIME contracts in crates/r3_core/src/attachments.rs",
             "partial",
             "`cargo test -p r3_core attachments`",
-            "Port live upload/write/read integration, HTTP attachment route wiring, and persisted attachment side effects.",
+            "Port live upload/write/read integration, HTTP attachment route filesystem response wiring, and persisted attachment side effects.",
         )
     } else if path.starts_with("apps/server/src/http")
         || path.starts_with("apps/server/src/ws")
         || path == "packages/contracts/src/rpc.ts"
     {
         (
-            "transport-agnostic HTTP route plus static/dev redirect/path-guard helpers, browser API CORS constants, project favicon route decisions, and WebSocket RPC method/group/schema/handler/dispatch contracts in crates/r3_core/src/rpc.rs plus crates/r3_core/src/server.rs",
+            "transport-agnostic HTTP route plus attachment route decisions, static/dev redirect/path-guard helpers, browser API CORS constants, project favicon route decisions, and WebSocket RPC method/group/schema/handler/dispatch contracts in crates/r3_core/src/rpc.rs plus crates/r3_core/src/server.rs",
             "partial",
             "`cargo test -p r3_core rpc`",
-            "Port live HTTP server, WebSocket upgrade/auth handling, concrete handler execution, runtime schema decoding, subscriptions, static file reads/fallbacks/content types, attachments, live favicon file response execution, OTLP proxy, and CORS middleware execution.",
+            "Port live HTTP server, WebSocket upgrade/auth handling, concrete handler execution, runtime schema decoding, subscriptions, static file reads/fallbacks/content types, attachment filesystem response execution, live favicon file response execution, OTLP proxy, and CORS middleware execution.",
         )
     } else if path.starts_with("apps/server/") {
         (

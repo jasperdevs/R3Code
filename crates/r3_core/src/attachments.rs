@@ -7,6 +7,7 @@ use std::{
 use crate::ChatAttachment;
 
 pub const ATTACHMENTS_ROUTE_PREFIX: &str = "/attachments";
+pub const ATTACHMENTS_ROUTE_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
 const ATTACHMENT_ID_THREAD_SEGMENT_MAX_CHARS: usize = 80;
 const ATTACHMENT_FILENAME_EXTENSIONS: &[&str] = &[
     ".avif", ".bmp", ".gif", ".heic", ".heif", ".ico", ".jpeg", ".jpg", ".png", ".svg", ".tiff",
@@ -21,19 +22,103 @@ pub struct ParsedBase64DataUrl {
     pub base64: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AttachmentRouteDecision {
+    Invalid {
+        body: &'static str,
+        status: u16,
+    },
+    NotFound {
+        body: &'static str,
+        status: u16,
+    },
+    File {
+        path: PathBuf,
+        status: u16,
+        cache_control: &'static str,
+    },
+    InternalServerError {
+        body: &'static str,
+        status: u16,
+    },
+}
+
 pub fn normalize_attachment_relative_path(raw_relative_path: &str) -> Option<String> {
+    let normalized = normalize_attachment_path_segments(raw_relative_path);
+    let stripped = normalized
+        .trim_start_matches(['/', '\\'])
+        .replace('\\', "/");
+    if stripped.is_empty() || stripped.starts_with("..") || stripped.contains('\0') {
+        return None;
+    }
+    Some(stripped)
+}
+
+pub fn attachment_route_decision(
+    raw_relative_path: &str,
+    resolved_file_path: Option<&Path>,
+    resolved_path_is_file: bool,
+    file_response_failed: bool,
+) -> AttachmentRouteDecision {
+    let Some(normalized_relative_path) = normalize_attachment_relative_path(raw_relative_path)
+    else {
+        return AttachmentRouteDecision::Invalid {
+            body: "Invalid attachment path",
+            status: 400,
+        };
+    };
+    let is_id_lookup =
+        !normalized_relative_path.contains('/') && !normalized_relative_path.contains('.');
+    let Some(path) = resolved_file_path else {
+        return if is_id_lookup {
+            AttachmentRouteDecision::NotFound {
+                body: "Not Found",
+                status: 404,
+            }
+        } else {
+            AttachmentRouteDecision::Invalid {
+                body: "Invalid attachment path",
+                status: 400,
+            }
+        };
+    };
+    if !resolved_path_is_file {
+        return AttachmentRouteDecision::NotFound {
+            body: "Not Found",
+            status: 404,
+        };
+    }
+    if file_response_failed {
+        return AttachmentRouteDecision::InternalServerError {
+            body: "Internal Server Error",
+            status: 500,
+        };
+    }
+    AttachmentRouteDecision::File {
+        path: path.to_path_buf(),
+        status: 200,
+        cache_control: ATTACHMENTS_ROUTE_CACHE_CONTROL,
+    }
+}
+
+fn normalize_attachment_path_segments(raw_relative_path: &str) -> String {
     let normalized = raw_relative_path.replace('\\', "/");
-    let mut parts = Vec::new();
+    let mut parts: Vec<&str> = Vec::new();
     for part in normalized.split('/') {
         if part.is_empty() || part == "." {
             continue;
         }
-        if part == ".." || part.contains('\0') {
-            return None;
+        if part == ".." {
+            if parts.last().is_some_and(|previous| *previous != "..") {
+                parts.pop();
+            } else {
+                parts.push("..");
+            }
+        } else {
+            parts.push(part);
         }
-        parts.push(part);
     }
-    (!parts.is_empty()).then(|| parts.join("/"))
+    parts.join("/")
 }
 
 pub fn resolve_attachment_relative_path(
@@ -363,6 +448,12 @@ mod tests {
         fs::write(&png_path, b"hello").unwrap();
 
         assert_eq!(
+            normalize_attachment_relative_path("nested/../thread-1-attachment.png"),
+            Some("thread-1-attachment.png".to_string())
+        );
+        assert_eq!(normalize_attachment_relative_path("../secret.png"), None);
+        assert_eq!(normalize_attachment_relative_path("bad\0path.png"), None);
+        assert_eq!(
             resolve_attachment_path_by_id(&root, attachment_id),
             Some(png_path.clone())
         );
@@ -370,6 +461,54 @@ mod tests {
         assert_eq!(resolve_attachment_path_by_id(&root, "../secret"), None);
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn ports_attachment_route_response_decisions() {
+        let file_path = PathBuf::from("C:/r3/attachments/thread-1-attachment.png");
+        assert_eq!(
+            attachment_route_decision("../secret.png", None, false, false),
+            AttachmentRouteDecision::Invalid {
+                body: "Invalid attachment path",
+                status: 400,
+            }
+        );
+        assert_eq!(
+            attachment_route_decision("missing-id", None, false, false),
+            AttachmentRouteDecision::NotFound {
+                body: "Not Found",
+                status: 404,
+            }
+        );
+        assert_eq!(
+            attachment_route_decision("missing.png", None, false, false),
+            AttachmentRouteDecision::Invalid {
+                body: "Invalid attachment path",
+                status: 400,
+            }
+        );
+        assert_eq!(
+            attachment_route_decision("thread-1-attachment", Some(&file_path), false, false),
+            AttachmentRouteDecision::NotFound {
+                body: "Not Found",
+                status: 404,
+            }
+        );
+        assert_eq!(
+            attachment_route_decision("thread-1-attachment", Some(&file_path), true, false),
+            AttachmentRouteDecision::File {
+                path: file_path.clone(),
+                status: 200,
+                cache_control: ATTACHMENTS_ROUTE_CACHE_CONTROL,
+            }
+        );
+        assert_eq!(
+            attachment_route_decision("thread-1-attachment", Some(&file_path), true, true),
+            AttachmentRouteDecision::InternalServerError {
+                body: "Internal Server Error",
+                status: 500,
+            }
+        );
     }
 
     #[test]
