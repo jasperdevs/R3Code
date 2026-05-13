@@ -6348,6 +6348,196 @@ pub fn project_script_runtime_env(
     env
 }
 
+pub const PROJECT_FAVICON_CANDIDATES: [&str; 20] = [
+    "favicon.svg",
+    "favicon.ico",
+    "favicon.png",
+    "public/favicon.svg",
+    "public/favicon.ico",
+    "public/favicon.png",
+    "app/favicon.ico",
+    "app/favicon.png",
+    "app/icon.svg",
+    "app/icon.png",
+    "app/icon.ico",
+    "src/favicon.ico",
+    "src/favicon.svg",
+    "src/app/favicon.ico",
+    "src/app/icon.svg",
+    "src/app/icon.png",
+    "assets/icon.svg",
+    "assets/icon.png",
+    "assets/logo.svg",
+    "assets/logo.png",
+];
+
+pub const PROJECT_FAVICON_IDEA_CANDIDATE: &str = ".idea/icon.svg";
+
+pub const PROJECT_ICON_SOURCE_FILES: [&str; 7] = [
+    "index.html",
+    "public/index.html",
+    "app/routes/__root.tsx",
+    "src/routes/__root.tsx",
+    "app/root.tsx",
+    "src/root.tsx",
+    "src/index.html",
+];
+
+fn join_project_relative_path(cwd: &str, relative_path: &str) -> String {
+    let separator = if cwd.contains('\\') { "\\" } else { "/" };
+    let cwd = cwd.trim_end_matches(['/', '\\']);
+    let relative_path = relative_path.trim_start_matches(['/', '\\']);
+    if cwd.is_empty() {
+        relative_path.to_string()
+    } else if relative_path.is_empty() {
+        cwd.to_string()
+    } else {
+        format!("{cwd}{separator}{relative_path}")
+    }
+}
+
+pub fn project_favicon_candidate_paths(cwd: &str) -> Vec<String> {
+    PROJECT_FAVICON_CANDIDATES
+        .into_iter()
+        .chain([PROJECT_FAVICON_IDEA_CANDIDATE])
+        .map(|candidate| join_project_relative_path(cwd, candidate))
+        .collect()
+}
+
+pub fn project_icon_source_paths(cwd: &str) -> Vec<String> {
+    PROJECT_ICON_SOURCE_FILES
+        .into_iter()
+        .map(|source_file| join_project_relative_path(cwd, source_file))
+        .collect()
+}
+
+fn quoted_value_after_marker(source: &str, marker: &str) -> Option<String> {
+    let marker_index = source.find(marker)?;
+    let rest = &source[marker_index + marker.len()..];
+    let quote_index = rest.find(['"', '\''])?;
+    let quote = rest.as_bytes()[quote_index] as char;
+    let value_start = quote_index + 1;
+    let value_end = rest[value_start..].find(quote)? + value_start;
+    let value = &rest[value_start..value_end];
+    Some(value.split('?').next().unwrap_or("").to_string())
+}
+
+fn html_attribute_value(tag: &str, attribute: &str) -> Option<String> {
+    let lower = tag.to_ascii_lowercase();
+    for quote in ['"', '\''] {
+        let marker = format!("{attribute}={quote}");
+        if let Some(marker_index) = lower.find(&marker) {
+            let value_start = marker_index + marker.len();
+            let value_end = tag[value_start..].find(quote)? + value_start;
+            return Some(
+                tag[value_start..value_end]
+                    .split('?')
+                    .next()
+                    .unwrap_or("")
+                    .to_string(),
+            );
+        }
+    }
+    None
+}
+
+pub fn extract_project_icon_href(source: &str) -> Option<String> {
+    let lower = source.to_ascii_lowercase();
+    let mut search_start = 0usize;
+    while let Some(relative_index) = lower[search_start..].find("<link") {
+        let tag_start = search_start + relative_index;
+        let Some(relative_end) = lower[tag_start..].find('>') else {
+            break;
+        };
+        let tag_end = tag_start + relative_end + 1;
+        let tag = &source[tag_start..tag_end];
+        let rel = html_attribute_value(tag, "rel").map(|value| value.to_ascii_lowercase());
+        if matches!(rel.as_deref(), Some("icon" | "shortcut icon")) {
+            if let Some(href) = html_attribute_value(tag, "href").filter(|href| !href.is_empty()) {
+                return Some(href);
+            }
+        }
+        search_start = tag_end;
+    }
+
+    for block in source.split('}') {
+        let lower_block = block.to_ascii_lowercase();
+        let rel = quoted_value_after_marker(&lower_block, "rel")
+            .or_else(|| quoted_value_after_marker(&lower_block, "rel:"));
+        if !matches!(rel.as_deref(), Some("icon" | "shortcut icon")) {
+            continue;
+        }
+        if let Some(href) = quoted_value_after_marker(block, "href")
+            .or_else(|| quoted_value_after_marker(block, "href:"))
+        {
+            if !href.is_empty() {
+                return Some(href);
+            }
+        }
+    }
+
+    None
+}
+
+pub fn project_favicon_paths_for_href(cwd: &str, href: &str) -> Vec<String> {
+    let clean = href.strip_prefix('/').unwrap_or(href);
+    vec![
+        join_project_relative_path(cwd, &format!("public/{clean}")),
+        join_project_relative_path(cwd, clean),
+    ]
+}
+
+pub fn is_project_favicon_path_within_project(project_cwd: &str, candidate_path: &str) -> bool {
+    if candidate_path
+        .split(['/', '\\'])
+        .any(|segment| segment == "..")
+    {
+        return false;
+    }
+    let project = normalize_project_path_for_comparison(project_cwd);
+    let candidate = normalize_project_path_for_comparison(candidate_path);
+    if project.is_empty() || candidate.is_empty() {
+        return false;
+    }
+    if candidate == project {
+        return true;
+    }
+    let separator = if project.contains('\\') { "\\" } else { "/" };
+    candidate.starts_with(&format!("{project}{separator}"))
+}
+
+pub fn resolve_project_favicon_path_from_sources(
+    cwd: &str,
+    existing_files: &BTreeSet<String>,
+    source_file_contents: &BTreeMap<String, String>,
+) -> Option<String> {
+    for candidate in project_favicon_candidate_paths(cwd) {
+        if is_project_favicon_path_within_project(cwd, &candidate)
+            && existing_files.contains(&candidate)
+        {
+            return Some(candidate);
+        }
+    }
+
+    for source_path in project_icon_source_paths(cwd) {
+        let Some(source) = source_file_contents.get(&source_path) else {
+            continue;
+        };
+        let Some(href) = extract_project_icon_href(source) else {
+            continue;
+        };
+        for candidate in project_favicon_paths_for_href(cwd, &href) {
+            if is_project_favicon_path_within_project(cwd, &candidate)
+                && existing_files.contains(&candidate)
+            {
+                return Some(candidate);
+            }
+        }
+    }
+
+    None
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProjectSetupScriptRunnerInput {
     pub thread_id: String,
@@ -16285,6 +16475,95 @@ mod tests {
                 .get("T3CODE_PROJECT_ROOT")
                 .map(String::as_str),
             Some("/repo/project")
+        );
+    }
+
+    #[test]
+    fn project_favicon_resolver_helpers_match_upstream_logic() {
+        assert_eq!(
+            project_favicon_candidate_paths("/repo")
+                .into_iter()
+                .take(6)
+                .collect::<Vec<_>>(),
+            vec![
+                "/repo/favicon.svg".to_string(),
+                "/repo/favicon.ico".to_string(),
+                "/repo/favicon.png".to_string(),
+                "/repo/public/favicon.svg".to_string(),
+                "/repo/public/favicon.ico".to_string(),
+                "/repo/public/favicon.png".to_string(),
+            ]
+        );
+        assert_eq!(
+            project_favicon_candidate_paths("/repo")
+                .last()
+                .map(String::as_str),
+            Some("/repo/.idea/icon.svg")
+        );
+        assert_eq!(
+            project_icon_source_paths("/repo"),
+            vec![
+                "/repo/index.html".to_string(),
+                "/repo/public/index.html".to_string(),
+                "/repo/app/routes/__root.tsx".to_string(),
+                "/repo/src/routes/__root.tsx".to_string(),
+                "/repo/app/root.tsx".to_string(),
+                "/repo/src/root.tsx".to_string(),
+                "/repo/src/index.html".to_string(),
+            ]
+        );
+
+        assert_eq!(
+            extract_project_icon_href(r#"<LINK HREF="/brand/logo.svg?version=1" REL="ICON">"#),
+            Some("/brand/logo.svg".to_string())
+        );
+        assert_eq!(
+            extract_project_icon_href(r#"{ href: "/meta/icon.png?x=1", rel: "shortcut icon" }"#),
+            Some("/meta/icon.png".to_string())
+        );
+        assert_eq!(
+            project_favicon_paths_for_href("/repo", "/brand/logo.svg"),
+            vec![
+                "/repo/public/brand/logo.svg".to_string(),
+                "/repo/brand/logo.svg".to_string(),
+            ]
+        );
+        assert!(is_project_favicon_path_within_project(
+            "/repo",
+            "/repo/public/brand/logo.svg"
+        ));
+        assert!(!is_project_favicon_path_within_project(
+            "/repo",
+            "/repo-other/logo.svg"
+        ));
+
+        let existing_files = BTreeSet::from([
+            "/repo/favicon.svg".to_string(),
+            "/repo/public/brand/logo.svg".to_string(),
+        ]);
+        assert_eq!(
+            resolve_project_favicon_path_from_sources("/repo", &existing_files, &BTreeMap::new()),
+            Some("/repo/favicon.svg".to_string())
+        );
+
+        let source_files = BTreeMap::from([(
+            "/repo/index.html".to_string(),
+            r#"<link rel="icon" href="/brand/logo.svg">"#.to_string(),
+        )]);
+        let existing_files = BTreeSet::from(["/repo/public/brand/logo.svg".to_string()]);
+        assert_eq!(
+            resolve_project_favicon_path_from_sources("/repo", &existing_files, &source_files),
+            Some("/repo/public/brand/logo.svg".to_string())
+        );
+
+        let source_files = BTreeMap::from([(
+            "/repo/index.html".to_string(),
+            r#"<link rel="icon" href="../outside.svg">"#.to_string(),
+        )]);
+        let existing_files = BTreeSet::from(["/outside.svg".to_string()]);
+        assert_eq!(
+            resolve_project_favicon_path_from_sources("/repo", &existing_files, &source_files),
+            None
         );
     }
 
