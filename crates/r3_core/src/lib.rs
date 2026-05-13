@@ -4275,6 +4275,20 @@ pub struct MediaQueryStructuredInput {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitOnBlurState {
+    pub value: String,
+    pub draft: String,
+    pub focused: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitOnBlurEffect {
+    pub committed_value: Option<String>,
+    pub prevent_default: bool,
+    pub blur_target: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelPickerState {
     pub active_entry: Option<ProviderInstanceEntry>,
     pub trigger_title: String,
@@ -7971,6 +7985,52 @@ pub fn parse_structured_media_query(input: &MediaQueryStructuredInput) -> String
         "(min-width: 0px)".to_string()
     } else {
         parts.join(" and ")
+    }
+}
+
+impl CommitOnBlurState {
+    pub fn new(value: &str) -> Self {
+        Self {
+            value: value.to_string(),
+            draft: value.to_string(),
+            focused: false,
+        }
+    }
+
+    pub fn sync_value(&mut self, value: &str) {
+        self.value = value.to_string();
+        if !self.focused {
+            self.draft = value.to_string();
+        }
+    }
+
+    pub fn on_change(&mut self, next: &str) {
+        self.draft = next.to_string();
+    }
+
+    pub fn on_focus(&mut self) {
+        self.focused = true;
+    }
+
+    pub fn on_blur(&mut self) -> CommitOnBlurEffect {
+        self.focused = false;
+        let committed_value = (self.draft != self.value).then(|| self.draft.clone());
+        if let Some(value) = committed_value.as_ref() {
+            self.value = value.clone();
+        }
+        CommitOnBlurEffect {
+            committed_value,
+            prevent_default: false,
+            blur_target: false,
+        }
+    }
+
+    pub fn on_key_down(&self, key: &str) -> CommitOnBlurEffect {
+        CommitOnBlurEffect {
+            committed_value: None,
+            prevent_default: key == "Enter",
+            blur_target: key == "Enter",
+        }
     }
 }
 
@@ -32017,6 +32077,52 @@ mod tests {
         assert_eq!(
             parse_structured_media_query(&MediaQueryStructuredInput::default()),
             "(min-width: 0px)"
+        );
+    }
+
+    #[test]
+    fn commit_on_blur_helpers_match_upstream_contract() {
+        let mut state = CommitOnBlurState::new("Work");
+        state.on_focus();
+        state.on_change("Work profile");
+        state.sync_value("External reset");
+        assert_eq!(state.draft, "Work profile");
+        assert_eq!(state.value, "External reset");
+
+        assert_eq!(
+            state.on_key_down("Enter"),
+            CommitOnBlurEffect {
+                committed_value: None,
+                prevent_default: true,
+                blur_target: true,
+            }
+        );
+        assert_eq!(
+            state.on_key_down("Escape"),
+            CommitOnBlurEffect {
+                committed_value: None,
+                prevent_default: false,
+                blur_target: false,
+            }
+        );
+        assert_eq!(
+            state.on_blur(),
+            CommitOnBlurEffect {
+                committed_value: Some("Work profile".to_string()),
+                prevent_default: false,
+                blur_target: false,
+            }
+        );
+
+        state.sync_value("Server value");
+        assert_eq!(state.draft, "Server value");
+        assert_eq!(
+            state.on_blur(),
+            CommitOnBlurEffect {
+                committed_value: None,
+                prevent_default: false,
+                blur_target: false,
+            }
         );
     }
 

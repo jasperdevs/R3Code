@@ -1697,6 +1697,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core media_query_helpers_match_upstream_contract`",
             "Wire helpers into live GPUI responsive layout subscriptions and viewport-driven shell rendering.",
         )
+    } else if path == "apps/web/src/hooks/useCommitOnBlur.ts" {
+        (
+            "commit-on-blur input draft state machine for unfocused upstream sync, focused edit preservation, change handling, changed-only blur commit, and Enter prevent-default/blur behavior in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core commit_on_blur_helpers_match_upstream_contract`",
+            "Wire state helper into live GPUI settings inputs and exact focus/keyboard event handling.",
+        )
     } else if path == "apps/web/src/markdown-links.ts"
         || path == "apps/web/src/markdown-links.test.ts"
     {
