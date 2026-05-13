@@ -2575,17 +2575,17 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
         )
     } else if path == "apps/web/src/components/Icons.tsx" {
         (
-            "provider/editor/model icon export list, SVG viewBox contracts, generated gradient/mask/clip/filter IDs, theme fill classes, Antigravity data-url image usage, and native asset coverage map in crates/r3_core/src/lib.rs",
-            "partial",
+            "provider/editor/model icon export list, SVG viewBox contracts, generated gradient/mask/clip/filter IDs, theme fill classes, Antigravity data-url image usage, native asset coverage map, and live editor/provider icon call sites in crates/r3_core/src/lib.rs, crates/r3_ui/src/shell.rs, and crates/r3_ui/assets/icons",
+            "covered",
             "`cargo test --workspace upstream_icon_contracts_match_web_components`",
-            "Port missing native SVG assets for GitHub, Git, Jujutsu, GitLab, Azure DevOps, Bitbucket, Trae, Kiro, VS Code Insiders, VSCodium, Antigravity, ACP Registry, and Pi Agent, then wire every live GPUI icon call site to the exact asset.",
+            "Maintain asset parity when upstream adds or changes shared web icon exports.",
         )
     } else if path == "apps/web/src/components/JetBrainsIcons.tsx" {
         (
-            "JetBrains icon export list, shared useSvgGradientIds prefix/count contract, 64x64 viewBox, black tile path/fill, and white glyph fill in crates/r3_core/src/lib.rs",
-            "partial",
+            "JetBrains icon export list, shared useSvgGradientIds prefix/count contract, 64x64 viewBox, black tile path/fill, white glyph fill, native SVG asset paths, and editor icon call sites in crates/r3_core/src/lib.rs, crates/r3_ui/src/shell.rs, and crates/r3_ui/assets/icons",
+            "covered",
             "`cargo test --workspace upstream_jetbrains_icon_contracts_match_shared_helper`",
-            "Port each JetBrains product SVG as native GPUI assets and wire the exact editor/provider icon rendering paths.",
+            "Maintain asset parity when upstream adds or changes JetBrains product SVG exports.",
         )
     } else if path == "apps/web/src/components/Sidebar.logic.test.ts"
         || path == "apps/web/src/components/Sidebar.logic.ts"

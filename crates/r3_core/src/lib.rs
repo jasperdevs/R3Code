@@ -165,6 +165,7 @@ pub struct UpstreamWebIconContract {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UpstreamJetBrainsIconContract {
     pub export_name: &'static str,
+    pub native_asset_path: Option<&'static str>,
     pub gradient_prefix: &'static str,
     pub gradient_count: usize,
     pub view_box: &'static str,
@@ -367,6 +368,7 @@ pub const UPSTREAM_WEB_ICON_CONTRACTS: &[UpstreamWebIconContract] = &[
 pub const UPSTREAM_JETBRAINS_ICON_CONTRACTS: &[UpstreamJetBrainsIconContract] = &[
     UpstreamJetBrainsIconContract {
         export_name: "AquaIcon",
+        native_asset_path: Some("icons/aqua.svg"),
         gradient_prefix: "aqua",
         gradient_count: JETBRAINS_ICON_GRADIENT_COUNT,
         view_box: JETBRAINS_ICON_VIEW_BOX,
@@ -376,6 +378,7 @@ pub const UPSTREAM_JETBRAINS_ICON_CONTRACTS: &[UpstreamJetBrainsIconContract] = 
     },
     UpstreamJetBrainsIconContract {
         export_name: "CLionIcon",
+        native_asset_path: Some("icons/clion.svg"),
         gradient_prefix: "clion",
         gradient_count: JETBRAINS_ICON_GRADIENT_COUNT,
         view_box: JETBRAINS_ICON_VIEW_BOX,
@@ -385,6 +388,7 @@ pub const UPSTREAM_JETBRAINS_ICON_CONTRACTS: &[UpstreamJetBrainsIconContract] = 
     },
     UpstreamJetBrainsIconContract {
         export_name: "DataGripIcon",
+        native_asset_path: Some("icons/datagrip.svg"),
         gradient_prefix: "datagrip",
         gradient_count: JETBRAINS_ICON_GRADIENT_COUNT,
         view_box: JETBRAINS_ICON_VIEW_BOX,
@@ -394,6 +398,7 @@ pub const UPSTREAM_JETBRAINS_ICON_CONTRACTS: &[UpstreamJetBrainsIconContract] = 
     },
     UpstreamJetBrainsIconContract {
         export_name: "DataSpellIcon",
+        native_asset_path: Some("icons/dataspell.svg"),
         gradient_prefix: "dataspell",
         gradient_count: JETBRAINS_ICON_GRADIENT_COUNT,
         view_box: JETBRAINS_ICON_VIEW_BOX,
@@ -403,6 +408,7 @@ pub const UPSTREAM_JETBRAINS_ICON_CONTRACTS: &[UpstreamJetBrainsIconContract] = 
     },
     UpstreamJetBrainsIconContract {
         export_name: "GoLandIcon",
+        native_asset_path: Some("icons/goland.svg"),
         gradient_prefix: "goland",
         gradient_count: JETBRAINS_ICON_GRADIENT_COUNT,
         view_box: JETBRAINS_ICON_VIEW_BOX,
@@ -412,6 +418,7 @@ pub const UPSTREAM_JETBRAINS_ICON_CONTRACTS: &[UpstreamJetBrainsIconContract] = 
     },
     UpstreamJetBrainsIconContract {
         export_name: "IntelliJIdeaIcon",
+        native_asset_path: Some("icons/intellij-idea.svg"),
         gradient_prefix: "intellij-idea",
         gradient_count: JETBRAINS_ICON_GRADIENT_COUNT,
         view_box: JETBRAINS_ICON_VIEW_BOX,
@@ -421,6 +428,7 @@ pub const UPSTREAM_JETBRAINS_ICON_CONTRACTS: &[UpstreamJetBrainsIconContract] = 
     },
     UpstreamJetBrainsIconContract {
         export_name: "PhpStormIcon",
+        native_asset_path: Some("icons/phpstorm.svg"),
         gradient_prefix: "phpstorm",
         gradient_count: JETBRAINS_ICON_GRADIENT_COUNT,
         view_box: JETBRAINS_ICON_VIEW_BOX,
@@ -430,6 +438,7 @@ pub const UPSTREAM_JETBRAINS_ICON_CONTRACTS: &[UpstreamJetBrainsIconContract] = 
     },
     UpstreamJetBrainsIconContract {
         export_name: "PyCharmIcon",
+        native_asset_path: Some("icons/pycharm.svg"),
         gradient_prefix: "pycharm",
         gradient_count: JETBRAINS_ICON_GRADIENT_COUNT,
         view_box: JETBRAINS_ICON_VIEW_BOX,
@@ -439,6 +448,7 @@ pub const UPSTREAM_JETBRAINS_ICON_CONTRACTS: &[UpstreamJetBrainsIconContract] = 
     },
     UpstreamJetBrainsIconContract {
         export_name: "RiderIcon",
+        native_asset_path: Some("icons/rider.svg"),
         gradient_prefix: "rider",
         gradient_count: JETBRAINS_ICON_GRADIENT_COUNT,
         view_box: JETBRAINS_ICON_VIEW_BOX,
@@ -448,6 +458,7 @@ pub const UPSTREAM_JETBRAINS_ICON_CONTRACTS: &[UpstreamJetBrainsIconContract] = 
     },
     UpstreamJetBrainsIconContract {
         export_name: "RubyMineIcon",
+        native_asset_path: Some("icons/rubymine.svg"),
         gradient_prefix: "rubymine",
         gradient_count: JETBRAINS_ICON_GRADIENT_COUNT,
         view_box: JETBRAINS_ICON_VIEW_BOX,
@@ -457,6 +468,7 @@ pub const UPSTREAM_JETBRAINS_ICON_CONTRACTS: &[UpstreamJetBrainsIconContract] = 
     },
     UpstreamJetBrainsIconContract {
         export_name: "RustRoverIcon",
+        native_asset_path: Some("icons/rustrover.svg"),
         gradient_prefix: "rustrover",
         gradient_count: JETBRAINS_ICON_GRADIENT_COUNT,
         view_box: JETBRAINS_ICON_VIEW_BOX,
@@ -466,6 +478,7 @@ pub const UPSTREAM_JETBRAINS_ICON_CONTRACTS: &[UpstreamJetBrainsIconContract] = 
     },
     UpstreamJetBrainsIconContract {
         export_name: "WebStormIcon",
+        native_asset_path: Some("icons/webstorm.svg"),
         gradient_prefix: "webstorm",
         gradient_count: JETBRAINS_ICON_GRADIENT_COUNT,
         view_box: JETBRAINS_ICON_VIEW_BOX,
@@ -483,6 +496,14 @@ pub fn upstream_web_icon_contract(export_name: &str) -> Option<&'static Upstream
 
 pub fn upstream_web_icon_exports_missing_native_assets() -> Vec<&'static str> {
     UPSTREAM_WEB_ICON_CONTRACTS
+        .iter()
+        .filter(|contract| contract.native_asset_path.is_none())
+        .map(|contract| contract.export_name)
+        .collect()
+}
+
+pub fn upstream_jetbrains_icon_exports_missing_native_assets() -> Vec<&'static str> {
+    UPSTREAM_JETBRAINS_ICON_CONTRACTS
         .iter()
         .filter(|contract| contract.native_asset_path.is_none())
         .map(|contract| contract.export_name)
@@ -47232,12 +47253,15 @@ mod tests {
         );
 
         for contract in UPSTREAM_JETBRAINS_ICON_CONTRACTS {
+            assert!(contract.native_asset_path.is_some());
             assert_eq!(contract.gradient_count, 2);
             assert_eq!(contract.view_box, "0 0 64 64");
             assert_eq!(contract.tile_path, "M52 12H12v40h40z");
             assert_eq!(contract.tile_fill, "#000");
             assert_eq!(contract.glyph_fill, "#fff");
         }
+
+        assert!(upstream_jetbrains_icon_exports_missing_native_assets().is_empty());
 
         assert_eq!(
             upstream_jetbrains_icon_contract("IntelliJIdeaIcon")

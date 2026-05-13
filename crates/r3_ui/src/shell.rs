@@ -10146,11 +10146,27 @@ fn project_script_icon_path(icon: ProjectScriptIcon) -> &'static str {
 
 fn editor_option_icon_path(option: EditorOption) -> &'static str {
     match option.id {
+        r3_core::EditorId::Antigravity => "icons/antigravity.svg",
+        r3_core::EditorId::Aqua => "icons/aqua.svg",
+        r3_core::EditorId::CLion => "icons/clion.svg",
         r3_core::EditorId::Cursor => "icons/cursor.svg",
+        r3_core::EditorId::DataGrip => "icons/datagrip.svg",
+        r3_core::EditorId::DataSpell => "icons/dataspell.svg",
         r3_core::EditorId::FileManager => "icons/folder-closed.svg",
+        r3_core::EditorId::GoLand => "icons/goland.svg",
+        r3_core::EditorId::Idea => "icons/intellij-idea.svg",
+        r3_core::EditorId::Kiro => "icons/kiro.svg",
+        r3_core::EditorId::PhpStorm => "icons/phpstorm.svg",
+        r3_core::EditorId::PyCharm => "icons/pycharm.svg",
+        r3_core::EditorId::Rider => "icons/rider.svg",
+        r3_core::EditorId::RubyMine => "icons/rubymine.svg",
+        r3_core::EditorId::RustRover => "icons/rustrover.svg",
+        r3_core::EditorId::Trae => "icons/trae.svg",
         r3_core::EditorId::VsCode => "icons/visual-studio-code.svg",
+        r3_core::EditorId::VsCodeInsiders => "icons/visual-studio-code-insiders.svg",
+        r3_core::EditorId::VsCodium => "icons/vscodium.svg",
+        r3_core::EditorId::WebStorm => "icons/webstorm.svg",
         r3_core::EditorId::Zed => "icons/zed.svg",
-        _ => "icons/terminal.svg",
     }
 }
 

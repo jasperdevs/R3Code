@@ -14,6 +14,7 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         "icons/antigravity.svg",
         include_bytes!("../assets/icons/antigravity.svg"),
     ),
+    ("icons/aqua.svg", include_bytes!("../assets/icons/aqua.svg")),
     (
         "icons/archive.svg",
         include_bytes!("../assets/icons/archive.svg"),
@@ -61,6 +62,10 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/claude-ai.svg"),
     ),
     (
+        "icons/clion.svg",
+        include_bytes!("../assets/icons/clion.svg"),
+    ),
+    (
         "icons/clock-3.svg",
         include_bytes!("../assets/icons/clock-3.svg"),
     ),
@@ -80,6 +85,14 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
     (
         "icons/cursor.svg",
         include_bytes!("../assets/icons/cursor.svg"),
+    ),
+    (
+        "icons/datagrip.svg",
+        include_bytes!("../assets/icons/datagrip.svg"),
+    ),
+    (
+        "icons/dataspell.svg",
+        include_bytes!("../assets/icons/dataspell.svg"),
     ),
     ("icons/diff.svg", include_bytes!("../assets/icons/diff.svg")),
     (
@@ -148,10 +161,18 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/gitlab.svg"),
     ),
     (
+        "icons/goland.svg",
+        include_bytes!("../assets/icons/goland.svg"),
+    ),
+    (
         "icons/hammer.svg",
         include_bytes!("../assets/icons/hammer.svg"),
     ),
     ("icons/info.svg", include_bytes!("../assets/icons/info.svg")),
+    (
+        "icons/intellij-idea.svg",
+        include_bytes!("../assets/icons/intellij-idea.svg"),
+    ),
     (
         "icons/jujutsu.svg",
         include_bytes!("../assets/icons/jujutsu.svg"),
@@ -199,6 +220,10 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/icons/pen-line.svg"),
     ),
     (
+        "icons/phpstorm.svg",
+        include_bytes!("../assets/icons/phpstorm.svg"),
+    ),
+    (
         "icons/pi-agent.svg",
         include_bytes!("../assets/icons/pi-agent.svg"),
     ),
@@ -213,8 +238,16 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
     ),
     ("icons/plus.svg", include_bytes!("../assets/icons/plus.svg")),
     (
+        "icons/pycharm.svg",
+        include_bytes!("../assets/icons/pycharm.svg"),
+    ),
+    (
         "icons/refresh-cw.svg",
         include_bytes!("../assets/icons/refresh-cw.svg"),
+    ),
+    (
+        "icons/rider.svg",
+        include_bytes!("../assets/icons/rider.svg"),
     ),
     (
         "icons/rotate-ccw.svg",
@@ -223,6 +256,14 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
     (
         "icons/rows-3.svg",
         include_bytes!("../assets/icons/rows-3.svg"),
+    ),
+    (
+        "icons/rubymine.svg",
+        include_bytes!("../assets/icons/rubymine.svg"),
+    ),
+    (
+        "icons/rustrover.svg",
+        include_bytes!("../assets/icons/rustrover.svg"),
     ),
     (
         "icons/search.svg",
@@ -281,6 +322,10 @@ const ICON_ASSETS: &[(&str, &[u8])] = &[
     (
         "icons/vscodium.svg",
         include_bytes!("../assets/icons/vscodium.svg"),
+    ),
+    (
+        "icons/webstorm.svg",
+        include_bytes!("../assets/icons/webstorm.svg"),
     ),
     (
         "icons/wrench.svg",
@@ -349,17 +394,21 @@ mod tests {
         for icon in [
             "acp-registry.svg",
             "antigravity.svg",
+            "aqua.svg",
             "check.svg",
             "bug.svg",
             "azure-devops.svg",
             "bitbucket.svg",
             "chevron-left.svg",
             "claude-ai.svg",
+            "clion.svg",
             "clock-3.svg",
             "cloud.svg",
             "cloud-upload.svg",
             "columns-2.svg",
             "cursor.svg",
+            "datagrip.svg",
+            "dataspell.svg",
             "diff.svg",
             "ellipsis.svg",
             "file-type-light-agents.svg",
@@ -376,8 +425,10 @@ mod tests {
             "github-copilot.svg",
             "github.svg",
             "gitlab.svg",
+            "goland.svg",
             "hammer.svg",
             "info.svg",
+            "intellij-idea.svg",
             "jujutsu.svg",
             "list-checks.svg",
             "lock.svg",
@@ -387,11 +438,16 @@ mod tests {
             "openai.svg",
             "opencode.svg",
             "pen-line.svg",
+            "phpstorm.svg",
             "pi-agent.svg",
             "pilcrow.svg",
             "play.svg",
+            "pycharm.svg",
             "rotate-ccw.svg",
+            "rider.svg",
             "rows-3.svg",
+            "rubymine.svg",
+            "rustrover.svg",
             "skill-chip.svg",
             "square-pen.svg",
             "square-split-horizontal.svg",
@@ -405,6 +461,7 @@ mod tests {
             "visual-studio-code-insiders.svg",
             "visual-studio-code.svg",
             "vscodium.svg",
+            "webstorm.svg",
             "wrench.svg",
             "x.svg",
             "zed.svg",
