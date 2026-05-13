@@ -1948,6 +1948,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core composer_menu_grouping_highlight`",
             "Wire footer breakpoint helpers into live GPUI composer layout.",
         )
+    } else if path == "apps/web/src/lib/projectPaths.ts"
+        || path == "apps/web/src/lib/projectPaths.test.ts"
+    {
+        (
+            "project path dispatch/comparison normalization, explicit-relative detection/resolution, browse query gating, title inference, path matching, and browse navigation helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core project_paths_helpers_match_upstream_contract`",
+            "Wire helpers into live GPUI project picker/filesystem browse flow.",
+        )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
             "logical project path normalization, physical/grouping/order keys, repository-scoped keys, settings override resolution, ref fallback, and group-label helpers in crates/r3_core/src/lib.rs",

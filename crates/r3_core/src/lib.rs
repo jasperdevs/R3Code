@@ -5649,6 +5649,10 @@ pub fn is_mac_platform(platform: &str) -> bool {
         .any(|needle| platform.contains(needle))
 }
 
+pub fn is_windows_platform(platform: &str) -> bool {
+    platform.to_ascii_lowercase().starts_with("win")
+}
+
 pub fn keybinding_from_keyboard_event(
     event: KeybindingKeyboardEvent<'_>,
     platform: &str,
@@ -14403,13 +14407,265 @@ pub fn scoped_thread_key(ref_: &ScopedThreadRef) -> String {
     format!("{}:{}", ref_.environment_id, ref_.thread_id)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ProjectAbsolutePathParts {
+    root: String,
+    separator: &'static str,
+    segments: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectPathCandidate {
+    pub id: String,
+    pub cwd: String,
+}
+
+fn project_absolute_path_kind(value: &str) -> Option<&'static str> {
+    if shared::is_windows_drive_path(value) || shared::is_unc_path(value) {
+        Some("windows")
+    } else if value.starts_with('/') {
+        Some("unix")
+    } else {
+        None
+    }
+}
+
+pub fn normalize_project_path_for_dispatch(value: &str) -> String {
+    trim_trailing_project_path_separators(value.trim())
+}
+
 pub fn normalize_project_path_for_comparison(value: &str) -> String {
-    let normalized = trim_trailing_project_path_separators(value.trim());
-    if is_windows_drive_path(&normalized) || normalized.starts_with("\\\\") {
+    let normalized = normalize_project_path_for_dispatch(value);
+    if shared::is_windows_drive_path(&normalized) || normalized.starts_with("\\\\") {
         normalized.replace('/', "\\").to_ascii_lowercase()
     } else {
         normalized
     }
+}
+
+pub fn is_explicit_relative_project_path(value: &str) -> bool {
+    shared::is_explicit_relative_path(value)
+}
+
+pub fn has_trailing_project_path_separator(value: &str) -> bool {
+    if project_absolute_path_kind(value) == Some("unix") {
+        value.ends_with('/')
+    } else {
+        value.ends_with('/') || value.ends_with('\\')
+    }
+}
+
+fn split_project_path_segments(value: &str, separator: &str) -> Vec<String> {
+    if separator == "/" {
+        value
+            .split('/')
+            .filter(|segment| !segment.is_empty())
+            .map(str::to_string)
+            .collect()
+    } else {
+        value
+            .split(['/', '\\'])
+            .filter(|segment| !segment.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+}
+
+fn split_absolute_project_path(value: &str) -> Option<ProjectAbsolutePathParts> {
+    if shared::is_windows_drive_path(value) {
+        let root = format!("{}\\", &value[..2]);
+        let rest_start = root.len().min(value.len());
+        return Some(ProjectAbsolutePathParts {
+            segments: split_project_path_segments(&value[rest_start..], "\\"),
+            root,
+            separator: "\\",
+        });
+    }
+    if shared::is_unc_path(value) {
+        let segments = split_project_path_segments(value, "\\");
+        let server = segments.first()?;
+        let share = segments.get(1)?;
+        return Some(ProjectAbsolutePathParts {
+            root: format!("\\\\{server}\\{share}\\"),
+            separator: "\\",
+            segments: segments.into_iter().skip(2).collect(),
+        });
+    }
+    if value.starts_with('/') {
+        return Some(ProjectAbsolutePathParts {
+            root: "/".to_string(),
+            separator: "/",
+            segments: split_project_path_segments(&value[1..], "/"),
+        });
+    }
+    None
+}
+
+fn preferred_project_path_separator(value: &str) -> &'static str {
+    match project_absolute_path_kind(value) {
+        Some("windows") => "\\",
+        Some("unix") => "/",
+        _ if value.contains('\\') => "\\",
+        _ => "/",
+    }
+}
+
+fn last_project_path_separator_index(value: &str) -> Option<usize> {
+    if project_absolute_path_kind(value) == Some("unix") {
+        value.rfind('/')
+    } else {
+        match (value.rfind('/'), value.rfind('\\')) {
+            (Some(forward), Some(backward)) => Some(forward.max(backward)),
+            (Some(index), None) | (None, Some(index)) => Some(index),
+            (None, None) => None,
+        }
+    }
+}
+
+pub fn is_filesystem_browse_query(value: &str, platform: &str) -> bool {
+    value.starts_with("./")
+        || value.starts_with("../")
+        || value.starts_with(".\\")
+        || value.starts_with("..\\")
+        || value.starts_with('/')
+        || value.starts_with("~/")
+        || (is_windows_platform(platform) && shared::is_windows_absolute_path(value))
+}
+
+pub fn is_unsupported_windows_project_path(value: &str, platform: &str) -> bool {
+    shared::is_windows_absolute_path(value) && !is_windows_platform(platform)
+}
+
+pub fn resolve_project_path_for_dispatch(value: &str, cwd: Option<&str>) -> String {
+    let trimmed_value = value.trim();
+    if !shared::is_explicit_relative_path(trimmed_value) {
+        return normalize_project_path_for_dispatch(trimmed_value);
+    }
+    let Some(cwd) = cwd else {
+        return normalize_project_path_for_dispatch(trimmed_value);
+    };
+    let Some(absolute_base) =
+        split_absolute_project_path(&normalize_project_path_for_dispatch(cwd))
+    else {
+        return normalize_project_path_for_dispatch(trimmed_value);
+    };
+
+    let mut next_segments = absolute_base.segments;
+    for segment in trimmed_value.split(['/', '\\']) {
+        if segment.is_empty() || segment == "." {
+            continue;
+        }
+        if segment == ".." {
+            next_segments.pop();
+        } else {
+            next_segments.push(segment.to_string());
+        }
+    }
+
+    let joined_path = next_segments.join(absolute_base.separator);
+    if joined_path.is_empty() {
+        normalize_project_path_for_dispatch(&absolute_base.root)
+    } else {
+        normalize_project_path_for_dispatch(&format!("{}{}", absolute_base.root, joined_path))
+    }
+}
+
+pub fn find_project_by_path<'a>(
+    projects: &'a [ProjectPathCandidate],
+    candidate_path: &str,
+) -> Option<&'a ProjectPathCandidate> {
+    let normalized_candidate = normalize_project_path_for_comparison(candidate_path);
+    if normalized_candidate.is_empty() {
+        return None;
+    }
+    projects
+        .iter()
+        .find(|project| normalize_project_path_for_comparison(&project.cwd) == normalized_candidate)
+}
+
+pub fn infer_project_title_from_path(value: &str) -> String {
+    let normalized = normalize_project_path_for_dispatch(value);
+    if let Some(absolute_path) = split_absolute_project_path(&normalized) {
+        return absolute_path
+            .segments
+            .iter()
+            .rev()
+            .find(|segment| !segment.is_empty())
+            .cloned()
+            .unwrap_or(normalized);
+    }
+
+    normalized
+        .split(['/', '\\'])
+        .rev()
+        .find(|segment| !segment.is_empty())
+        .map(str::to_string)
+        .unwrap_or(normalized)
+}
+
+pub fn get_browse_directory_path(current_path: &str) -> String {
+    if has_trailing_project_path_separator(current_path) {
+        return current_path.to_string();
+    }
+    let Some(last_separator_index) = last_project_path_separator_index(current_path) else {
+        return current_path.to_string();
+    };
+    current_path[..=last_separator_index].to_string()
+}
+
+pub fn append_browse_path_segment(current_path: &str, segment: &str) -> String {
+    let separator = preferred_project_path_separator(current_path);
+    format!(
+        "{}{}{}",
+        get_browse_directory_path(current_path),
+        segment,
+        separator
+    )
+}
+
+pub fn get_browse_leaf_path_segment(current_path: &str) -> String {
+    let Some(last_separator_index) = last_project_path_separator_index(current_path) else {
+        return current_path.to_string();
+    };
+    current_path[last_separator_index + 1..].to_string()
+}
+
+pub fn ensure_browse_directory_path(current_path: &str) -> String {
+    let trimmed = current_path.trim();
+    if trimmed.is_empty() || has_trailing_project_path_separator(trimmed) {
+        return trimmed.to_string();
+    }
+    format!("{}{}", trimmed, preferred_project_path_separator(trimmed))
+}
+
+pub fn get_browse_parent_path(current_path: &str) -> Option<String> {
+    let trimmed = trim_trailing_project_path_separators(current_path);
+    if let Some(absolute_path) = split_absolute_project_path(&trimmed) {
+        if absolute_path.segments.is_empty() {
+            return None;
+        }
+        if absolute_path.segments.len() == 1 {
+            return Some(absolute_path.root);
+        }
+        let parent_segments = absolute_path.segments[..absolute_path.segments.len() - 1]
+            .join(absolute_path.separator);
+        return Some(format!(
+            "{}{}{}",
+            absolute_path.root, parent_segments, absolute_path.separator
+        ));
+    }
+
+    let separator = preferred_project_path_separator(current_path);
+    let last_separator_index = last_project_path_separator_index(&trimmed)?;
+    if last_separator_index == 2 && is_windows_drive_path(&trimmed) {
+        return Some(format!("{}{}", &trimmed[..2], separator));
+    }
+    Some(trimmed[..=last_separator_index].to_string())
+}
+
+pub fn can_navigate_up(current_path: &str) -> bool {
+    has_trailing_project_path_separator(current_path)
+        && get_browse_parent_path(current_path).is_some()
 }
 
 pub fn derive_physical_project_key_from_path(environment_id: &str, cwd: &str) -> String {
@@ -20900,6 +21156,148 @@ mod tests {
             derive_project_group_label(&project, &[project.clone(), conflicting]),
             "web"
         );
+    }
+
+    #[test]
+    fn project_paths_helpers_match_upstream_contract() {
+        assert_eq!(
+            normalize_project_path_for_dispatch(" /repo/app/ "),
+            "/repo/app"
+        );
+        assert_eq!(
+            normalize_project_path_for_comparison("/repo/app/"),
+            "/repo/app"
+        );
+        assert_eq!(
+            normalize_project_path_for_comparison("C:/Work/Repo/"),
+            "c:\\work\\repo"
+        );
+        assert_eq!(
+            normalize_project_path_for_comparison("C:\\Work\\Repo\\"),
+            "c:\\work\\repo"
+        );
+
+        let projects = vec![
+            ProjectPathCandidate {
+                id: "project-1".to_string(),
+                cwd: "/repo/app".to_string(),
+            },
+            ProjectPathCandidate {
+                id: "project-2".to_string(),
+                cwd: "C:\\Work\\Repo".to_string(),
+            },
+        ];
+        assert_eq!(
+            find_project_by_path(&projects, "C:/Work/Repo/").map(|project| project.id.as_str()),
+            Some("project-2")
+        );
+
+        assert_eq!(infer_project_title_from_path("/repo/app/"), "app");
+        assert_eq!(infer_project_title_from_path("C:\\Work\\Repo\\"), "Repo");
+        assert_eq!(
+            infer_project_title_from_path("/home/user\\project/"),
+            "user\\project"
+        );
+
+        assert!(!is_filesystem_browse_query(".", ""));
+        assert!(!is_filesystem_browse_query("..", ""));
+        assert!(is_filesystem_browse_query("./", ""));
+        assert!(is_filesystem_browse_query("../", ""));
+        assert!(is_filesystem_browse_query("~/projects", ""));
+        assert!(is_filesystem_browse_query("..\\docs", ""));
+        assert!(!is_filesystem_browse_query("notes", ""));
+        assert!(!is_filesystem_browse_query("C:\\Work\\Repo\\", "MacIntel"));
+        assert!(is_filesystem_browse_query("C:\\Work\\Repo\\", "Win32"));
+        assert!(is_unsupported_windows_project_path(
+            "C:\\Work\\Repo\\",
+            "MacIntel"
+        ));
+        assert!(!is_unsupported_windows_project_path(
+            "C:\\Work\\Repo\\",
+            "Win32"
+        ));
+
+        assert!(is_explicit_relative_project_path("."));
+        assert!(is_explicit_relative_project_path(".."));
+        assert!(is_explicit_relative_project_path("./docs"));
+        assert!(is_explicit_relative_project_path("..\\docs"));
+        assert!(!is_explicit_relative_project_path("/repo/docs"));
+
+        assert_eq!(
+            resolve_project_path_for_dispatch(".", Some("/repo/app")),
+            "/repo/app"
+        );
+        assert_eq!(
+            resolve_project_path_for_dispatch("..", Some("/repo/app")),
+            "/repo"
+        );
+        assert_eq!(
+            resolve_project_path_for_dispatch("./docs", Some("/repo/app")),
+            "/repo/app/docs"
+        );
+        assert_eq!(
+            resolve_project_path_for_dispatch("../docs", Some("/repo/app")),
+            "/repo/docs"
+        );
+        assert_eq!(
+            resolve_project_path_for_dispatch("./Repo", Some("C:\\Work")),
+            "C:\\Work\\Repo"
+        );
+        assert_eq!(
+            resolve_project_path_for_dispatch("./docs", Some("/home/user\\project")),
+            "/home/user\\project/docs"
+        );
+
+        assert_eq!(append_browse_path_segment("/repo/", "src"), "/repo/src/");
+        assert_eq!(
+            append_browse_path_segment("C:\\Work\\", "Repo"),
+            "C:\\Work\\Repo\\"
+        );
+        assert_eq!(
+            append_browse_path_segment("/home/user\\project/", "docs"),
+            "/home/user\\project/docs/"
+        );
+        assert_eq!(
+            get_browse_parent_path("/repo/src/").as_deref(),
+            Some("/repo/")
+        );
+        assert_eq!(
+            get_browse_parent_path("C:\\Work\\Repo\\").as_deref(),
+            Some("C:\\Work\\")
+        );
+        assert_eq!(get_browse_parent_path("\\\\server\\share\\"), None);
+        assert_eq!(
+            get_browse_parent_path("\\\\server\\share\\repo\\").as_deref(),
+            Some("\\\\server\\share\\")
+        );
+        assert_eq!(get_browse_parent_path("C:\\"), None);
+        assert_eq!(
+            get_browse_parent_path("/home/user\\project/docs/").as_deref(),
+            Some("/home/user\\project/")
+        );
+
+        assert!(has_trailing_project_path_separator("/repo/src/"));
+        assert!(!has_trailing_project_path_separator("/repo/src"));
+        assert_eq!(get_browse_directory_path("/repo/src"), "/repo/");
+        assert_eq!(get_browse_directory_path("/repo/src/"), "/repo/src/");
+        assert_eq!(get_browse_leaf_path_segment("/repo/src"), "src");
+        assert_eq!(get_browse_leaf_path_segment("C:\\Work\\Repo\\Docs"), "Docs");
+        assert_eq!(
+            get_browse_directory_path("/home/user\\project/docs"),
+            "/home/user\\project/"
+        );
+        assert_eq!(
+            get_browse_leaf_path_segment("/home/user\\project/docs"),
+            "docs"
+        );
+        assert_eq!(ensure_browse_directory_path("  "), "");
+        assert_eq!(ensure_browse_directory_path("~/repo"), "~/repo/");
+
+        assert!(!can_navigate_up("~/repo"));
+        assert!(!can_navigate_up("~/a"));
+        assert!(can_navigate_up("~/repo/"));
+        assert!(!can_navigate_up("\\\\server\\share\\"));
+        assert!(can_navigate_up("\\\\server\\share\\repo\\"));
     }
 
     #[test]
