@@ -22123,6 +22123,101 @@ pub fn format_diagnostics_description(input: DiagnosticsDescriptionInput<'_>) ->
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProviderInstanceConfigPatch {
+    pub driver: String,
+    pub enabled: Option<bool>,
+    pub config: Option<serde_json::Value>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ProviderSettingsPatchInput {
+    pub providers: BTreeMap<String, serde_json::Value>,
+    pub provider_instances: BTreeMap<String, ProviderInstanceConfigPatch>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProviderInstanceUpdatePatchInput {
+    pub settings: ProviderSettingsPatchInput,
+    pub instance_id: String,
+    pub instance: ProviderInstanceConfigPatch,
+    pub driver: String,
+    pub is_default: bool,
+    pub text_generation_model_selection: Option<ModelSelection>,
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ProviderInstanceUpdatePatch {
+    pub providers: Option<BTreeMap<String, serde_json::Value>>,
+    pub provider_instances: BTreeMap<String, ProviderInstanceConfigPatch>,
+    pub text_generation_model_selection: Option<ModelSelection>,
+}
+
+pub fn default_legacy_provider_settings(driver: &str) -> Option<serde_json::Value> {
+    match driver {
+        "codex" => Some(serde_json::json!({
+            "enabled": true,
+            "binaryPath": "codex",
+            "homePath": "",
+            "shadowHomePath": "",
+            "customModels": [],
+        })),
+        "claudeAgent" => Some(serde_json::json!({
+            "enabled": true,
+            "binaryPath": "claude",
+            "homePath": "",
+            "customModels": [],
+            "launchArgs": "",
+        })),
+        "cursor" => Some(serde_json::json!({
+            "enabled": false,
+            "binaryPath": "agent",
+            "apiEndpoint": "",
+            "customModels": [],
+        })),
+        "opencode" => Some(serde_json::json!({
+            "enabled": true,
+            "binaryPath": "opencode",
+            "serverUrl": "",
+            "serverPassword": "",
+            "customModels": [],
+        })),
+        _ => None,
+    }
+}
+
+pub fn default_legacy_provider_settings_map() -> BTreeMap<String, serde_json::Value> {
+    ["codex", "claudeAgent", "cursor", "opencode"]
+        .into_iter()
+        .filter_map(|driver| {
+            default_legacy_provider_settings(driver).map(|settings| (driver.to_string(), settings))
+        })
+        .collect()
+}
+
+pub fn build_provider_instance_update_patch(
+    input: ProviderInstanceUpdatePatchInput,
+) -> ProviderInstanceUpdatePatch {
+    let mut provider_instances = input.settings.provider_instances;
+    provider_instances.insert(input.instance_id, input.instance);
+
+    let providers = if input.is_default {
+        default_legacy_provider_settings(&input.driver).map(|legacy_default| {
+            let mut providers = input.settings.providers;
+            providers.insert(input.driver, legacy_default);
+            providers
+        })
+    } else {
+        None
+    };
+
+    ProviderInstanceUpdatePatch {
+        providers,
+        provider_instances,
+        text_generation_model_selection: input.text_generation_model_selection,
+    }
+}
+
 pub fn format_diagnostics_count(value: u64) -> String {
     let digits = value.to_string();
     let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
@@ -32037,6 +32132,75 @@ mod tests {
             }),
             "Terminal logs only."
         );
+    }
+
+    #[test]
+    fn build_provider_instance_update_patch_matches_upstream_settings_panels_logic() {
+        let mut settings = ProviderSettingsPatchInput {
+            providers: default_legacy_provider_settings_map(),
+            provider_instances: BTreeMap::new(),
+        };
+        settings.providers.insert(
+            "codex".to_string(),
+            serde_json::json!({
+                "enabled": true,
+                "binaryPath": "/legacy/codex",
+                "homePath": "",
+                "shadowHomePath": "",
+                "customModels": [],
+            }),
+        );
+
+        let next_instance = ProviderInstanceConfigPatch {
+            driver: "codex".to_string(),
+            enabled: Some(true),
+            config: Some(serde_json::json!({
+                "binaryPath": "/opt/t3/codex",
+            })),
+        };
+
+        let patch = build_provider_instance_update_patch(ProviderInstanceUpdatePatchInput {
+            settings,
+            instance_id: "codex".to_string(),
+            instance: next_instance.clone(),
+            driver: "codex".to_string(),
+            is_default: true,
+            text_generation_model_selection: None,
+        });
+
+        assert_eq!(patch.provider_instances.get("codex"), Some(&next_instance));
+        assert_eq!(
+            patch
+                .providers
+                .as_ref()
+                .and_then(|providers| providers.get("codex")),
+            default_legacy_provider_settings("codex").as_ref()
+        );
+
+        let custom_instance = ProviderInstanceConfigPatch {
+            driver: "codex".to_string(),
+            enabled: Some(true),
+            config: Some(serde_json::json!({
+                "homePath": "/Users/example/.codex-personal",
+            })),
+        };
+        let custom_patch = build_provider_instance_update_patch(ProviderInstanceUpdatePatchInput {
+            settings: ProviderSettingsPatchInput {
+                providers: default_legacy_provider_settings_map(),
+                provider_instances: BTreeMap::new(),
+            },
+            instance_id: "codex_personal".to_string(),
+            instance: custom_instance.clone(),
+            driver: "codex".to_string(),
+            is_default: false,
+            text_generation_model_selection: None,
+        });
+
+        assert_eq!(
+            custom_patch.provider_instances.get("codex_personal"),
+            Some(&custom_instance)
+        );
+        assert_eq!(custom_patch.providers, None);
     }
 
     fn diagnostics_row(

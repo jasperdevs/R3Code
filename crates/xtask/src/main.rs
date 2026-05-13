@@ -2450,6 +2450,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace composer_primary_action_labels_match_upstream_contract`",
             "Wire the remaining primary action UI states, pointer-focus preservation, stop/refine/implement controls, and exact GPUI button/icon rendering.",
         )
+    } else if path == "apps/web/src/components/settings/SettingsPanels.logic.test.ts"
+        || path == "apps/web/src/components/settings/SettingsPanels.logic.ts"
+    {
+        (
+            "SettingsPanels diagnostics description collapse and provider-instance update patch defaults/custom-instance behavior in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace build_provider_instance_update_patch_matches_upstream_settings_panels_logic`; `cargo test --workspace formats_diagnostics_settings_description_like_upstream`",
+            "Wire settings patches into live GPUI provider settings mutations, server persistence, and exact settings panel routing/rendering.",
+        )
     } else if path.starts_with("apps/web/src/components/")
         || path.starts_with("apps/web/src/composer")
         || path.starts_with("apps/web/src/diff")
