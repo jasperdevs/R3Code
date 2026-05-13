@@ -6170,6 +6170,53 @@ pub struct SourceControlGitCommandPlan {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlEnsureRemotePlan {
+    pub cwd: String,
+    pub preferred_name: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlFetchRemoteBranchPlan {
+    pub cwd: String,
+    pub remote_name: String,
+    pub remote_branch: String,
+    pub local_branch: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlFetchRemoteTrackingBranchPlan {
+    pub cwd: String,
+    pub remote_name: String,
+    pub remote_branch: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlSetBranchUpstreamPlan {
+    pub cwd: String,
+    pub branch: String,
+    pub remote_name: String,
+    pub remote_branch: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlSwitchRefPlan {
+    pub cwd: String,
+    pub ref_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BitbucketCheckoutPlan {
+    pub remote_name: String,
+    pub local_branch: String,
+    pub ensure_remote: Option<SourceControlEnsureRemotePlan>,
+    pub fetch_remote_branch: Option<SourceControlFetchRemoteBranchPlan>,
+    pub fetch_remote_tracking_branch: Option<SourceControlFetchRemoteTrackingBranchPlan>,
+    pub set_upstream: SourceControlSetBranchUpstreamPlan,
+    pub switch_ref: SourceControlSwitchRefPlan,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceControlPreparedDestination {
     pub destination_path: String,
     pub parent_path: String,
@@ -7522,6 +7569,188 @@ pub fn bitbucket_create_pull_request_request_plan(
             })
             .to_string(),
         ),
+    }
+}
+
+pub fn sanitize_branch_fragment(raw: &str) -> String {
+    let mut normalized = raw
+        .trim()
+        .to_ascii_lowercase()
+        .chars()
+        .filter(|character| !matches!(character, '\'' | '"' | '`'))
+        .collect::<String>();
+    normalized = normalized
+        .trim_matches(|character: char| {
+            matches!(character, '.' | '/' | '_' | '-') || character.is_whitespace()
+        })
+        .to_string();
+
+    let mut fragment = String::new();
+    let mut previous_dash = false;
+    let mut previous_slash = false;
+    for character in normalized.chars() {
+        let mapped = if character.is_ascii_lowercase()
+            || character.is_ascii_digit()
+            || matches!(character, '/' | '_' | '-')
+        {
+            character
+        } else {
+            '-'
+        };
+        if mapped == '/' {
+            if !previous_slash {
+                fragment.push(mapped);
+            }
+            previous_slash = true;
+            previous_dash = false;
+        } else if mapped == '-' {
+            if !previous_dash {
+                fragment.push(mapped);
+            }
+            previous_dash = true;
+            previous_slash = false;
+        } else {
+            fragment.push(mapped);
+            previous_dash = false;
+            previous_slash = false;
+        }
+    }
+    let mut fragment = fragment
+        .trim_matches(|character: char| matches!(character, '.' | '/' | '_' | '-'))
+        .chars()
+        .take(64)
+        .collect::<String>();
+    fragment = fragment
+        .trim_end_matches(|character: char| matches!(character, '.' | '/' | '_' | '-'))
+        .to_string();
+    if fragment.is_empty() {
+        "update".to_string()
+    } else {
+        fragment
+    }
+}
+
+pub fn bitbucket_checkout_branch_name(
+    pull_request_id: u32,
+    head_branch: &str,
+    is_cross_repository: bool,
+) -> String {
+    if !is_cross_repository {
+        return head_branch.to_string();
+    }
+    format!(
+        "t3code/pr-{}/{}",
+        pull_request_id,
+        sanitize_branch_fragment(head_branch)
+    )
+}
+
+pub fn bitbucket_should_prefer_ssh_remote(origin_remote_url: Option<&str>) -> bool {
+    let trimmed = origin_remote_url.unwrap_or("").trim();
+    trimmed.starts_with("git@") || trimmed.starts_with("ssh://")
+}
+
+pub fn bitbucket_select_clone_url(
+    clone_urls: &SourceControlRepositoryCloneUrls,
+    origin_remote_url: Option<&str>,
+) -> String {
+    if bitbucket_should_prefer_ssh_remote(origin_remote_url) {
+        clone_urls.ssh_url.clone()
+    } else {
+        clone_urls.url.clone()
+    }
+}
+
+fn repository_owner_name(repository_name: &str) -> String {
+    repository_name
+        .split('/')
+        .next()
+        .map(str::trim)
+        .filter(|owner| !owner.is_empty())
+        .unwrap_or("bitbucket")
+        .to_string()
+}
+
+pub fn bitbucket_checkout_plan(
+    cwd: &str,
+    context: Option<&SourceControlProviderContext>,
+    destination_repository: &BitbucketRepositoryLocator,
+    destination_repository_name: &str,
+    source_repository_name: &str,
+    pull_request_id: u32,
+    remote_branch: &str,
+    source_clone_urls: &SourceControlRepositoryCloneUrls,
+    origin_remote_url: Option<&str>,
+    primary_remote_name: Option<&str>,
+    local_branch_names: &[String],
+    force: bool,
+) -> BitbucketCheckoutPlan {
+    let is_cross_repository = source_repository_name != destination_repository_name;
+    let mut ensure_remote = None;
+    let remote_name = if context.is_some_and(|context| {
+        context.provider.kind == SourceControlProviderKind::Bitbucket
+            && !is_cross_repository
+            && parse_bitbucket_remote_url(&context.remote_url).is_some()
+    }) {
+        context.unwrap().remote_name.clone()
+    } else if !is_cross_repository && primary_remote_name.is_some() {
+        primary_remote_name.unwrap().to_string()
+    } else {
+        let preferred_name = if is_cross_repository {
+            repository_owner_name(source_repository_name)
+        } else {
+            destination_repository.workspace.clone()
+        };
+        let url = bitbucket_select_clone_url(source_clone_urls, origin_remote_url);
+        ensure_remote = Some(SourceControlEnsureRemotePlan {
+            cwd: cwd.to_string(),
+            preferred_name: preferred_name.clone(),
+            url,
+        });
+        preferred_name
+    };
+    let local_branch =
+        bitbucket_checkout_branch_name(pull_request_id, remote_branch, is_cross_repository);
+    let local_branch_exists = local_branch_names
+        .iter()
+        .any(|branch_name| branch_name == &local_branch);
+    let (fetch_remote_branch, fetch_remote_tracking_branch) = if force || !local_branch_exists {
+        (
+            Some(SourceControlFetchRemoteBranchPlan {
+                cwd: cwd.to_string(),
+                remote_name: remote_name.clone(),
+                remote_branch: remote_branch.to_string(),
+                local_branch: local_branch.clone(),
+            }),
+            None,
+        )
+    } else {
+        (
+            None,
+            Some(SourceControlFetchRemoteTrackingBranchPlan {
+                cwd: cwd.to_string(),
+                remote_name: remote_name.clone(),
+                remote_branch: remote_branch.to_string(),
+            }),
+        )
+    };
+
+    BitbucketCheckoutPlan {
+        remote_name: remote_name.clone(),
+        local_branch: local_branch.clone(),
+        ensure_remote,
+        fetch_remote_branch,
+        fetch_remote_tracking_branch,
+        set_upstream: SourceControlSetBranchUpstreamPlan {
+            cwd: cwd.to_string(),
+            branch: local_branch.clone(),
+            remote_name: remote_name.clone(),
+            remote_branch: remote_branch.to_string(),
+        },
+        switch_ref: SourceControlSwitchRefPlan {
+            cwd: cwd.to_string(),
+            ref_name: local_branch,
+        },
     }
 }
 
@@ -19884,6 +20113,160 @@ mod tests {
                 "destination": {
                     "branch": { "name": "main" },
                 },
+            })
+        );
+    }
+
+    #[test]
+    fn bitbucket_checkout_decisions_match_upstream_git_escape_hatch() {
+        assert_eq!(
+            sanitize_branch_fragment("  Feature/Source Control!!  "),
+            "feature/source-control"
+        );
+        assert_eq!(sanitize_branch_fragment("  !!!  "), "update");
+        assert_eq!(
+            bitbucket_checkout_branch_name(42, "feature/source-control", false),
+            "feature/source-control"
+        );
+        assert_eq!(
+            bitbucket_checkout_branch_name(42, "Main Branch!!", true),
+            "t3code/pr-42/main-branch"
+        );
+        assert!(bitbucket_should_prefer_ssh_remote(Some(
+            "git@bitbucket.org:pingdotgg/t3code.git"
+        )));
+        assert!(!bitbucket_should_prefer_ssh_remote(Some(
+            "https://bitbucket.org/pingdotgg/t3code.git"
+        )));
+
+        let destination = BitbucketRepositoryLocator {
+            workspace: "pingdotgg".to_string(),
+            repo_slug: "t3code".to_string(),
+        };
+        let source_clone_urls = SourceControlRepositoryCloneUrls {
+            name_with_owner: "octocat/t3code".to_string(),
+            url: "https://bitbucket.org/octocat/t3code.git".to_string(),
+            ssh_url: "git@bitbucket.org:octocat/t3code.git".to_string(),
+        };
+        let context = SourceControlProviderContext {
+            provider: SourceControlProviderInfo {
+                kind: SourceControlProviderKind::Bitbucket,
+                name: "Bitbucket".to_string(),
+                base_url: "https://bitbucket.org".to_string(),
+            },
+            remote_name: "origin".to_string(),
+            remote_url: "git@bitbucket.org:pingdotgg/t3code.git".to_string(),
+        };
+
+        assert_eq!(
+            bitbucket_checkout_plan(
+                "/repo",
+                Some(&context),
+                &destination,
+                "pingdotgg/t3code",
+                "pingdotgg/t3code",
+                42,
+                "feature/source-control",
+                &source_clone_urls,
+                Some("git@bitbucket.org:pingdotgg/t3code.git"),
+                Some("ignored-primary"),
+                &[],
+                true,
+            ),
+            BitbucketCheckoutPlan {
+                remote_name: "origin".to_string(),
+                local_branch: "feature/source-control".to_string(),
+                ensure_remote: None,
+                fetch_remote_branch: Some(SourceControlFetchRemoteBranchPlan {
+                    cwd: "/repo".to_string(),
+                    remote_name: "origin".to_string(),
+                    remote_branch: "feature/source-control".to_string(),
+                    local_branch: "feature/source-control".to_string(),
+                }),
+                fetch_remote_tracking_branch: None,
+                set_upstream: SourceControlSetBranchUpstreamPlan {
+                    cwd: "/repo".to_string(),
+                    branch: "feature/source-control".to_string(),
+                    remote_name: "origin".to_string(),
+                    remote_branch: "feature/source-control".to_string(),
+                },
+                switch_ref: SourceControlSwitchRefPlan {
+                    cwd: "/repo".to_string(),
+                    ref_name: "feature/source-control".to_string(),
+                },
+            }
+        );
+
+        let fork_plan = bitbucket_checkout_plan(
+            "/repo",
+            None,
+            &destination,
+            "pingdotgg/t3code",
+            "octocat/t3code",
+            42,
+            "main",
+            &source_clone_urls,
+            Some("git@bitbucket.org:pingdotgg/t3code.git"),
+            Some("origin"),
+            &[],
+            true,
+        );
+        assert_eq!(
+            fork_plan.ensure_remote,
+            Some(SourceControlEnsureRemotePlan {
+                cwd: "/repo".to_string(),
+                preferred_name: "octocat".to_string(),
+                url: "git@bitbucket.org:octocat/t3code.git".to_string(),
+            })
+        );
+        assert_eq!(
+            fork_plan.fetch_remote_branch,
+            Some(SourceControlFetchRemoteBranchPlan {
+                cwd: "/repo".to_string(),
+                remote_name: "octocat".to_string(),
+                remote_branch: "main".to_string(),
+                local_branch: "t3code/pr-42/main".to_string(),
+            })
+        );
+        assert_eq!(
+            fork_plan.set_upstream,
+            SourceControlSetBranchUpstreamPlan {
+                cwd: "/repo".to_string(),
+                branch: "t3code/pr-42/main".to_string(),
+                remote_name: "octocat".to_string(),
+                remote_branch: "main".to_string(),
+            }
+        );
+        assert_eq!(
+            fork_plan.switch_ref,
+            SourceControlSwitchRefPlan {
+                cwd: "/repo".to_string(),
+                ref_name: "t3code/pr-42/main".to_string(),
+            }
+        );
+
+        let existing_local_plan = bitbucket_checkout_plan(
+            "/repo",
+            None,
+            &destination,
+            "pingdotgg/t3code",
+            "pingdotgg/t3code",
+            7,
+            "feature/existing",
+            &source_clone_urls,
+            Some("https://bitbucket.org/pingdotgg/t3code.git"),
+            Some("origin"),
+            &["feature/existing".to_string()],
+            false,
+        );
+        assert_eq!(existing_local_plan.ensure_remote, None);
+        assert_eq!(existing_local_plan.fetch_remote_branch, None);
+        assert_eq!(
+            existing_local_plan.fetch_remote_tracking_branch,
+            Some(SourceControlFetchRemoteTrackingBranchPlan {
+                cwd: "/repo".to_string(),
+                remote_name: "origin".to_string(),
+                remote_branch: "feature/existing".to_string(),
             })
         );
     }
