@@ -2409,6 +2409,20 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core web_store`; `cargo test --workspace` projection store tests",
             "Wire the native GPUI store runtime to the same environment-scoped mutation API, selector memoization boundary, shell/detail stream ownership split, and event replay semantics.",
         )
+    } else if path == "apps/web/src/components/WebSocketConnectionSurface.logic.test.ts" {
+        (
+            "WebSocket connection surface auto-reconnect predicates for online/focus triggers, exhausted reconnect loops, stalled retry restart detection, and upstream websocket state-machine integration in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test --workspace websocket_connection_state_matches_upstream_reconnect_logic`",
+            "Wire the predicates into live GPUI window online/offline/focus handlers, toast actions, debounce timing, and primary connection reconnect side effects.",
+        )
+    } else if path == "apps/web/src/components/WebSocketConnectionSurface.tsx" {
+        (
+            "WebSocket connection surface UI-state derivation, reconnect/backoff status, auto-reconnect predicates, slow RPC ack tracking, toast copy/title timing helpers, and child passthrough surface in crates/r3_core/src/lib.rs and crates/r3_ui/src/shell.rs",
+            "partial",
+            "`cargo test --workspace websocket_connection_state_matches_upstream_reconnect_logic`; `cargo test --workspace request_latency_state_matches_upstream_ack_tracking`",
+            "Wire live GPUI toast lifecycle, browser online/focus listeners, debounce timers, manual reconnect action, and slow request expandable details.",
+        )
     } else if path.starts_with("apps/web/src/components/")
         || path.starts_with("apps/web/src/composer")
         || path.starts_with("apps/web/src/diff")

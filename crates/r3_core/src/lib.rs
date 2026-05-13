@@ -1194,6 +1194,12 @@ pub enum WsConnectionPhase {
     Disconnected,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WsAutoReconnectTrigger {
+    Focus,
+    Online,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WsConnectionStatus {
     pub attempt_count: usize,
@@ -3456,6 +3462,34 @@ pub fn get_ws_connection_ui_state(status: &WsConnectionStatus) -> WsConnectionUi
     }
 
     WsConnectionUiState::Reconnecting
+}
+
+pub fn should_auto_reconnect(status: &WsConnectionStatus, trigger: WsAutoReconnectTrigger) -> bool {
+    let ui_state = get_ws_connection_ui_state(status);
+    match trigger {
+        WsAutoReconnectTrigger::Online => {
+            ui_state == WsConnectionUiState::Offline
+                || ui_state == WsConnectionUiState::Reconnecting
+                || ui_state == WsConnectionUiState::Error
+                || status.reconnect_phase == WsReconnectPhase::Exhausted
+        }
+        WsAutoReconnectTrigger::Focus => {
+            status.online
+                && status.has_connected
+                && (ui_state == WsConnectionUiState::Reconnecting
+                    || status.reconnect_phase == WsReconnectPhase::Exhausted)
+        }
+    }
+}
+
+pub fn should_restart_stalled_reconnect(
+    status: &WsConnectionStatus,
+    expected_next_retry_at: &str,
+) -> bool {
+    status.reconnect_phase == WsReconnectPhase::Waiting
+        && status.next_retry_at.as_deref() == Some(expected_next_retry_at)
+        && status.online
+        && status.has_connected
 }
 
 pub fn record_ws_connection_attempt(
@@ -40821,6 +40855,10 @@ mod tests {
             get_ws_connection_ui_state(&status),
             WsConnectionUiState::Offline
         );
+        assert!(should_auto_reconnect(
+            &status,
+            WsAutoReconnectTrigger::Online
+        ));
 
         let connecting = record_ws_connection_attempt(
             &initial_ws_connection_status(true),
@@ -40911,6 +40949,40 @@ mod tests {
         assert_eq!(exhausted.next_retry_at, None);
         assert_eq!(exhausted.reconnect_attempt_count, WS_RECONNECT_MAX_ATTEMPTS);
         assert_eq!(exhausted.reconnect_phase, WsReconnectPhase::Exhausted);
+        exhausted.has_connected = true;
+        assert!(should_auto_reconnect(
+            &exhausted,
+            WsAutoReconnectTrigger::Focus
+        ));
+        assert!(should_auto_reconnect(
+            &exhausted,
+            WsAutoReconnectTrigger::Online
+        ));
+
+        let mut never_connected_waiting = exhausted.clone();
+        never_connected_waiting.has_connected = false;
+        never_connected_waiting.reconnect_phase = WsReconnectPhase::Waiting;
+        assert!(!should_auto_reconnect(
+            &never_connected_waiting,
+            WsAutoReconnectTrigger::Focus
+        ));
+
+        let mut stalled = exhausted.clone();
+        stalled.has_connected = true;
+        stalled.online = true;
+        stalled.phase = WsConnectionPhase::Disconnected;
+        stalled.reconnect_attempt_count = 3;
+        stalled.reconnect_phase = WsReconnectPhase::Waiting;
+        stalled.next_retry_at = Some("2026-04-03T20:00:01.000Z".to_string());
+        assert!(should_restart_stalled_reconnect(
+            &stalled,
+            "2026-04-03T20:00:01.000Z"
+        ));
+        stalled.reconnect_phase = WsReconnectPhase::Attempting;
+        assert!(!should_restart_stalled_reconnect(
+            &stalled,
+            "2026-04-03T20:00:01.000Z"
+        ));
 
         assert_eq!(get_ws_reconnect_delay_ms_for_retry(-1), None);
         assert_eq!(get_ws_reconnect_delay_ms_for_retry(0), Some(1_000));
