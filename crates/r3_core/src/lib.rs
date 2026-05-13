@@ -6059,6 +6059,14 @@ pub struct SourceControlProviderErrorContract {
     pub cause: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlCliErrorContract {
+    pub provider: SourceControlProviderKind,
+    pub operation: String,
+    pub detail: String,
+    pub cause: Option<String>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChangeRequestState {
     Open,
@@ -6344,6 +6352,17 @@ impl SourceControlProviderErrorContract {
     }
 }
 
+impl SourceControlCliErrorContract {
+    pub fn message(&self) -> String {
+        format!(
+            "{} CLI failed in {}: {}",
+            source_control_cli_provider_label(self.provider),
+            self.operation,
+            self.detail
+        )
+    }
+}
+
 impl SourceControlRepositoryErrorContract {
     pub fn message(&self) -> String {
         format!(
@@ -6486,6 +6505,16 @@ pub fn source_control_provider_kind_contract_value(
         SourceControlProviderKind::AzureDevops => "azure-devops",
         SourceControlProviderKind::Bitbucket => "bitbucket",
         SourceControlProviderKind::Unknown => "unknown",
+    }
+}
+
+pub fn source_control_cli_provider_label(kind: SourceControlProviderKind) -> &'static str {
+    match kind {
+        SourceControlProviderKind::Github => "GitHub",
+        SourceControlProviderKind::Gitlab => "GitLab",
+        SourceControlProviderKind::AzureDevops => "Azure DevOps",
+        SourceControlProviderKind::Bitbucket => "Bitbucket",
+        SourceControlProviderKind::Unknown => "Unknown",
     }
 }
 
@@ -8165,6 +8194,91 @@ pub fn source_control_provider_error_with_cause(
         detail: detail.to_string(),
         cause: trimmed_optional_string(cause),
     }
+}
+
+fn source_control_cli_error(
+    provider: SourceControlProviderKind,
+    operation: &str,
+    detail: &str,
+    cause: Option<&str>,
+) -> SourceControlCliErrorContract {
+    SourceControlCliErrorContract {
+        provider,
+        operation: operation.to_string(),
+        detail: detail.to_string(),
+        cause: trimmed_optional_string(cause),
+    }
+}
+
+pub fn normalize_github_cli_error(
+    operation: &str,
+    error_text: &str,
+) -> SourceControlCliErrorContract {
+    let lower = error_text.to_ascii_lowercase();
+    let detail = if lower.contains("command not found: gh") || lower.contains("enoent") {
+        "GitHub CLI (`gh`) is required but not available on PATH."
+    } else if lower.contains("authentication failed")
+        || lower.contains("not logged in")
+        || lower.contains("gh auth login")
+        || lower.contains("no oauth token")
+    {
+        "GitHub CLI is not authenticated. Run `gh auth login` and retry."
+    } else if lower.contains("could not resolve to a pullrequest")
+        || lower.contains("repository.pullrequest")
+        || lower.contains("no pull requests found for branch")
+        || lower.contains("pull request not found")
+    {
+        "Pull request not found. Check the PR number or URL and try again."
+    } else {
+        error_text
+    };
+    source_control_cli_error(
+        SourceControlProviderKind::Github,
+        operation,
+        detail,
+        Some(error_text),
+    )
+}
+
+pub fn normalize_gitlab_cli_error(
+    operation: &str,
+    error_text: Option<&str>,
+) -> SourceControlCliErrorContract {
+    let Some(error_text) = error_text else {
+        return source_control_cli_error(
+            SourceControlProviderKind::Gitlab,
+            operation,
+            "GitLab CLI command failed.",
+            None,
+        );
+    };
+
+    let lower = error_text.to_ascii_lowercase();
+    let detail = if error_text.contains("Command not found: glab")
+        || lower.contains("vcsprocessspawnerror")
+    {
+        "GitLab CLI (`glab`) is required but not available on PATH.".to_string()
+    } else if lower.contains("authentication failed")
+        || lower.contains("not logged in")
+        || lower.contains("glab auth login")
+        || lower.contains("token")
+    {
+        "GitLab CLI is not authenticated. Run `glab auth login` and retry.".to_string()
+    } else if lower.contains("merge request not found")
+        || lower.contains("not found")
+        || lower.contains("404")
+    {
+        "Merge request not found. Check the MR number or URL and try again.".to_string()
+    } else {
+        format!("GitLab CLI command failed: {error_text}")
+    };
+
+    source_control_cli_error(
+        SourceControlProviderKind::Gitlab,
+        operation,
+        &detail,
+        Some(error_text),
+    )
 }
 
 pub fn source_control_provider_detection_error(
@@ -21510,6 +21624,52 @@ mod tests {
             )
             .message(),
             "Source control provider gitlab failed in listChangeRequests: No gitlab source control provider is registered."
+        );
+        assert_eq!(
+            normalize_github_cli_error(
+                "execute",
+                "GraphQL: Could not resolve to a PullRequest with the number of 4888. (repository.pullRequest)"
+            ),
+            SourceControlCliErrorContract {
+                provider: SourceControlProviderKind::Github,
+                operation: "execute".to_string(),
+                detail: "Pull request not found. Check the PR number or URL and try again."
+                    .to_string(),
+                cause: Some(
+                    "GraphQL: Could not resolve to a PullRequest with the number of 4888. (repository.pullRequest)"
+                        .to_string()
+                ),
+            }
+        );
+        assert_eq!(
+            normalize_github_cli_error("execute", "ENOENT").message(),
+            "GitHub CLI failed in execute: GitHub CLI (`gh`) is required but not available on PATH."
+        );
+        assert_eq!(
+            normalize_github_cli_error("execute", "no oauth token").detail,
+            "GitHub CLI is not authenticated. Run `gh auth login` and retry."
+        );
+        assert_eq!(
+            normalize_gitlab_cli_error("execute", Some("GET 404 merge request not found")),
+            SourceControlCliErrorContract {
+                provider: SourceControlProviderKind::Gitlab,
+                operation: "execute".to_string(),
+                detail: "Merge request not found. Check the MR number or URL and try again."
+                    .to_string(),
+                cause: Some("GET 404 merge request not found".to_string()),
+            }
+        );
+        assert_eq!(
+            normalize_gitlab_cli_error("execute", Some("Command not found: glab")).message(),
+            "GitLab CLI failed in execute: GitLab CLI (`glab`) is required but not available on PATH."
+        );
+        assert_eq!(
+            normalize_gitlab_cli_error("execute", Some("token expired")).detail,
+            "GitLab CLI is not authenticated. Run `glab auth login` and retry."
+        );
+        assert_eq!(
+            normalize_gitlab_cli_error("stdout", None).detail,
+            "GitLab CLI command failed."
         );
         assert_eq!(
             source_control_provider_detection_error("detectProvider", "/repo").message(),
