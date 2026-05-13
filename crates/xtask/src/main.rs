@@ -1707,6 +1707,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core toast_layout`",
             "Wire helpers into the live GPUI toast renderer and port exact toast animations/styles.",
         )
+    } else if path == "apps/web/src/providerUpdateDismissal.ts"
+        || path == "apps/web/src/providerUpdateDismissal.test.ts"
+    {
+        (
+            "provider update dismissal storage key and notification-key transition helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core provider_update_dismissals`",
+            "Wire dismissal persistence into the live GPUI provider update notification surface.",
+        )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
             "logical project path normalization, physical/grouping/order keys, repository-scoped keys, settings override resolution, ref fallback, and group-label helpers in crates/r3_core/src/lib.rs",

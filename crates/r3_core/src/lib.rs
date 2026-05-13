@@ -2697,6 +2697,11 @@ pub struct ProviderUpdateSidebarPillOptions {
     pub dismissed_keys: BTreeSet<String>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProviderUpdateDismissals {
+    pub keys: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProviderUpdateSnapshotResult {
     Fulfilled { providers: Vec<ServerProvider> },
@@ -2704,6 +2709,7 @@ pub enum ProviderUpdateSnapshotResult {
 }
 
 pub const PROVIDER_UPDATE_SUCCESS_VISIBLE_MS: u64 = 3_000;
+pub const PROVIDER_UPDATE_DISMISSALS_STORAGE_KEY: &str = "r3code:provider-update-dismissals:v1";
 
 fn format_provider_update_version(value: &str) -> String {
     if value.starts_with('v') {
@@ -3288,6 +3294,40 @@ pub fn get_provider_update_sidebar_pill_view(
         .into_iter()
         .map(|(view, _)| view)
         .find(|view| !options.is_some_and(|options| options.dismissed_keys.contains(&view.key)))
+}
+
+pub fn is_provider_update_notification_dismissed(
+    dismissals: &ProviderUpdateDismissals,
+    dismissal_key: Option<&str>,
+) -> bool {
+    let Some(dismissal_key) = dismissal_key else {
+        return false;
+    };
+    if dismissal_key.is_empty() {
+        return false;
+    }
+    dismissals.keys.iter().any(|key| key == dismissal_key)
+}
+
+pub fn dismiss_provider_update_notification(
+    dismissals: &ProviderUpdateDismissals,
+    dismissal_key: Option<&str>,
+) -> ProviderUpdateDismissals {
+    let Some(trimmed_key) = dismissal_key.map(str::trim).filter(|key| !key.is_empty()) else {
+        return dismissals.clone();
+    };
+    if dismissals.keys.iter().any(|key| key == trimmed_key) {
+        return dismissals.clone();
+    }
+    let mut next = dismissals.clone();
+    next.keys.push(trimmed_key.to_string());
+    next
+}
+
+pub fn dismissed_provider_update_notification_key_set(
+    dismissals: &ProviderUpdateDismissals,
+) -> BTreeSet<String> {
+    dismissals.keys.iter().cloned().collect()
 }
 
 fn provider_update_status_value(status: ServerProviderUpdateStatus) -> &'static str {
@@ -20609,6 +20649,54 @@ mod tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn provider_update_dismissals_match_upstream_storage_rules() {
+        assert_eq!(
+            PROVIDER_UPDATE_DISMISSALS_STORAGE_KEY,
+            "r3code:provider-update-dismissals:v1"
+        );
+
+        let empty = ProviderUpdateDismissals::default();
+        assert!(!is_provider_update_notification_dismissed(
+            &empty,
+            Some("opencode:1.14.33")
+        ));
+        assert!(!is_provider_update_notification_dismissed(&empty, None));
+        assert!(!is_provider_update_notification_dismissed(&empty, Some("")));
+
+        let stored = dismiss_provider_update_notification(&empty, Some("  opencode:1.14.33  "));
+        assert_eq!(
+            stored,
+            ProviderUpdateDismissals {
+                keys: vec!["opencode:1.14.33".to_string()],
+            }
+        );
+        assert!(is_provider_update_notification_dismissed(
+            &stored,
+            Some("opencode:1.14.33")
+        ));
+        assert!(!is_provider_update_notification_dismissed(
+            &stored,
+            Some("opencode:1.14.34")
+        ));
+        assert!(!is_provider_update_notification_dismissed(
+            &stored,
+            Some("  opencode:1.14.33  ")
+        ));
+
+        assert_eq!(
+            dismiss_provider_update_notification(&stored, Some("opencode:1.14.33")),
+            stored
+        );
+        assert_eq!(
+            dismiss_provider_update_notification(&stored, Some("   ")),
+            stored
+        );
+
+        let dismissed_keys = dismissed_provider_update_notification_key_set(&stored);
+        assert!(dismissed_keys.contains("opencode:1.14.33"));
     }
 
     #[test]
