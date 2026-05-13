@@ -990,6 +990,30 @@ pub fn build_ws_rpc_failure(method: WsRpcMethod, id: Option<&str>, message: &str
     })
 }
 
+pub const APP_ATOM_REGISTRY_FACTORY: &str = "AtomRegistry.make";
+pub const APP_ATOM_REGISTRY_PROVIDER: &str = "RegistryContext.Provider";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppAtomRegistryContract {
+    pub exported_registry_binding: &'static str,
+    pub registry_factory: &'static str,
+    pub provider_component: &'static str,
+    pub provider_value_binding: &'static str,
+    pub reset_disposes_existing_registry: bool,
+    pub reset_recreates_registry: bool,
+}
+
+pub fn app_atom_registry_contract() -> AppAtomRegistryContract {
+    AppAtomRegistryContract {
+        exported_registry_binding: "appAtomRegistry",
+        registry_factory: APP_ATOM_REGISTRY_FACTORY,
+        provider_component: APP_ATOM_REGISTRY_PROVIDER,
+        provider_value_binding: "appAtomRegistry",
+        reset_disposes_existing_registry: true,
+        reset_recreates_registry: true,
+    }
+}
+
 pub const WS_RPC_PROTOCOL_SOCKET_PATH: &str = "/ws";
 pub const WS_RPC_PROTOCOL_SERIALIZATION_LAYER: &str = "RpcSerialization.layerJson";
 pub const WS_RPC_PROTOCOL_RETRY_TRANSIENT_ERRORS: bool = true;
@@ -1909,6 +1933,21 @@ pub fn normalize_attachment_relative_path(raw_relative_path: &str) -> Option<Str
 mod tests {
     use super::*;
     use std::collections::BTreeSet;
+
+    #[test]
+    fn ports_app_atom_registry_provider_and_reset_contract() {
+        assert_eq!(
+            app_atom_registry_contract(),
+            AppAtomRegistryContract {
+                exported_registry_binding: "appAtomRegistry",
+                registry_factory: "AtomRegistry.make",
+                provider_component: "RegistryContext.Provider",
+                provider_value_binding: "appAtomRegistry",
+                reset_disposes_existing_registry: true,
+                reset_recreates_registry: true,
+            }
+        );
+    }
 
     #[test]
     fn ports_ws_rpc_protocol_url_and_layer_contracts() {
