@@ -2713,6 +2713,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace provider_models_for_display_match_upstream_instance_card_contract`",
             "Wire the remaining provider instance card controls, environment variable drafts, accent swatches, auth copy, update actions, and exact GPUI card rendering.",
         )
+    } else if path == "apps/web/src/components/ui/empty.tsx" {
+        (
+            "Empty primitive data slots, root/header/media/title/description/content class contracts, media variant classes, and icon decoration classes in crates/r3_core/src/lib.rs",
+            "covered",
+            "`cargo test --workspace empty_primitive_contract_matches_upstream_component`; current screenshot gates where captured",
+            "Maintain this primitive contract if upstream changes Empty styling or slots.",
+        )
     } else if path == "apps/web/src/components/ui/sidebar.test.tsx"
         || path == "apps/web/src/components/ui/sidebar.tsx"
     {

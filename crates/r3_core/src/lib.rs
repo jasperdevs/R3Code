@@ -713,6 +713,39 @@ pub const NO_ACTIVE_THREAD_EMPTY_DESCRIPTION_CLASS_NAME: &str =
 pub const NO_ACTIVE_THREAD_EMPTY_DESCRIPTION: &str =
     "Select an existing thread or create a new one to get started.";
 
+pub const EMPTY_SLOT: &str = "empty";
+pub const EMPTY_HEADER_SLOT: &str = "empty-header";
+pub const EMPTY_MEDIA_SLOT: &str = "empty-media";
+pub const EMPTY_TITLE_SLOT: &str = "empty-title";
+pub const EMPTY_DESCRIPTION_SLOT: &str = "empty-description";
+pub const EMPTY_CONTENT_SLOT: &str = "empty-content";
+pub const EMPTY_ROOT_CLASS_NAME: &str = "flex min-w-0 flex-1 flex-col items-center justify-center gap-6 text-balance p-6 text-center md:p-12";
+pub const EMPTY_HEADER_CLASS_NAME: &str = "flex max-w-sm flex-col items-center text-center";
+pub const EMPTY_MEDIA_WRAPPER_CLASS_NAME: &str = "relative mb-6";
+pub const EMPTY_MEDIA_BASE_CLASS_NAME: &str =
+    "flex shrink-0 items-center justify-center [&_svg]:pointer-events-none [&_svg]:shrink-0";
+pub const EMPTY_MEDIA_DEFAULT_VARIANT_CLASS_NAME: &str = "bg-transparent";
+pub const EMPTY_MEDIA_ICON_VARIANT_CLASS_NAME: &str = "relative flex size-9 shrink-0 items-center justify-center rounded-md border bg-card not-dark:bg-clip-padding text-foreground shadow-sm/5 before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-md)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)] [&_svg:not([class*='size-'])]:size-4.5";
+pub const EMPTY_MEDIA_ICON_LEFT_DECORATION_CLASS_NAME: &str = "-translate-x-0.5 -rotate-10 pointer-events-none absolute bottom-px origin-bottom-left scale-84 shadow-none";
+pub const EMPTY_MEDIA_ICON_RIGHT_DECORATION_CLASS_NAME: &str = "pointer-events-none absolute bottom-px origin-bottom-right translate-x-0.5 rotate-10 scale-84 shadow-none";
+pub const EMPTY_TITLE_CLASS_NAME: &str = "font-heading font-semibold text-xl";
+pub const EMPTY_DESCRIPTION_CLASS_NAME: &str = "text-muted-foreground text-sm [&>a:hover]:text-primary [&>a]:underline [&>a]:underline-offset-4 [[data-slot=empty-title]+&]:mt-1";
+pub const EMPTY_CONTENT_CLASS_NAME: &str =
+    "flex w-full min-w-0 max-w-sm flex-col items-center gap-4 text-balance text-sm";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmptyMediaVariant {
+    Default,
+    Icon,
+}
+
+pub fn empty_media_variant_class_name(variant: EmptyMediaVariant) -> &'static str {
+    match variant {
+        EmptyMediaVariant::Default => EMPTY_MEDIA_DEFAULT_VARIANT_CLASS_NAME,
+        EmptyMediaVariant::Icon => EMPTY_MEDIA_ICON_VARIANT_CLASS_NAME,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NoActiveThreadStateContract {
     pub sidebar_inset_class_name: &'static str,
@@ -36548,6 +36581,54 @@ mod tests {
             "text-xs text-muted-foreground/50 wco:pr-[calc(100vw-env(titlebar-area-width)-env(titlebar-area-x)+1em)]"
         );
         assert_eq!(electron.sidebar_trigger_class_name, None);
+    }
+
+    #[test]
+    fn empty_primitive_contract_matches_upstream_component() {
+        assert_eq!(EMPTY_SLOT, "empty");
+        assert_eq!(EMPTY_HEADER_SLOT, "empty-header");
+        assert_eq!(EMPTY_MEDIA_SLOT, "empty-media");
+        assert_eq!(EMPTY_TITLE_SLOT, "empty-title");
+        assert_eq!(EMPTY_DESCRIPTION_SLOT, "empty-description");
+        assert_eq!(EMPTY_CONTENT_SLOT, "empty-content");
+        assert_eq!(
+            EMPTY_ROOT_CLASS_NAME,
+            "flex min-w-0 flex-1 flex-col items-center justify-center gap-6 text-balance p-6 text-center md:p-12"
+        );
+        assert_eq!(
+            EMPTY_HEADER_CLASS_NAME,
+            "flex max-w-sm flex-col items-center text-center"
+        );
+        assert_eq!(EMPTY_MEDIA_WRAPPER_CLASS_NAME, "relative mb-6");
+        assert_eq!(
+            EMPTY_MEDIA_BASE_CLASS_NAME,
+            "flex shrink-0 items-center justify-center [&_svg]:pointer-events-none [&_svg]:shrink-0"
+        );
+        assert_eq!(
+            empty_media_variant_class_name(EmptyMediaVariant::Default),
+            "bg-transparent"
+        );
+        assert_eq!(
+            empty_media_variant_class_name(EmptyMediaVariant::Icon),
+            "relative flex size-9 shrink-0 items-center justify-center rounded-md border bg-card not-dark:bg-clip-padding text-foreground shadow-sm/5 before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-md)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)] [&_svg:not([class*='size-'])]:size-4.5"
+        );
+        assert_eq!(
+            EMPTY_MEDIA_ICON_LEFT_DECORATION_CLASS_NAME,
+            "-translate-x-0.5 -rotate-10 pointer-events-none absolute bottom-px origin-bottom-left scale-84 shadow-none"
+        );
+        assert_eq!(
+            EMPTY_MEDIA_ICON_RIGHT_DECORATION_CLASS_NAME,
+            "pointer-events-none absolute bottom-px origin-bottom-right translate-x-0.5 rotate-10 scale-84 shadow-none"
+        );
+        assert_eq!(EMPTY_TITLE_CLASS_NAME, "font-heading font-semibold text-xl");
+        assert_eq!(
+            EMPTY_DESCRIPTION_CLASS_NAME,
+            "text-muted-foreground text-sm [&>a:hover]:text-primary [&>a]:underline [&>a]:underline-offset-4 [[data-slot=empty-title]+&]:mt-1"
+        );
+        assert_eq!(
+            EMPTY_CONTENT_CLASS_NAME,
+            "flex w-full min-w-0 max-w-sm flex-col items-center gap-4 text-balance text-sm"
+        );
     }
 
     #[test]
