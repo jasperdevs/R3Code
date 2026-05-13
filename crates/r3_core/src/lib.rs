@@ -748,6 +748,66 @@ pub const SEPARATOR_CLASS_NAME: &str = "shrink-0 bg-border data-[orientation=hor
 pub const LABEL_SLOT: &str = "label";
 pub const LABEL_CLASS_NAME: &str =
     "inline-flex items-center gap-2 text-base/4.5 sm:text-sm/4 font-medium text-foreground";
+pub const BADGE_SLOT: &str = "badge";
+pub const BADGE_BASE_CLASS_NAME: &str = "relative inline-flex shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-sm border border-transparent font-medium outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-64 [&_svg:not([class*='opacity-'])]:opacity-80 [&_svg:not([class*='size-'])]:size-3.5 sm:[&_svg:not([class*='size-'])]:size-3 [&_svg]:pointer-events-none [&_svg]:shrink-0 [button&,a&]:cursor-pointer [button&,a&]:pointer-coarse:after:absolute [button&,a&]:pointer-coarse:after:size-full [button&,a&]:pointer-coarse:after:min-h-11 [button&,a&]:pointer-coarse:after:min-w-11";
+pub const BADGE_DEFAULT_SIZE: BadgeSize = BadgeSize::Default;
+pub const BADGE_DEFAULT_VARIANT: BadgeVariant = BadgeVariant::Default;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BadgeSize {
+    Default,
+    Lg,
+    Sm,
+}
+
+pub fn badge_size_class_name(size: BadgeSize) -> &'static str {
+    match size {
+        BadgeSize::Default => {
+            "h-5.5 min-w-5.5 px-[calc(--spacing(1)-1px)] text-sm sm:h-4.5 sm:min-w-4.5 sm:text-xs"
+        }
+        BadgeSize::Lg => {
+            "h-6.5 min-w-6.5 px-[calc(--spacing(1.5)-1px)] text-base sm:h-5.5 sm:min-w-5.5 sm:text-sm"
+        }
+        BadgeSize::Sm => {
+            "h-5 min-w-5 rounded-[.25rem] px-[calc(--spacing(1)-1px)] text-xs sm:h-4 sm:min-w-4 sm:text-[.625rem]"
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BadgeVariant {
+    Default,
+    Destructive,
+    Error,
+    Info,
+    Outline,
+    Secondary,
+    Success,
+    Warning,
+}
+
+pub fn badge_variant_class_name(variant: BadgeVariant) -> &'static str {
+    match variant {
+        BadgeVariant::Default => {
+            "bg-primary text-primary-foreground [button&,a&]:hover:bg-primary/90"
+        }
+        BadgeVariant::Destructive => {
+            "bg-destructive text-white [button&,a&]:hover:bg-destructive/90"
+        }
+        BadgeVariant::Error => {
+            "bg-destructive/8 text-destructive-foreground dark:bg-destructive/16"
+        }
+        BadgeVariant::Info => "bg-info/8 text-info-foreground dark:bg-info/16",
+        BadgeVariant::Outline => {
+            "border-input bg-background text-foreground dark:bg-input/32 [button&,a&]:hover:bg-accent/50 dark:[button&,a&]:hover:bg-input/48"
+        }
+        BadgeVariant::Secondary => {
+            "bg-secondary text-secondary-foreground [button&,a&]:hover:bg-secondary/90"
+        }
+        BadgeVariant::Success => "bg-success/8 text-success-foreground dark:bg-success/16",
+        BadgeVariant::Warning => "bg-warning/8 text-warning-foreground dark:bg-warning/16",
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmptyMediaVariant {
@@ -36675,6 +36735,61 @@ mod tests {
         assert_eq!(
             LABEL_CLASS_NAME,
             "inline-flex items-center gap-2 text-base/4.5 sm:text-sm/4 font-medium text-foreground"
+        );
+    }
+
+    #[test]
+    fn badge_primitive_contract_matches_upstream_component() {
+        assert_eq!(BADGE_SLOT, "badge");
+        assert_eq!(
+            BADGE_BASE_CLASS_NAME,
+            "relative inline-flex shrink-0 items-center justify-center gap-1 whitespace-nowrap rounded-sm border border-transparent font-medium outline-none transition-shadow focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-64 [&_svg:not([class*='opacity-'])]:opacity-80 [&_svg:not([class*='size-'])]:size-3.5 sm:[&_svg:not([class*='size-'])]:size-3 [&_svg]:pointer-events-none [&_svg]:shrink-0 [button&,a&]:cursor-pointer [button&,a&]:pointer-coarse:after:absolute [button&,a&]:pointer-coarse:after:size-full [button&,a&]:pointer-coarse:after:min-h-11 [button&,a&]:pointer-coarse:after:min-w-11"
+        );
+        assert_eq!(BADGE_DEFAULT_SIZE, BadgeSize::Default);
+        assert_eq!(BADGE_DEFAULT_VARIANT, BadgeVariant::Default);
+        assert_eq!(
+            badge_size_class_name(BadgeSize::Default),
+            "h-5.5 min-w-5.5 px-[calc(--spacing(1)-1px)] text-sm sm:h-4.5 sm:min-w-4.5 sm:text-xs"
+        );
+        assert_eq!(
+            badge_size_class_name(BadgeSize::Lg),
+            "h-6.5 min-w-6.5 px-[calc(--spacing(1.5)-1px)] text-base sm:h-5.5 sm:min-w-5.5 sm:text-sm"
+        );
+        assert_eq!(
+            badge_size_class_name(BadgeSize::Sm),
+            "h-5 min-w-5 rounded-[.25rem] px-[calc(--spacing(1)-1px)] text-xs sm:h-4 sm:min-w-4 sm:text-[.625rem]"
+        );
+        assert_eq!(
+            badge_variant_class_name(BadgeVariant::Default),
+            "bg-primary text-primary-foreground [button&,a&]:hover:bg-primary/90"
+        );
+        assert_eq!(
+            badge_variant_class_name(BadgeVariant::Destructive),
+            "bg-destructive text-white [button&,a&]:hover:bg-destructive/90"
+        );
+        assert_eq!(
+            badge_variant_class_name(BadgeVariant::Error),
+            "bg-destructive/8 text-destructive-foreground dark:bg-destructive/16"
+        );
+        assert_eq!(
+            badge_variant_class_name(BadgeVariant::Info),
+            "bg-info/8 text-info-foreground dark:bg-info/16"
+        );
+        assert_eq!(
+            badge_variant_class_name(BadgeVariant::Outline),
+            "border-input bg-background text-foreground dark:bg-input/32 [button&,a&]:hover:bg-accent/50 dark:[button&,a&]:hover:bg-input/48"
+        );
+        assert_eq!(
+            badge_variant_class_name(BadgeVariant::Secondary),
+            "bg-secondary text-secondary-foreground [button&,a&]:hover:bg-secondary/90"
+        );
+        assert_eq!(
+            badge_variant_class_name(BadgeVariant::Success),
+            "bg-success/8 text-success-foreground dark:bg-success/16"
+        );
+        assert_eq!(
+            badge_variant_class_name(BadgeVariant::Warning),
+            "bg-warning/8 text-warning-foreground dark:bg-warning/16"
         );
     }
 

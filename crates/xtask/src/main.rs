@@ -2730,6 +2730,13 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test --workspace empty_primitive_contract_matches_upstream_component`; current screenshot gates where captured",
             "Maintain this primitive contract if upstream changes Empty styling or slots.",
         )
+    } else if path == "apps/web/src/components/ui/badge.tsx" {
+        (
+            "Badge primitive data slot, base class, default variant settings, size variants, and visual variant class matrix in crates/r3_core/src/lib.rs",
+            "covered",
+            "`cargo test --workspace badge_primitive_contract_matches_upstream_component`; current screenshot gates where captured",
+            "Maintain this primitive contract if upstream changes Badge styling, sizes, variants, or render defaults.",
+        )
     } else if path == "apps/web/src/components/ui/kbd.tsx"
         || path == "apps/web/src/components/ui/label.tsx"
         || path == "apps/web/src/components/ui/separator.tsx"
