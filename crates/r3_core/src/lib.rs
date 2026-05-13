@@ -6101,6 +6101,19 @@ pub enum SourceControlRepositoryVisibility {
     Public,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceControlCloneProtocol {
+    Auto,
+    Ssh,
+    Https,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SourceControlPublishStatus {
+    Pushed,
+    RemoteAdded,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceControlRepositoryInfo {
     pub provider: SourceControlProviderKind,
@@ -6140,12 +6153,64 @@ pub struct BitbucketApiRequestPlan {
     pub json_body: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlRepositoryErrorContract {
+    pub provider: SourceControlProviderKind,
+    pub operation: String,
+    pub detail: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlGitCommandPlan {
+    pub operation: &'static str,
+    pub cwd: String,
+    pub args: Vec<String>,
+    pub timeout_ms: Option<u64>,
+    pub max_output_bytes: Option<usize>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlPreparedDestination {
+    pub destination_path: String,
+    pub parent_path: String,
+    pub directory_name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlCloneRepositoryPlan {
+    pub cwd: String,
+    pub remote_url: String,
+    pub repository: Option<SourceControlRepositoryInfo>,
+    pub git: SourceControlGitCommandPlan,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SourceControlPublishRepositoryResult {
+    pub repository: SourceControlRepositoryInfo,
+    pub remote_name: String,
+    pub remote_url: String,
+    pub branch: String,
+    pub upstream_branch: Option<String>,
+    pub status: SourceControlPublishStatus,
+}
+
 impl SourceControlProviderErrorContract {
     pub fn message(&self) -> String {
         format!(
             "Source control provider {} failed in {}: {}",
             source_control_provider_kind_contract_value(self.provider),
             self.operation,
+            self.detail
+        )
+    }
+}
+
+impl SourceControlRepositoryErrorContract {
+    pub fn message(&self) -> String {
+        format!(
+            "Source control repository operation {} failed for {}: {}",
+            self.operation,
+            source_control_provider_kind_contract_value(self.provider),
             self.detail
         )
     }
@@ -6286,6 +6351,213 @@ pub fn source_control_repository_visibility_contract_value(
     match visibility {
         SourceControlRepositoryVisibility::Private => "private",
         SourceControlRepositoryVisibility::Public => "public",
+    }
+}
+
+pub fn source_control_clone_protocol_contract_value(
+    protocol: SourceControlCloneProtocol,
+) -> &'static str {
+    match protocol {
+        SourceControlCloneProtocol::Auto => "auto",
+        SourceControlCloneProtocol::Ssh => "ssh",
+        SourceControlCloneProtocol::Https => "https",
+    }
+}
+
+pub fn source_control_publish_status_contract_value(
+    status: SourceControlPublishStatus,
+) -> &'static str {
+    match status {
+        SourceControlPublishStatus::Pushed => "pushed",
+        SourceControlPublishStatus::RemoteAdded => "remote_added",
+    }
+}
+
+pub fn source_control_repository_error(
+    provider: SourceControlProviderKind,
+    operation: &str,
+    detail: &str,
+) -> SourceControlRepositoryErrorContract {
+    SourceControlRepositoryErrorContract {
+        provider,
+        operation: operation.to_string(),
+        detail: detail.to_string(),
+    }
+}
+
+pub fn source_control_ensure_concrete_provider(
+    provider: SourceControlProviderKind,
+    operation: &str,
+) -> Result<SourceControlProviderKind, SourceControlRepositoryErrorContract> {
+    if provider != SourceControlProviderKind::Unknown {
+        return Ok(provider);
+    }
+    Err(source_control_repository_error(
+        provider,
+        operation,
+        "Choose a source control provider before continuing.",
+    ))
+}
+
+pub fn source_control_repository_info(
+    provider: SourceControlProviderKind,
+    urls: &SourceControlRepositoryCloneUrls,
+) -> SourceControlRepositoryInfo {
+    SourceControlRepositoryInfo {
+        provider,
+        name_with_owner: urls.name_with_owner.clone(),
+        url: urls.url.clone(),
+        ssh_url: urls.ssh_url.clone(),
+    }
+}
+
+pub fn source_control_select_remote_url(
+    urls: &SourceControlRepositoryCloneUrls,
+    protocol: Option<SourceControlCloneProtocol>,
+) -> String {
+    match protocol.unwrap_or(SourceControlCloneProtocol::Auto) {
+        SourceControlCloneProtocol::Https => urls.url.clone(),
+        SourceControlCloneProtocol::Ssh | SourceControlCloneProtocol::Auto => urls.ssh_url.clone(),
+    }
+}
+
+pub fn expand_source_control_home_path(input: &str, home: &str) -> String {
+    if input == "~" {
+        return home.to_string();
+    }
+    if let Some(rest) = input
+        .strip_prefix("~/")
+        .or_else(|| input.strip_prefix("~\\"))
+    {
+        let separator = if home.contains('\\') { "\\" } else { "/" };
+        return format!(
+            "{}{}{}",
+            home.trim_end_matches(['/', '\\']),
+            separator,
+            rest
+        );
+    }
+    input.to_string()
+}
+
+pub fn prepare_source_control_destination(
+    destination_path: &str,
+    home: &str,
+) -> Result<SourceControlPreparedDestination, SourceControlRepositoryErrorContract> {
+    let trimmed = destination_path.trim();
+    if trimmed.is_empty() {
+        return Err(source_control_repository_error(
+            SourceControlProviderKind::Unknown,
+            "cloneRepository",
+            "Choose a destination path before cloning.",
+        ));
+    }
+    let expanded = expand_source_control_home_path(trimmed, home);
+    let normalized = std::path::PathBuf::from(&expanded);
+    let directory_name = normalized
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("")
+        .to_string();
+    let parent_path = normalized
+        .parent()
+        .and_then(|parent| parent.to_str())
+        .unwrap_or("")
+        .to_string();
+    Ok(SourceControlPreparedDestination {
+        destination_path: expanded,
+        parent_path,
+        directory_name,
+    })
+}
+
+pub fn source_control_clone_repository_plan(
+    provider: SourceControlProviderKind,
+    prepared_destination: &SourceControlPreparedDestination,
+    remote_url: Option<&str>,
+    repository: Option<SourceControlRepositoryInfo>,
+    protocol: Option<SourceControlCloneProtocol>,
+) -> Result<SourceControlCloneRepositoryPlan, SourceControlRepositoryErrorContract> {
+    let selected_remote_url = repository
+        .as_ref()
+        .map(|repository| {
+            source_control_select_remote_url(
+                &SourceControlRepositoryCloneUrls {
+                    name_with_owner: repository.name_with_owner.clone(),
+                    url: repository.url.clone(),
+                    ssh_url: repository.ssh_url.clone(),
+                },
+                protocol,
+            )
+        })
+        .or_else(|| trimmed_optional_string(remote_url));
+    let Some(selected_remote_url) = selected_remote_url else {
+        return Err(source_control_repository_error(
+            provider,
+            "cloneRepository",
+            "Enter a repository path or clone URL before cloning.",
+        ));
+    };
+    Ok(SourceControlCloneRepositoryPlan {
+        cwd: prepared_destination.destination_path.clone(),
+        remote_url: selected_remote_url.clone(),
+        repository,
+        git: SourceControlGitCommandPlan {
+            operation: "SourceControlRepositoryService.cloneRepository",
+            cwd: prepared_destination.parent_path.clone(),
+            args: vec![
+                "clone".to_string(),
+                selected_remote_url,
+                prepared_destination.directory_name.clone(),
+            ],
+            timeout_ms: Some(120_000),
+            max_output_bytes: Some(256 * 1024),
+        },
+    })
+}
+
+pub fn source_control_publish_head_check_plan(cwd: &str) -> SourceControlGitCommandPlan {
+    SourceControlGitCommandPlan {
+        operation: "SourceControlRepositoryService.publishRepository.headCheck",
+        cwd: cwd.to_string(),
+        args: strings(&["rev-parse", "--verify", "HEAD"]),
+        timeout_ms: None,
+        max_output_bytes: None,
+    }
+}
+
+pub fn source_control_publish_remote_added_result(
+    provider: SourceControlProviderKind,
+    urls: &SourceControlRepositoryCloneUrls,
+    remote_name: &str,
+    remote_url: &str,
+    branch: Option<&str>,
+) -> SourceControlPublishRepositoryResult {
+    SourceControlPublishRepositoryResult {
+        repository: source_control_repository_info(provider, urls),
+        remote_name: remote_name.to_string(),
+        remote_url: remote_url.to_string(),
+        branch: branch.unwrap_or("main").to_string(),
+        upstream_branch: None,
+        status: SourceControlPublishStatus::RemoteAdded,
+    }
+}
+
+pub fn source_control_publish_pushed_result(
+    provider: SourceControlProviderKind,
+    urls: &SourceControlRepositoryCloneUrls,
+    remote_name: &str,
+    remote_url: &str,
+    branch: &str,
+    upstream_branch: Option<&str>,
+) -> SourceControlPublishRepositoryResult {
+    SourceControlPublishRepositoryResult {
+        repository: source_control_repository_info(provider, urls),
+        remote_name: remote_name.to_string(),
+        remote_url: remote_url.to_string(),
+        branch: branch.to_string(),
+        upstream_branch: trimmed_optional_string(upstream_branch),
+        status: SourceControlPublishStatus::Pushed,
     }
 }
 
@@ -19517,6 +19789,180 @@ mod tests {
                     "branch": { "name": "main" },
                 },
             })
+        );
+    }
+
+    #[test]
+    fn source_control_repository_service_decisions_match_upstream_contracts() {
+        assert_eq!(
+            source_control_clone_protocol_contract_value(SourceControlCloneProtocol::Https),
+            "https"
+        );
+        assert_eq!(
+            source_control_publish_status_contract_value(SourceControlPublishStatus::RemoteAdded),
+            "remote_added"
+        );
+        assert_eq!(
+            source_control_ensure_concrete_provider(
+                SourceControlProviderKind::Unknown,
+                "publishRepository"
+            )
+            .unwrap_err()
+            .message(),
+            "Source control repository operation publishRepository failed for unknown: Choose a source control provider before continuing."
+        );
+
+        let urls = SourceControlRepositoryCloneUrls {
+            name_with_owner: "octocat/t3code".to_string(),
+            url: "https://github.com/octocat/t3code".to_string(),
+            ssh_url: "git@github.com:octocat/t3code.git".to_string(),
+        };
+        assert_eq!(
+            source_control_repository_info(SourceControlProviderKind::Github, &urls),
+            SourceControlRepositoryInfo {
+                provider: SourceControlProviderKind::Github,
+                name_with_owner: "octocat/t3code".to_string(),
+                url: "https://github.com/octocat/t3code".to_string(),
+                ssh_url: "git@github.com:octocat/t3code.git".to_string(),
+            }
+        );
+        assert_eq!(
+            source_control_select_remote_url(&urls, None),
+            "git@github.com:octocat/t3code.git"
+        );
+        assert_eq!(
+            source_control_select_remote_url(&urls, Some(SourceControlCloneProtocol::Https)),
+            "https://github.com/octocat/t3code"
+        );
+
+        assert_eq!(
+            expand_source_control_home_path("~/work/t3code", "/home/jasper"),
+            "/home/jasper/work/t3code"
+        );
+        assert_eq!(
+            prepare_source_control_destination("   ", "/home/jasper")
+                .unwrap_err()
+                .message(),
+            "Source control repository operation cloneRepository failed for unknown: Choose a destination path before cloning."
+        );
+        let prepared = prepare_source_control_destination("/tmp/t3code", "/home/jasper").unwrap();
+        assert_eq!(
+            prepared,
+            SourceControlPreparedDestination {
+                destination_path: "/tmp/t3code".to_string(),
+                parent_path: "/tmp".to_string(),
+                directory_name: "t3code".to_string(),
+            }
+        );
+
+        let repository = source_control_repository_info(SourceControlProviderKind::Github, &urls);
+        let clone_plan = source_control_clone_repository_plan(
+            SourceControlProviderKind::Github,
+            &prepared,
+            None,
+            Some(repository.clone()),
+            Some(SourceControlCloneProtocol::Https),
+        )
+        .unwrap();
+        assert_eq!(
+            clone_plan,
+            SourceControlCloneRepositoryPlan {
+                cwd: "/tmp/t3code".to_string(),
+                remote_url: "https://github.com/octocat/t3code".to_string(),
+                repository: Some(repository),
+                git: SourceControlGitCommandPlan {
+                    operation: "SourceControlRepositoryService.cloneRepository",
+                    cwd: "/tmp".to_string(),
+                    args: vec![
+                        "clone".to_string(),
+                        "https://github.com/octocat/t3code".to_string(),
+                        "t3code".to_string(),
+                    ],
+                    timeout_ms: Some(120_000),
+                    max_output_bytes: Some(256 * 1024),
+                },
+            }
+        );
+        assert_eq!(
+            source_control_clone_repository_plan(
+                SourceControlProviderKind::Unknown,
+                &prepared,
+                Some("  https://example.com/repo.git  "),
+                None,
+                None,
+            )
+            .unwrap()
+            .git
+            .args,
+            vec!["clone", "https://example.com/repo.git", "t3code"]
+        );
+        assert_eq!(
+            source_control_clone_repository_plan(
+                SourceControlProviderKind::Unknown,
+                &prepared,
+                None,
+                None,
+                None,
+            )
+            .unwrap_err()
+            .message(),
+            "Source control repository operation cloneRepository failed for unknown: Enter a repository path or clone URL before cloning."
+        );
+
+        assert_eq!(
+            source_control_publish_head_check_plan("/workspace"),
+            SourceControlGitCommandPlan {
+                operation: "SourceControlRepositoryService.publishRepository.headCheck",
+                cwd: "/workspace".to_string(),
+                args: vec![
+                    "rev-parse".to_string(),
+                    "--verify".to_string(),
+                    "HEAD".to_string()
+                ],
+                timeout_ms: None,
+                max_output_bytes: None,
+            }
+        );
+        assert_eq!(
+            source_control_publish_remote_added_result(
+                SourceControlProviderKind::Github,
+                &urls,
+                "origin",
+                "git@github.com:octocat/t3code.git",
+                None,
+            ),
+            SourceControlPublishRepositoryResult {
+                repository: source_control_repository_info(
+                    SourceControlProviderKind::Github,
+                    &urls
+                ),
+                remote_name: "origin".to_string(),
+                remote_url: "git@github.com:octocat/t3code.git".to_string(),
+                branch: "main".to_string(),
+                upstream_branch: None,
+                status: SourceControlPublishStatus::RemoteAdded,
+            }
+        );
+        assert_eq!(
+            source_control_publish_pushed_result(
+                SourceControlProviderKind::Github,
+                &urls,
+                "origin-1",
+                "git@github.com:octocat/t3code.git",
+                "feature/remote-v1",
+                Some("origin-1/feature/remote-v1"),
+            ),
+            SourceControlPublishRepositoryResult {
+                repository: source_control_repository_info(
+                    SourceControlProviderKind::Github,
+                    &urls
+                ),
+                remote_name: "origin-1".to_string(),
+                remote_url: "git@github.com:octocat/t3code.git".to_string(),
+                branch: "feature/remote-v1".to_string(),
+                upstream_branch: Some("origin-1/feature/remote-v1".to_string()),
+                status: SourceControlPublishStatus::Pushed,
+            }
         );
     }
 
