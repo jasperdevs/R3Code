@@ -1689,6 +1689,15 @@ fn classify_inventory_path(path: &str) -> InventoryRow {
             "`cargo test -p r3_core messages_timeline_logic`",
             "Port browser rendering, proposed-plan UI lifecycle, exact diff/revert controls, live scroll behavior, and remaining UI wiring.",
         )
+    } else if path == "apps/web/src/components/ProviderUpdateLaunchNotification.logic.ts"
+        || path == "apps/web/src/components/ProviderUpdateLaunchNotification.logic.test.ts"
+    {
+        (
+            "provider update candidate, one-click eligibility, toast, snapshot collection, and sidebar pill decision helpers in crates/r3_core/src/lib.rs",
+            "partial",
+            "`cargo test -p r3_core provider_update`",
+            "Wire the decision helpers into live GPUI provider update UI and port exact component interactions.",
+        )
     } else if path.starts_with("apps/web/src/logicalProject") {
         (
             "logical project path normalization, physical/grouping/order keys, repository-scoped keys, settings override resolution, ref fallback, and group-label helpers in crates/r3_core/src/lib.rs",

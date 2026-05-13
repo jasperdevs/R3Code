@@ -2369,6 +2369,25 @@ pub struct ServerProviderVersionAdvisory {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServerProviderUpdateStatus {
+    Idle,
+    Queued,
+    Running,
+    Succeeded,
+    Failed,
+    Unchanged,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerProviderUpdateState {
+    pub status: ServerProviderUpdateStatus,
+    pub started_at: Option<String>,
+    pub finished_at: Option<String>,
+    pub message: Option<String>,
+    pub output: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProviderVersionAdvisoryEmphasis {
     Normal,
     Strong,
@@ -2407,6 +2426,7 @@ pub struct ServerProvider {
     pub unavailable_reason: Option<String>,
     pub models: Vec<ServerProviderModel>,
     pub version_advisory: Option<ServerProviderVersionAdvisory>,
+    pub update_state: Option<ServerProviderUpdateState>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2507,6 +2527,728 @@ pub fn provider_display_name(driver: &str) -> String {
         "opencode" => "OpenCode".to_string(),
         _ => format_provider_driver_kind_label(driver),
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderUpdateToastKind {
+    Warning,
+    Loading,
+    Error,
+    Success,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderUpdateToastPhase {
+    Initial,
+    Running,
+    Failed,
+    Unchanged,
+    Succeeded,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderUpdateToastView {
+    pub phase: ProviderUpdateToastPhase,
+    pub kind: ProviderUpdateToastKind,
+    pub title: String,
+    pub description: String,
+    pub dismiss_after_visible_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderUpdateSidebarPillTone {
+    Loading,
+    Warning,
+    Error,
+    Success,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProviderUpdateSidebarPillView {
+    pub key: String,
+    pub tone: ProviderUpdateSidebarPillTone,
+    pub title: String,
+    pub description: String,
+    pub dismissible: bool,
+    pub dismiss_after_visible_ms: Option<u64>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProviderUpdateSidebarPillOptions {
+    pub visible_after_iso: Option<String>,
+    pub dismissed_keys: BTreeSet<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ProviderUpdateSnapshotResult {
+    Fulfilled { providers: Vec<ServerProvider> },
+    Rejected { message: Option<String> },
+}
+
+pub const PROVIDER_UPDATE_SUCCESS_VISIBLE_MS: u64 = 3_000;
+
+fn format_provider_update_version(value: &str) -> String {
+    if value.starts_with('v') {
+        value.to_string()
+    } else {
+        format!("v{value}")
+    }
+}
+
+fn choose_provider_update_representative(
+    current: Option<&ServerProvider>,
+    candidate: &ServerProvider,
+) -> ServerProvider {
+    let Some(current) = current else {
+        return candidate.clone();
+    };
+    let default_instance_id = candidate.driver.as_str();
+    if candidate.instance_id == default_instance_id {
+        return candidate.clone();
+    }
+    if current.instance_id == default_instance_id {
+        return current.clone();
+    }
+    if candidate.checked_at >= current.checked_at {
+        candidate.clone()
+    } else {
+        current.clone()
+    }
+}
+
+fn dedupe_providers_by_driver(providers: &[ServerProvider]) -> Vec<ServerProvider> {
+    let mut deduped = Vec::<ServerProvider>::new();
+    for provider in providers {
+        if let Some(index) = deduped
+            .iter()
+            .position(|item| item.driver == provider.driver)
+        {
+            let current = deduped.get(index);
+            deduped[index] = choose_provider_update_representative(current, provider);
+        } else {
+            deduped.push(provider.clone());
+        }
+    }
+    deduped
+}
+
+fn dedupe_providers_by_instance_id(providers: &[ServerProvider]) -> Vec<ServerProvider> {
+    let mut deduped = Vec::<ServerProvider>::new();
+    for provider in providers {
+        if let Some(index) = deduped
+            .iter()
+            .position(|item| item.instance_id == provider.instance_id)
+        {
+            if provider.checked_at >= deduped[index].checked_at {
+                deduped[index] = provider.clone();
+            }
+        } else {
+            deduped.push(provider.clone());
+        }
+    }
+    deduped
+}
+
+fn provider_updated_title(provider: &ServerProvider) -> String {
+    let provider_name = provider_display_name(&provider.driver);
+    provider
+        .version
+        .as_deref()
+        .map(|version| {
+            format!(
+                "{provider_name} updated: {}",
+                format_provider_update_version(version)
+            )
+        })
+        .unwrap_or_else(|| format!("{provider_name} updated"))
+}
+
+fn provider_updated_description(provider_count: usize) -> String {
+    if provider_count == 1 {
+        "New sessions will use the updated provider.".to_string()
+    } else {
+        "New sessions will use the updated providers.".to_string()
+    }
+}
+
+fn provider_failed_update_title(provider: &ServerProvider) -> String {
+    let provider_name = provider_display_name(&provider.driver);
+    provider
+        .version_advisory
+        .as_ref()
+        .and_then(|advisory| advisory.latest_version.as_deref())
+        .map(|latest_version| {
+            format!(
+                "{provider_name} {} update failed",
+                format_provider_update_version(latest_version)
+            )
+        })
+        .unwrap_or_else(|| format!("{provider_name} update failed"))
+}
+
+pub fn is_provider_update_candidate(provider: &ServerProvider) -> bool {
+    provider.enabled
+        && matches!(
+            provider
+                .version_advisory
+                .as_ref()
+                .map(|advisory| advisory.status),
+            Some(ServerProviderVersionAdvisoryStatus::BehindLatest)
+        )
+        && provider
+            .version_advisory
+            .as_ref()
+            .and_then(|advisory| advisory.latest_version.as_ref())
+            .is_some()
+}
+
+pub fn is_provider_update_active(provider: &ServerProvider) -> bool {
+    matches!(
+        provider.update_state.as_ref().map(|state| state.status),
+        Some(ServerProviderUpdateStatus::Queued | ServerProviderUpdateStatus::Running)
+    )
+}
+
+pub fn collect_provider_update_candidates(providers: &[ServerProvider]) -> Vec<ServerProvider> {
+    let candidates = providers
+        .iter()
+        .filter(|provider| is_provider_update_candidate(provider))
+        .cloned()
+        .collect::<Vec<_>>();
+    dedupe_providers_by_driver(&candidates)
+}
+
+pub fn has_one_click_update_provider_candidate(
+    candidate: &ServerProvider,
+    providers: &[ServerProvider],
+) -> bool {
+    let Some(candidate_advisory) = candidate.version_advisory.as_ref() else {
+        return false;
+    };
+    if !candidate_advisory.can_update || candidate_advisory.update_command.is_none() {
+        return false;
+    }
+
+    let driver_providers = providers
+        .iter()
+        .filter(|provider| provider.driver == candidate.driver)
+        .collect::<Vec<_>>();
+    if driver_providers.is_empty() {
+        return false;
+    }
+
+    let mut update_commands = BTreeSet::<String>::new();
+    for provider in driver_providers {
+        if !is_provider_update_candidate(provider) {
+            continue;
+        }
+        let Some(advisory) = provider.version_advisory.as_ref() else {
+            return false;
+        };
+        let Some(update_command) = advisory.update_command.as_ref() else {
+            return false;
+        };
+        if !advisory.can_update {
+            return false;
+        }
+        update_commands.insert(update_command.clone());
+    }
+
+    update_commands.len() == 1
+}
+
+pub fn can_one_click_update_provider_candidate(
+    candidate: &ServerProvider,
+    providers: &[ServerProvider],
+) -> bool {
+    !is_provider_update_active(candidate)
+        && has_one_click_update_provider_candidate(candidate, providers)
+}
+
+pub fn provider_update_notification_key(providers: &[ServerProvider]) -> Option<String> {
+    let mut parts = dedupe_providers_by_driver(providers)
+        .into_iter()
+        .filter_map(|provider| {
+            let latest_version = provider.version_advisory?.latest_version?;
+            Some(format!("{}:{latest_version}", provider.driver))
+        })
+        .collect::<Vec<_>>();
+    parts.sort();
+    (!parts.is_empty()).then(|| parts.join("|"))
+}
+
+pub fn provider_update_candidate_key(provider: &ServerProvider) -> Option<String> {
+    provider_update_notification_key(&[provider.clone()])
+}
+
+pub fn format_provider_list(providers: &[ServerProvider]) -> String {
+    let names = providers
+        .iter()
+        .map(|provider| provider_display_name(&provider.driver))
+        .collect::<Vec<_>>();
+    if names.len() <= 2 {
+        names.join(" and ")
+    } else {
+        format!(
+            "{}, and {}",
+            names[..names.len() - 1].join(", "),
+            names[names.len() - 1]
+        )
+    }
+}
+
+pub fn get_provider_update_initial_toast_view(
+    update_providers: &[ServerProvider],
+    one_click_providers: &[ServerProvider],
+) -> ProviderUpdateToastView {
+    ProviderUpdateToastView {
+        phase: ProviderUpdateToastPhase::Initial,
+        kind: ProviderUpdateToastKind::Warning,
+        title: get_provider_update_initial_toast_title(update_providers),
+        description: if one_click_providers.is_empty() {
+            format!(
+                "{} can be updated from provider settings.",
+                format_provider_list(update_providers)
+            )
+        } else {
+            "Install the update now or review provider settings.".to_string()
+        },
+        dismiss_after_visible_ms: None,
+    }
+}
+
+pub fn get_provider_update_running_toast_view(provider_count: usize) -> ProviderUpdateToastView {
+    ProviderUpdateToastView {
+        phase: ProviderUpdateToastPhase::Running,
+        kind: ProviderUpdateToastKind::Loading,
+        title: if provider_count == 1 {
+            "Updating provider".to_string()
+        } else {
+            "Updating providers".to_string()
+        },
+        description: "Running provider update command.".to_string(),
+        dismiss_after_visible_ms: None,
+    }
+}
+
+pub fn get_provider_update_rejected_toast_view(
+    provider_count: usize,
+    message: &str,
+) -> ProviderUpdateToastView {
+    ProviderUpdateToastView {
+        phase: ProviderUpdateToastPhase::Failed,
+        kind: ProviderUpdateToastKind::Error,
+        title: if provider_count == 1 {
+            "Provider update failed".to_string()
+        } else {
+            "Provider updates failed".to_string()
+        },
+        description: message.to_string(),
+        dismiss_after_visible_ms: None,
+    }
+}
+
+pub fn get_provider_update_progress_toast_view(
+    providers: &[ServerProvider],
+    provider_count: usize,
+) -> ProviderUpdateToastView {
+    let providers = dedupe_providers_by_driver(providers);
+    let failed_providers = providers
+        .iter()
+        .filter(|provider| {
+            provider
+                .update_state
+                .as_ref()
+                .is_some_and(|state| state.status == ServerProviderUpdateStatus::Failed)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if !failed_providers.is_empty() {
+        return ProviderUpdateToastView {
+            phase: ProviderUpdateToastPhase::Failed,
+            kind: ProviderUpdateToastKind::Error,
+            title: if failed_providers.len() == 1 {
+                "Provider update failed".to_string()
+            } else {
+                "Provider updates failed".to_string()
+            },
+            description: failed_provider_update_description(&failed_providers),
+            dismiss_after_visible_ms: None,
+        };
+    }
+
+    let unchanged_providers = providers
+        .iter()
+        .filter(|provider| {
+            provider
+                .update_state
+                .as_ref()
+                .is_some_and(|state| state.status == ServerProviderUpdateStatus::Unchanged)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    if !unchanged_providers.is_empty() {
+        return ProviderUpdateToastView {
+            phase: ProviderUpdateToastPhase::Unchanged,
+            kind: ProviderUpdateToastKind::Warning,
+            title: if unchanged_providers.len() == 1 {
+                "Provider still needs an update".to_string()
+            } else {
+                "Providers still need updates".to_string()
+            },
+            description: format!(
+                "{} {} outdated. Check provider settings for details.",
+                format_provider_list(&unchanged_providers),
+                if unchanged_providers.len() == 1 {
+                    "still appears"
+                } else {
+                    "still appear"
+                }
+            ),
+            dismiss_after_visible_ms: None,
+        };
+    }
+
+    if providers.iter().any(is_provider_update_active) {
+        return get_provider_update_running_toast_view(provider_count);
+    }
+
+    let has_complete_provider_snapshots = providers.len() >= provider_count;
+    let all_providers_updated = has_complete_provider_snapshots
+        && providers.iter().all(|provider| {
+            provider
+                .update_state
+                .as_ref()
+                .is_some_and(|state| state.status == ServerProviderUpdateStatus::Succeeded)
+                || !is_provider_update_candidate(provider)
+        });
+    if all_providers_updated {
+        return ProviderUpdateToastView {
+            phase: ProviderUpdateToastPhase::Succeeded,
+            kind: ProviderUpdateToastKind::Success,
+            title: if provider_count == 1 {
+                "Provider updated".to_string()
+            } else {
+                "Provider updates finished".to_string()
+            },
+            description: provider_updated_description(provider_count),
+            dismiss_after_visible_ms: Some(PROVIDER_UPDATE_SUCCESS_VISIBLE_MS),
+        };
+    }
+
+    get_provider_update_running_toast_view(provider_count)
+}
+
+pub fn get_single_provider_update_progress_toast_view(
+    provider: &ServerProvider,
+) -> ProviderUpdateToastView {
+    let view = get_provider_update_progress_toast_view(&[provider.clone()], 1);
+    let provider_name = provider_display_name(&provider.driver);
+    match view.phase {
+        ProviderUpdateToastPhase::Running => ProviderUpdateToastView {
+            title: format!("Updating {provider_name}"),
+            ..view
+        },
+        ProviderUpdateToastPhase::Failed => ProviderUpdateToastView {
+            title: provider_failed_update_title(provider),
+            ..view
+        },
+        ProviderUpdateToastPhase::Unchanged => ProviderUpdateToastView {
+            title: format!("{provider_name} still needs an update"),
+            ..view
+        },
+        ProviderUpdateToastPhase::Succeeded => ProviderUpdateToastView {
+            title: provider_updated_title(provider),
+            ..view
+        },
+        ProviderUpdateToastPhase::Initial => view,
+    }
+}
+
+pub fn collect_updated_provider_snapshots(
+    results: &[ProviderUpdateSnapshotResult],
+    provider_instance_ids: &BTreeSet<String>,
+) -> Vec<ServerProvider> {
+    let mut matched_providers = Vec::new();
+    for result in results {
+        let ProviderUpdateSnapshotResult::Fulfilled { providers } = result else {
+            continue;
+        };
+        matched_providers.extend(
+            providers
+                .iter()
+                .filter(|provider| provider_instance_ids.contains(&provider.instance_id))
+                .cloned(),
+        );
+    }
+    dedupe_providers_by_instance_id(&matched_providers)
+}
+
+pub fn first_rejected_provider_update_message(
+    results: &[ProviderUpdateSnapshotResult],
+) -> Option<String> {
+    results.iter().find_map(|result| match result {
+        ProviderUpdateSnapshotResult::Rejected { message } => message
+            .clone()
+            .or_else(|| Some("Provider update failed.".to_string())),
+        ProviderUpdateSnapshotResult::Fulfilled { .. } => None,
+    })
+}
+
+fn get_update_finished_at(provider: &ServerProvider) -> Option<&str> {
+    provider
+        .update_state
+        .as_ref()
+        .and_then(|state| state.finished_at.as_deref())
+}
+
+fn is_recent_terminal_provider(provider: &ServerProvider, visible_after_iso: Option<&str>) -> bool {
+    let Some(status) = provider.update_state.as_ref().map(|state| state.status) else {
+        return false;
+    };
+    if !matches!(
+        status,
+        ServerProviderUpdateStatus::Failed
+            | ServerProviderUpdateStatus::Unchanged
+            | ServerProviderUpdateStatus::Succeeded
+    ) {
+        return false;
+    }
+    let Some(visible_after_iso) = visible_after_iso else {
+        return true;
+    };
+    get_update_finished_at(provider).is_some_and(|finished_at| finished_at >= visible_after_iso)
+}
+
+fn latest_finished_at_for_providers(providers: &[ServerProvider]) -> Option<&str> {
+    providers.iter().filter_map(get_update_finished_at).max()
+}
+
+pub fn get_provider_update_sidebar_pill_view(
+    providers: &[ServerProvider],
+    options: Option<&ProviderUpdateSidebarPillOptions>,
+) -> Option<ProviderUpdateSidebarPillView> {
+    let deduped_providers = dedupe_providers_by_driver(providers);
+    let active_providers = deduped_providers
+        .iter()
+        .filter(|provider| is_provider_update_active(provider))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !active_providers.is_empty() {
+        let active_provider_name = provider_display_name(&active_providers[0].driver);
+        let mut key_parts = active_providers
+            .iter()
+            .map(|provider| {
+                format!(
+                    "{}:{}",
+                    provider.driver,
+                    provider
+                        .update_state
+                        .as_ref()
+                        .map(|state| provider_update_status_value(state.status))
+                        .unwrap_or("idle")
+                )
+            })
+            .collect::<Vec<_>>();
+        key_parts.sort();
+        return Some(ProviderUpdateSidebarPillView {
+            key: format!("loading:{}", key_parts.join("|")),
+            tone: ProviderUpdateSidebarPillTone::Loading,
+            title: if active_providers.len() == 1 {
+                format!("Updating {active_provider_name}")
+            } else {
+                format!("Updating {} providers", active_providers.len())
+            },
+            description: if active_providers.len() == 1 {
+                format!(
+                    "{} update in progress.",
+                    format_provider_list(&active_providers)
+                )
+            } else {
+                format!(
+                    "{} updates are in progress.",
+                    format_provider_list(&active_providers)
+                )
+            },
+            dismissible: false,
+            dismiss_after_visible_ms: None,
+        });
+    }
+
+    let visible_after_iso = options.and_then(|options| options.visible_after_iso.as_deref());
+    let recent_terminal_providers = deduped_providers
+        .iter()
+        .filter(|provider| is_recent_terminal_provider(provider, visible_after_iso))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    let failed_providers = providers_by_update_status(
+        &recent_terminal_providers,
+        ServerProviderUpdateStatus::Failed,
+    );
+    let unchanged_providers = providers_by_update_status(
+        &recent_terminal_providers,
+        ServerProviderUpdateStatus::Unchanged,
+    );
+    let succeeded_providers = providers_by_update_status(
+        &recent_terminal_providers,
+        ServerProviderUpdateStatus::Succeeded,
+    );
+
+    let mut terminal_candidates = Vec::<(ProviderUpdateSidebarPillView, Option<String>)>::new();
+    if !failed_providers.is_empty() {
+        let mut key_parts = terminal_provider_key_parts(&failed_providers);
+        key_parts.sort();
+        terminal_candidates.push((
+            ProviderUpdateSidebarPillView {
+                key: format!("failed:{}", key_parts.join("|")),
+                tone: ProviderUpdateSidebarPillTone::Error,
+                title: if failed_providers.len() == 1 {
+                    provider_failed_update_title(&failed_providers[0])
+                } else {
+                    format!("{} provider updates failed", failed_providers.len())
+                },
+                description: failed_provider_update_description(&failed_providers),
+                dismissible: true,
+                dismiss_after_visible_ms: None,
+            },
+            latest_finished_at_for_providers(&failed_providers).map(ToString::to_string),
+        ));
+    }
+
+    if !unchanged_providers.is_empty() {
+        let unchanged_provider_name = provider_display_name(&unchanged_providers[0].driver);
+        let mut key_parts = terminal_provider_key_parts(&unchanged_providers);
+        key_parts.sort();
+        terminal_candidates.push((
+            ProviderUpdateSidebarPillView {
+                key: format!("unchanged:{}", key_parts.join("|")),
+                tone: ProviderUpdateSidebarPillTone::Warning,
+                title: if unchanged_providers.len() == 1 {
+                    format!("{unchanged_provider_name} still needs an update")
+                } else {
+                    format!("{} providers still need updates", unchanged_providers.len())
+                },
+                description: format!(
+                    "{} {} outdated. Review provider settings for details.",
+                    format_provider_list(&unchanged_providers),
+                    if unchanged_providers.len() == 1 {
+                        "still appears"
+                    } else {
+                        "still appear"
+                    }
+                ),
+                dismissible: true,
+                dismiss_after_visible_ms: None,
+            },
+            latest_finished_at_for_providers(&unchanged_providers).map(ToString::to_string),
+        ));
+    }
+
+    if !succeeded_providers.is_empty() {
+        let mut key_parts = terminal_provider_key_parts(&succeeded_providers);
+        key_parts.sort();
+        terminal_candidates.push((
+            ProviderUpdateSidebarPillView {
+                key: format!("succeeded:{}", key_parts.join("|")),
+                tone: ProviderUpdateSidebarPillTone::Success,
+                title: if succeeded_providers.len() == 1 {
+                    provider_updated_title(&succeeded_providers[0])
+                } else {
+                    format!("{} providers updated", succeeded_providers.len())
+                },
+                description: provider_updated_description(succeeded_providers.len()),
+                dismissible: false,
+                dismiss_after_visible_ms: Some(PROVIDER_UPDATE_SUCCESS_VISIBLE_MS),
+            },
+            latest_finished_at_for_providers(&succeeded_providers).map(ToString::to_string),
+        ));
+    }
+
+    terminal_candidates.sort_by(|left, right| right.1.cmp(&left.1));
+    terminal_candidates
+        .into_iter()
+        .map(|(view, _)| view)
+        .find(|view| !options.is_some_and(|options| options.dismissed_keys.contains(&view.key)))
+}
+
+fn provider_update_status_value(status: ServerProviderUpdateStatus) -> &'static str {
+    match status {
+        ServerProviderUpdateStatus::Idle => "idle",
+        ServerProviderUpdateStatus::Queued => "queued",
+        ServerProviderUpdateStatus::Running => "running",
+        ServerProviderUpdateStatus::Succeeded => "succeeded",
+        ServerProviderUpdateStatus::Failed => "failed",
+        ServerProviderUpdateStatus::Unchanged => "unchanged",
+    }
+}
+
+fn providers_by_update_status(
+    providers: &[ServerProvider],
+    status: ServerProviderUpdateStatus,
+) -> Vec<ServerProvider> {
+    providers
+        .iter()
+        .filter(|provider| {
+            provider
+                .update_state
+                .as_ref()
+                .is_some_and(|state| state.status == status)
+        })
+        .cloned()
+        .collect()
+}
+
+fn terminal_provider_key_parts(providers: &[ServerProvider]) -> Vec<String> {
+    providers
+        .iter()
+        .map(|provider| {
+            let update_state = provider.update_state.as_ref();
+            format!(
+                "{}:{}:{}",
+                provider.driver,
+                update_state
+                    .and_then(|state| state.finished_at.as_deref())
+                    .unwrap_or("pending"),
+                update_state
+                    .and_then(|state| state.message.as_deref())
+                    .unwrap_or("")
+            )
+        })
+        .collect()
+}
+
+fn get_provider_update_initial_toast_title(providers: &[ServerProvider]) -> String {
+    if providers.len() == 1 {
+        let provider = &providers[0];
+        let provider_name = provider_display_name(&provider.driver);
+        let latest_version = provider
+            .version_advisory
+            .as_ref()
+            .and_then(|advisory| advisory.latest_version.as_deref())
+            .unwrap_or_default();
+        return format!(
+            "Update Available: {provider_name} {}",
+            format_provider_update_version(latest_version)
+        );
+    }
+    format!("Updates Available: {} providers", providers.len())
+}
+
+fn failed_provider_update_description(providers: &[ServerProvider]) -> String {
+    if providers.len() == 1 {
+        if let Some(message) = providers[0]
+            .update_state
+            .as_ref()
+            .and_then(|state| state.message.as_ref())
+        {
+            return message.clone();
+        }
+    }
+    format!(
+        "{} failed to update. Check provider settings for details.",
+        format_provider_list(providers)
+    )
 }
 
 pub fn get_provider_summary(provider: Option<&ServerProvider>) -> ProviderStatusSummary {
@@ -16376,6 +17118,7 @@ impl AppSnapshot {
                     checked_at: Some("2026-03-04T12:00:00.000Z".to_string()),
                     message: None,
                 }),
+                update_state: None,
             },
             ServerProvider {
                 instance_id: "codex_personal".to_string(),
@@ -16424,6 +17167,7 @@ impl AppSnapshot {
                     checked_at: Some("2026-03-04T12:00:00.000Z".to_string()),
                     message: None,
                 }),
+                update_state: None,
             },
             ServerProvider {
                 instance_id: "claudeAgent".to_string(),
@@ -16464,6 +17208,7 @@ impl AppSnapshot {
                     },
                 ],
                 version_advisory: None,
+                update_state: None,
             },
             ServerProvider {
                 instance_id: "cursor".to_string(),
@@ -16495,6 +17240,7 @@ impl AppSnapshot {
                     is_custom: false,
                 }],
                 version_advisory: None,
+                update_state: None,
             },
             ServerProvider {
                 instance_id: "opencode".to_string(),
@@ -16526,6 +17272,7 @@ impl AppSnapshot {
                     is_custom: false,
                 }],
                 version_advisory: None,
+                update_state: None,
             },
         ]
     }
@@ -17482,9 +18229,46 @@ mod tests {
             unavailable_reason: None,
             models: Vec::new(),
             version_advisory: None,
+            update_state: None,
         };
         overrides(&mut provider);
         provider
+    }
+
+    fn provider_update_state(
+        status: ServerProviderUpdateStatus,
+        finished_at: Option<&str>,
+        message: Option<&str>,
+    ) -> ServerProviderUpdateState {
+        ServerProviderUpdateState {
+            status,
+            started_at: Some("2026-04-23T10:00:00.000Z".to_string()),
+            finished_at: finished_at.map(ToString::to_string),
+            message: message.map(ToString::to_string),
+            output: None,
+        }
+    }
+
+    fn provider_update_candidate(
+        driver: &str,
+        overrides: impl FnOnce(&mut ServerProvider),
+    ) -> ServerProvider {
+        make_server_provider(|provider| {
+            provider.driver = driver.to_string();
+            provider.instance_id = driver.to_string();
+            provider.display_name = Some(provider_display_name(driver));
+            provider.version = Some("1.0.0".to_string());
+            provider.version_advisory = Some(ServerProviderVersionAdvisory {
+                status: ServerProviderVersionAdvisoryStatus::BehindLatest,
+                current_version: Some("1.0.0".to_string()),
+                latest_version: Some("1.1.0".to_string()),
+                update_command: Some("npm install -g provider".to_string()),
+                can_update: true,
+                checked_at: Some("2026-04-23T10:00:00.000Z".to_string()),
+                message: Some("Update available.".to_string()),
+            });
+            overrides(provider);
+        })
     }
 
     fn advertised_endpoint(
@@ -19332,6 +20116,380 @@ mod tests {
                 .unwrap()
                 .detail,
             "Use your package manager to update."
+        );
+    }
+
+    #[test]
+    fn provider_update_candidates_and_keys_match_upstream_logic() {
+        assert!(is_provider_update_candidate(&provider_update_candidate(
+            "codex",
+            |_| {}
+        )));
+        assert!(!is_provider_update_candidate(&provider_update_candidate(
+            "codex",
+            |provider| provider.enabled = false
+        )));
+        assert!(!is_provider_update_candidate(&provider_update_candidate(
+            "codex",
+            |provider| {
+                provider.version_advisory.as_mut().unwrap().status =
+                    ServerProviderVersionAdvisoryStatus::Current;
+                provider.version_advisory.as_mut().unwrap().latest_version = None;
+            }
+        )));
+
+        let personal = provider_update_candidate("codex", |provider| {
+            provider.instance_id = "codex_personal".to_string();
+            provider.checked_at = "2026-04-23T10:01:00.000Z".to_string();
+        });
+        let default = provider_update_candidate("codex", |_| {});
+        let cursor = provider_update_candidate("cursor", |provider| {
+            provider.version_advisory.as_mut().unwrap().latest_version = Some("0.3.0".to_string());
+        });
+        let candidates =
+            collect_provider_update_candidates(&[personal.clone(), default.clone(), cursor]);
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0].instance_id, "codex");
+
+        let candidate = provider_update_candidate("claudeAgent", |provider| {
+            provider.instance_id = "claude_personal".to_string();
+            provider.version_advisory.as_mut().unwrap().latest_version =
+                Some("2.1.123".to_string());
+        });
+        let disagreeing_sibling = provider_update_candidate("claudeAgent", |provider| {
+            provider.instance_id = "claude_work".to_string();
+            provider.version_advisory.as_mut().unwrap().latest_version =
+                Some("2.1.123".to_string());
+            provider.version_advisory.as_mut().unwrap().update_command =
+                Some("bun add -g @anthropic-ai/claude-code@latest".to_string());
+        });
+        assert!(!can_one_click_update_provider_candidate(
+            &candidate,
+            &[candidate.clone(), disagreeing_sibling]
+        ));
+
+        let current_sibling = provider_update_candidate("claudeAgent", |provider| {
+            provider.instance_id = "claude_work".to_string();
+            provider.version = Some("2.1.123".to_string());
+            provider.version_advisory.as_mut().unwrap().status =
+                ServerProviderVersionAdvisoryStatus::Current;
+            provider.version_advisory.as_mut().unwrap().latest_version =
+                Some("2.1.123".to_string());
+            provider.version_advisory.as_mut().unwrap().can_update = false;
+            provider.version_advisory.as_mut().unwrap().update_command = None;
+        });
+        assert!(has_one_click_update_provider_candidate(
+            &candidate,
+            &[candidate.clone(), current_sibling.clone()]
+        ));
+
+        let running = provider_update_candidate("codex", |provider| {
+            provider.update_state = Some(provider_update_state(
+                ServerProviderUpdateStatus::Running,
+                None,
+                Some("Updating provider."),
+            ));
+        });
+        assert!(has_one_click_update_provider_candidate(
+            &running,
+            &[running.clone()]
+        ));
+        assert!(!can_one_click_update_provider_candidate(
+            &running,
+            &[running.clone()]
+        ));
+
+        let first = provider_update_candidate("codex", |provider| {
+            provider.version = Some("1.0.0".to_string());
+            provider.version_advisory.as_mut().unwrap().latest_version = Some("1.2.0".to_string());
+        });
+        let second = provider_update_candidate("codex", |provider| {
+            provider.version = Some("1.1.0".to_string());
+            provider.version_advisory.as_mut().unwrap().latest_version = Some("1.2.0".to_string());
+        });
+        let next_published = provider_update_candidate("codex", |provider| {
+            provider.version = Some("1.1.0".to_string());
+            provider.version_advisory.as_mut().unwrap().latest_version = Some("1.3.0".to_string());
+        });
+        assert_eq!(
+            provider_update_notification_key(&[first.clone()]),
+            provider_update_notification_key(&[second])
+        );
+        assert_ne!(
+            provider_update_notification_key(&[next_published]),
+            provider_update_notification_key(&[first])
+        );
+        assert_eq!(
+            provider_update_notification_key(&[
+                provider_update_candidate("codex", |_| {}),
+                provider_update_candidate("cursor", |provider| {
+                    provider.version_advisory.as_mut().unwrap().latest_version =
+                        Some("0.3.0".to_string());
+                }),
+            ])
+            .as_deref(),
+            Some("codex:1.1.0|cursor:0.3.0")
+        );
+        assert_eq!(provider_update_notification_key(&[]), None);
+    }
+
+    #[test]
+    fn provider_update_toasts_match_upstream_views() {
+        let codex = provider_update_candidate("codex", |_| {});
+        let cursor = provider_update_candidate("cursor", |provider| {
+            provider.version_advisory.as_mut().unwrap().can_update = false;
+        });
+
+        assert_eq!(
+            get_provider_update_initial_toast_view(
+                std::slice::from_ref(&codex),
+                std::slice::from_ref(&codex)
+            ),
+            ProviderUpdateToastView {
+                phase: ProviderUpdateToastPhase::Initial,
+                kind: ProviderUpdateToastKind::Warning,
+                title: "Update Available: Codex v1.1.0".to_string(),
+                description: "Install the update now or review provider settings.".to_string(),
+                dismiss_after_visible_ms: None,
+            }
+        );
+        assert_eq!(
+            get_provider_update_initial_toast_view(&[codex.clone(), cursor.clone()], &[])
+                .description,
+            "Codex and Cursor can be updated from provider settings."
+        );
+
+        let running = provider_update_candidate("codex", |provider| {
+            provider.update_state = Some(provider_update_state(
+                ServerProviderUpdateStatus::Running,
+                None,
+                Some("Updating provider."),
+            ));
+        });
+        assert_eq!(
+            get_provider_update_progress_toast_view(&[running], 1).title,
+            "Updating provider"
+        );
+
+        let failed = provider_update_candidate("codex", |provider| {
+            provider.update_state = Some(provider_update_state(
+                ServerProviderUpdateStatus::Failed,
+                Some("2026-04-23T10:00:00.000Z"),
+                Some("command failed"),
+            ));
+        });
+        assert_eq!(
+            get_provider_update_progress_toast_view(std::slice::from_ref(&failed), 1),
+            ProviderUpdateToastView {
+                phase: ProviderUpdateToastPhase::Failed,
+                kind: ProviderUpdateToastKind::Error,
+                title: "Provider update failed".to_string(),
+                description: "command failed".to_string(),
+                dismiss_after_visible_ms: None,
+            }
+        );
+        assert_eq!(
+            get_single_provider_update_progress_toast_view(&failed).title,
+            "Codex v1.1.0 update failed"
+        );
+
+        let unchanged = provider_update_candidate("cursor", |provider| {
+            provider.update_state = Some(provider_update_state(
+                ServerProviderUpdateStatus::Unchanged,
+                Some("2026-04-23T10:00:00.000Z"),
+                Some("still old"),
+            ));
+        });
+        assert_eq!(
+            get_provider_update_progress_toast_view(&[unchanged], 1).description,
+            "Cursor still appears outdated. Check provider settings for details."
+        );
+
+        let succeeded = provider_update_candidate("codex", |provider| {
+            provider.version = Some("1.1.0".to_string());
+            provider.version_advisory.as_mut().unwrap().status =
+                ServerProviderVersionAdvisoryStatus::Current;
+            provider.version_advisory.as_mut().unwrap().latest_version = Some("1.1.0".to_string());
+            provider.update_state = Some(provider_update_state(
+                ServerProviderUpdateStatus::Succeeded,
+                Some("2026-04-23T10:00:00.000Z"),
+                Some("Provider updated."),
+            ));
+        });
+        assert_eq!(
+            get_single_provider_update_progress_toast_view(&succeeded),
+            ProviderUpdateToastView {
+                phase: ProviderUpdateToastPhase::Succeeded,
+                kind: ProviderUpdateToastKind::Success,
+                title: "Codex updated: v1.1.0".to_string(),
+                description: "New sessions will use the updated provider.".to_string(),
+                dismiss_after_visible_ms: Some(3_000),
+            }
+        );
+
+        let rejected_results = [ProviderUpdateSnapshotResult::Rejected {
+            message: Some("WebSocket closed".to_string()),
+        }];
+        assert_eq!(
+            first_rejected_provider_update_message(&rejected_results).as_deref(),
+            Some("WebSocket closed")
+        );
+        assert_eq!(
+            get_provider_update_rejected_toast_view(2, "WebSocket closed").title,
+            "Provider updates failed"
+        );
+    }
+
+    #[test]
+    fn provider_update_snapshot_collection_matches_upstream_instance_tracking() {
+        let target_instance_id = "codex_personal".to_string();
+        let updated_personal = provider_update_candidate("codex", |provider| {
+            provider.instance_id = target_instance_id.clone();
+            provider.version = Some("1.1.0".to_string());
+            provider.version_advisory.as_mut().unwrap().status =
+                ServerProviderVersionAdvisoryStatus::Current;
+            provider.update_state = Some(provider_update_state(
+                ServerProviderUpdateStatus::Succeeded,
+                Some("2026-04-23T10:00:00.000Z"),
+                Some("Provider updated."),
+            ));
+        });
+        let current_default_sibling = provider_update_candidate("codex", |provider| {
+            provider.instance_id = "codex".to_string();
+            provider.version = Some("1.1.0".to_string());
+            provider.version_advisory.as_mut().unwrap().status =
+                ServerProviderVersionAdvisoryStatus::Current;
+        });
+        let mut attempted_ids = BTreeSet::new();
+        attempted_ids.insert(target_instance_id);
+
+        assert_eq!(
+            collect_updated_provider_snapshots(
+                &[ProviderUpdateSnapshotResult::Fulfilled {
+                    providers: vec![updated_personal.clone(), current_default_sibling],
+                }],
+                &attempted_ids
+            ),
+            vec![updated_personal]
+        );
+    }
+
+    #[test]
+    fn provider_update_sidebar_pills_match_upstream_priority_and_visibility() {
+        let running_codex = provider_update_candidate("codex", |provider| {
+            provider.update_state = Some(provider_update_state(
+                ServerProviderUpdateStatus::Running,
+                None,
+                Some("Updating provider."),
+            ));
+        });
+        let queued_cursor = provider_update_candidate("cursor", |provider| {
+            provider.update_state = Some(ServerProviderUpdateState {
+                status: ServerProviderUpdateStatus::Queued,
+                started_at: None,
+                finished_at: None,
+                message: Some("Waiting for another provider update to finish.".to_string()),
+                output: None,
+            });
+        });
+        assert_eq!(
+            get_provider_update_sidebar_pill_view(&[running_codex.clone(), queued_cursor], None)
+                .unwrap()
+                .description,
+            "Codex and Cursor updates are in progress."
+        );
+        let single_running = get_provider_update_sidebar_pill_view(&[running_codex], None).unwrap();
+        assert_eq!(single_running.key, "loading:codex:running");
+        assert_eq!(single_running.title, "Updating Codex");
+
+        let options = ProviderUpdateSidebarPillOptions {
+            visible_after_iso: Some("2026-04-23T09:59:00.000Z".to_string()),
+            dismissed_keys: BTreeSet::new(),
+        };
+        let failed_claude = provider_update_candidate("claudeAgent", |provider| {
+            provider.update_state = Some(provider_update_state(
+                ServerProviderUpdateStatus::Failed,
+                Some("2026-04-23T10:00:00.000Z"),
+                Some("Update command exited with code 1."),
+            ));
+        });
+        assert_eq!(
+            get_provider_update_sidebar_pill_view(
+                std::slice::from_ref(&failed_claude),
+                Some(&options)
+            )
+            .unwrap(),
+            ProviderUpdateSidebarPillView {
+                key:
+                    "failed:claudeAgent:2026-04-23T10:00:00.000Z:Update command exited with code 1."
+                        .to_string(),
+                tone: ProviderUpdateSidebarPillTone::Error,
+                title: "Claude v1.1.0 update failed".to_string(),
+                description: "Update command exited with code 1.".to_string(),
+                dismissible: true,
+                dismiss_after_visible_ms: None,
+            }
+        );
+
+        let succeeded_codex = provider_update_candidate("codex", |provider| {
+            provider.version = Some("1.2.0".to_string());
+            provider.version_advisory.as_mut().unwrap().status =
+                ServerProviderVersionAdvisoryStatus::Current;
+            provider.version_advisory.as_mut().unwrap().latest_version = Some("1.2.0".to_string());
+            provider.update_state = Some(provider_update_state(
+                ServerProviderUpdateStatus::Succeeded,
+                Some("2026-04-23T10:01:00.000Z"),
+                Some("Provider updated."),
+            ));
+        });
+        let success_view = get_provider_update_sidebar_pill_view(
+            &[failed_claude.clone(), succeeded_codex],
+            Some(&options),
+        )
+        .unwrap();
+        assert_eq!(
+            success_view.key,
+            "succeeded:codex:2026-04-23T10:01:00.000Z:Provider updated."
+        );
+        assert_eq!(success_view.title, "Codex updated: v1.2.0");
+
+        let mut dismissed_keys = BTreeSet::new();
+        dismissed_keys.insert(success_view.key);
+        let dismissed_options = ProviderUpdateSidebarPillOptions {
+            visible_after_iso: Some("2026-04-23T09:59:00.000Z".to_string()),
+            dismissed_keys,
+        };
+        assert_eq!(
+            get_provider_update_sidebar_pill_view(&[failed_claude], Some(&dismissed_options))
+                .unwrap()
+                .title,
+            "Claude v1.1.0 update failed"
+        );
+
+        let stale_options = ProviderUpdateSidebarPillOptions {
+            visible_after_iso: Some("2026-04-23T10:00:01.000Z".to_string()),
+            dismissed_keys: BTreeSet::new(),
+        };
+        let stale_failed = provider_update_candidate("codex", |provider| {
+            provider.update_state = Some(provider_update_state(
+                ServerProviderUpdateStatus::Failed,
+                Some("2026-04-23T10:00:00.000Z"),
+                Some("command failed"),
+            ));
+        });
+        assert_eq!(
+            get_provider_update_sidebar_pill_view(&[stale_failed], Some(&stale_options)),
+            None
+        );
+        assert_eq!(
+            get_provider_update_sidebar_pill_view(
+                &[
+                    provider_update_candidate("codex", |_| {}),
+                    provider_update_candidate("cursor", |_| {}),
+                ],
+                None
+            ),
+            None
         );
     }
 
